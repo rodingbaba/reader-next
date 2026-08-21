@@ -62,7 +62,7 @@ docker run -d \
   --restart unless-stopped \
   -p 18080:18080 \
   -v reader-storage:/app/storage \
-  ghcr.io/maple0517/reader-next:latest
+  ghcr.io/rodingbaba/reader-next:latest
 ```
 
 打开：
@@ -110,10 +110,65 @@ docker compose -f deploy/compose.yml up -d
 
 常用镜像标签：
 
-- `ghcr.io/maple0517/reader-next:latest`：最新稳定版本。
-- `ghcr.io/maple0517/reader-next:vX.Y.Z`：固定版本。
-- `ghcr.io/maple0517/reader-next:X.Y.Z`：同一个固定版本，不带 `v`。
-- `ghcr.io/maple0517/reader-next:X.Y`：同一 minor 的最新版本。
+- `ghcr.io/rodingbaba/reader-next:latest`：最新稳定版本。
+- `ghcr.io/rodingbaba/reader-next:vX.Y.Z`：固定版本。
+- `ghcr.io/rodingbaba/reader-next:X.Y.Z`：同一个固定版本，不带 `v`。
+- `ghcr.io/rodingbaba/reader-next:X.Y`：同一 minor 的最新版本。
+
+### 纯内网部署（无密码）
+
+适合内网环境直接拉起一个不开启安全模式、不设邀请码的实例。把下面的内容存成 `docker-compose.yml`，然后 `docker compose up -d` 即可。
+
+```yaml
+services:
+  reader:
+    image: ghcr.io/rodingbaba/reader-next:latest
+    container_name: reader-next
+    restart: unless-stopped
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 18080
+      DATABASE_URL: sqlite:/app/storage/reader.db?mode=rwc
+      STORAGE_DIR: /app/storage
+      ASSETS_DIR: /app/storage/assets
+      WEB_ROOT: /app/web/dist
+      LOG_LEVEL: info
+      REQUEST_TIMEOUT_SECS: 15
+      # 纯内网部署：不启用安全模式，不设邀请码
+      SECURE: "false"
+      SECURE_KEY: ""
+      INVITE_CODE: ""
+      USER_LIMIT: "50"
+      USER_BOOK_LIMIT: "2000"
+    ports:
+      - "18080:18080"
+    volumes:
+      - reader-storage:/app/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18080/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  reader-storage:
+```
+
+启动：
+
+```bash
+docker compose up -d
+```
+
+升级：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+注意：`SECURE=false` 表示不启用安全模式，任何人能直接访问 Reader 并注册（受 `USER_LIMIT` 限制），仅在可信内网使用。如果需要公网暴露，请改回 `SECURE=true` 并配置 `SECURE_KEY` 与 `INVITE_CODE`。
 
 完整 Docker 部署和发布说明见 [docs/deploy/docker.md](docs/deploy/docker.md)。
 

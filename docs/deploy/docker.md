@@ -20,7 +20,7 @@ Deprecated root files were removed: `Dockerfile.prod`, `Dockerfile.x86`, `docker
 
 ## Published image
 
-Default image repo: `ghcr.io/maple0517/reader-next`.
+Default image repo: `ghcr.io/rodingbaba/reader-next`.
 
 Tags:
 
@@ -110,7 +110,7 @@ APP_DIR=/opt/reader/app scripts/deploy-do.sh
 Verify a published image:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/maple0517/reader-next:v1.0.10
+docker buildx imagetools inspect ghcr.io/rodingbaba/reader-next:v1.0.10
 ```
 
 ## Manual image test
