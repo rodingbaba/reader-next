@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div
     class="reader-view"
     :class="{ 'disable-system-callout': disableSystemCallout }"
@@ -136,6 +136,10 @@
           '--reader-page-width': config.pageWidth + 'px',
           '--reader-side-padding': '24px',
           '--reader-page-step': horizontalPageStepStyle,
+          '--reader-margin-top': config.marginTop + 'px',
+          '--reader-margin-bottom': config.marginBottom + 'px',
+          '--reader-margin-left': config.marginLeft + 'px',
+          '--reader-margin-right': config.marginRight + 'px',
         }"
       >
         <div v-if="isHorizontalPageMode" class="horizontal-page-layout">
@@ -1699,6 +1703,10 @@ const {
     fontSize: config.value.fontSize,
     fontWeight: config.value.fontWeight,
     lineHeight: config.value.lineHeight,
+    marginTop: config.value.marginTop,
+    marginBottom: config.value.marginBottom,
+    marginLeft: config.value.marginLeft,
+    marginRight: config.value.marginRight,
   })),
   currentFontFamily,
   formattedContent,
@@ -2957,7 +2965,7 @@ watch(
 )
 
 watch(
-  [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, showSearch, searchQuery],
+  [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.marginTop, () => config.value.marginBottom, () => config.value.marginLeft, () => config.value.marginRight, showSearch, searchQuery],
   () => {
     if (isHorizontalPageMode.value) {
       horizontalPageIndex.value = 0
@@ -3150,7 +3158,7 @@ watch(
 
 .chapter-content {
   margin: 0 auto;
-  padding: 80px 24px;
+  padding: max(80px, var(--reader-margin-top)) var(--reader-margin-right) var(--reader-margin-bottom) var(--reader-margin-left);
   min-height: 100%;
   transition: all 0.3s ease;
 }
@@ -3195,7 +3203,7 @@ watch(
   min-width: var(--reader-page-step);
   height: 100%;
   min-height: 100%;
-  padding: 24px var(--reader-side-padding);
+  padding: var(--reader-margin-top) var(--reader-margin-right) var(--reader-margin-bottom) var(--reader-margin-left);
   box-sizing: border-box;
 }
 
@@ -3916,7 +3924,7 @@ watch(
   }
 
   .chapter-content {
-    padding: 24px 20px 8px;
+    padding: var(--reader-margin-top) var(--reader-margin-right) var(--reader-margin-bottom) var(--reader-margin-left);
     min-height: auto;
     height: auto;
   }

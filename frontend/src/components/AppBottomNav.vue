@@ -251,7 +251,7 @@ onBeforeUnmount(() => {
 .bottom-nav-shell {
   position: fixed;
   left: 50%;
-  bottom: calc(18px + var(--safe-area-bottom));
+  bottom: max(16px, calc(var(--safe-area-bottom) + 4px));
   transform: translateX(-50%);
   z-index: calc(var(--z-sticky) + 2);
   width: min(720px, calc(100vw - 24px));
@@ -358,7 +358,7 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .bottom-nav-shell {
     width: calc(100vw - 18px);
-    bottom: calc(12px + var(--safe-area-bottom));
+    bottom: max(10px, calc(var(--safe-area-bottom) + 2px));
   }
 
   .bottom-nav {

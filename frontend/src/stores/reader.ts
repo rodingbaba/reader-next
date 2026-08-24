@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
@@ -66,6 +66,10 @@ export interface ReadConfig {
   aiPanelFontSize: number
   chapterSummaryKeyPointStyle: 'card' | 'list'
   aiPanelActiveTab: 'summary' | 'relationships' | 'map' | 'settings'
+  marginTop: number
+  marginBottom: number
+  marginLeft: number
+  marginRight: number
 }
 
 const defaultConfig: ReadConfig = {
@@ -95,6 +99,10 @@ const defaultConfig: ReadConfig = {
   aiPanelFontSize: 16,
   chapterSummaryKeyPointStyle: 'card',
   aiPanelActiveTab: 'summary',
+  marginTop: 24,
+  marginBottom: 24,
+  marginLeft: 24,
+  marginRight: 24,
 }
 
 function loadConfig(): ReadConfig {
@@ -141,6 +149,10 @@ function migrateLegacyReadConfig(saved: Partial<ReadConfig> & Record<string, unk
   merged.pageSpeed = normalizeNumber(merged.pageSpeed, defaultConfig.pageSpeed, 1)
   merged.aiPanelSiderWidth = normalizeNumber(merged.aiPanelSiderWidth, defaultConfig.aiPanelSiderWidth, 1)
   merged.aiPanelFontSize = normalizeNumber(merged.aiPanelFontSize, defaultConfig.aiPanelFontSize, 1)
+  merged.marginTop = normalizeNumber(merged.marginTop, defaultConfig.marginTop, 0)
+  merged.marginBottom = normalizeNumber(merged.marginBottom, defaultConfig.marginBottom, 0)
+  merged.marginLeft = normalizeNumber(merged.marginLeft, defaultConfig.marginLeft, 0)
+  merged.marginRight = normalizeNumber(merged.marginRight, defaultConfig.marginRight, 0)
   return merged
 }
 
@@ -1481,7 +1493,7 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function preloadNextChapter(index: number) {
     if (!book.value || !config.enablePreload || index >= chapters.value.length || preloadedContent.value.has(index)) return
-    
+
     // Keep max 3 preloaded chapters
     if (preloadedContent.value.size > 3) {
       const firstKey = preloadedContent.value.keys().next().value
@@ -1707,11 +1719,11 @@ export const useReaderStore = defineStore('reader', () => {
   return {
     book, chapters, currentIndex, content, loading, chaptersLoading,
     currentChapter, hasNext, hasPrev, readingProgress,
-      loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
-      chapterScrollProgress, setChapterScrollProgress,
-      getPersistedReaderSession, restorePersistedSession,
-      persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
-      config, updateConfig, resetConfig, saveConfig,
+    loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
+    chapterScrollProgress, setChapterScrollProgress,
+    getPersistedReaderSession, restorePersistedSession,
+    persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
+    config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
     activePanel, openPanel, togglePanel, backPanel, closePanel,

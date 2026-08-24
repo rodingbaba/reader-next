@@ -3,8 +3,6 @@ import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
-const HORIZONTAL_PAGE_SIDE_PADDING = 24
-const HORIZONTAL_PAGE_VERTICAL_PADDING = 24
 const HORIZONTAL_PAGE_MIN_BOTTOM_GUARD = 18
 const HORIZONTAL_PAGE_BOTTOM_GUARD_LINES = 0.5
 const NON_STARTING_PUNCTUATION = new Set([
@@ -35,7 +33,7 @@ const MAX_PUNCTUATION_BACKTRACK = 12
 
 export function useHorizontalPaging(
   store: ReaderStore,
-  config: ComputedRef<{ fontSize: number; fontWeight: number; lineHeight: number }>,
+  config: ComputedRef<{ fontSize: number; fontWeight: number; lineHeight: number; marginTop: number; marginBottom: number; marginLeft: number; marginRight: number; }>,
   currentFontFamily: ComputedRef<string>,
   formattedContent: ComputedRef<string>,
   isHorizontalPageMode: ComputedRef<boolean>,
@@ -206,8 +204,8 @@ export function useHorizontalPaging(
       Math.ceil(lineHeightPx * HORIZONTAL_PAGE_BOTTOM_GUARD_LINES),
     )
     return {
-      innerWidth: Math.max(120, horizontalPageStep.value - HORIZONTAL_PAGE_SIDE_PADDING * 2),
-      pageHeight: Math.max(160, container.clientHeight - HORIZONTAL_PAGE_VERTICAL_PADDING * 2 - bottomGuard),
+      innerWidth: Math.max(120, horizontalPageStep.value - config.value.marginLeft - config.value.marginRight),
+      pageHeight: Math.max(160, container.clientHeight - config.value.marginTop - config.value.marginBottom - bottomGuard),
     }
   }
 

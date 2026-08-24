@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="read-settings" :style="{ background: theme.popup, color: theme.fontColor }">
     <div class="settings-header">
       <h3 class="settings-title">设置</h3>
@@ -102,6 +102,25 @@
         <div class="btn-group">
           <button class="opt-btn" :class="{ active: config.firstLineIndent }" @click="store.updateConfig('firstLineIndent', true)">开启</button>
           <button class="opt-btn" :class="{ active: !config.firstLineIndent }" @click="store.updateConfig('firstLineIndent', false)">关闭</button>
+        </div>
+      </div>
+
+      <!-- 页面边距 -->
+      <div class="setting-row">
+        <label>页面上下边距</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('marginTop', -2, 0, 100); step('marginBottom', -2, 0, 100)">—</button>
+          <span class="step-val">{{ config.marginTop }}</span>
+          <button class="step-btn" @click="step('marginTop', 2, 0, 100); step('marginBottom', 2, 0, 100)">+</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label>页面左右边距</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('marginLeft', -2, 0, 100); step('marginRight', -2, 0, 100)">—</button>
+          <span class="step-val">{{ config.marginLeft }}</span>
+          <button class="step-btn" @click="step('marginLeft', 2, 0, 100); step('marginRight', 2, 0, 100)">+</button>
         </div>
       </div>
 
@@ -407,7 +426,7 @@ const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
 const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
 
-function step(key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed', delta: number, min: number, max: number) {
+function step(key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed' | 'marginTop' | 'marginBottom' | 'marginLeft' | 'marginRight', delta: number, min: number, max: number) {
   const val = Math.max(min, Math.min(max, (config.value[key] as number) + delta))
   store.updateConfig(key, val)
 }

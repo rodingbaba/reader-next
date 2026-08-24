@@ -88,7 +88,7 @@ body {
 }
 
 .app-main.with-bottom-nav {
-  padding-bottom: calc(104px + var(--safe-area-bottom));
+  padding-bottom: max(84px, calc(var(--safe-area-bottom) + 72px));
   height: calc(var(--app-height, 100dvh) - var(--header-height) - var(--safe-area-top));
 }
 </style>

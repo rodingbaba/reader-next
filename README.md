@@ -6,10 +6,6 @@ Reader Next 是一个面向自用与二次开发的阅读 3.0 服务端：Rust �
 
 > **📖 Reader Next** — 基于 [reader-rust](https://github.com/givenge/reader-rust) 持续维护与修复，重点发展 AI 智能功能（章节摘要、AI 资料库、AI 地图、关系图谱等）。API 和数据结构与上游不保证兼容，属于独立开发分支。
 
-## 入口
-
-- 文档站：https://maple0517.github.io/reader-next/
-- GitHub：https://github.com/Maple0517/reader-next
 
 ## 现在有什么
 
