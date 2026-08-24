@@ -1703,6 +1703,7 @@ const {
     fontSize: config.value.fontSize,
     fontWeight: config.value.fontWeight,
     lineHeight: config.value.lineHeight,
+    paragraphSpacing: config.value.paragraphSpacing,
     marginTop: config.value.marginTop,
     marginBottom: config.value.marginBottom,
     marginLeft: config.value.marginLeft,
@@ -3073,7 +3074,7 @@ watch(
   overflow: hidden;
   transition: background 0.3s, color 0.3s;
   padding-top: var(--safe-area-top);
-  padding-bottom: var(--safe-area-bottom);
+  padding-bottom: 0;
   box-sizing: border-box;
 }
 

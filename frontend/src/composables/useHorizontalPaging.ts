@@ -3,8 +3,6 @@ import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
-const HORIZONTAL_PAGE_MIN_BOTTOM_GUARD = 18
-const HORIZONTAL_PAGE_BOTTOM_GUARD_LINES = 0.5
 const NON_STARTING_PUNCTUATION = new Set([
   '，',
   '。',
@@ -33,7 +31,7 @@ const MAX_PUNCTUATION_BACKTRACK = 12
 
 export function useHorizontalPaging(
   store: ReaderStore,
-  config: ComputedRef<{ fontSize: number; fontWeight: number; lineHeight: number; marginTop: number; marginBottom: number; marginLeft: number; marginRight: number; }>,
+  config: ComputedRef<{ fontSize: number; fontWeight: number; lineHeight: number; paragraphSpacing: number; marginTop: number; marginBottom: number; marginLeft: number; marginRight: number; }>,
   currentFontFamily: ComputedRef<string>,
   formattedContent: ComputedRef<string>,
   isHorizontalPageMode: ComputedRef<boolean>,
@@ -198,14 +196,11 @@ export function useHorizontalPaging(
   }
 
   function getHorizontalPageMeasure(container: HTMLElement) {
-    const lineHeightPx = config.value.fontSize * config.value.lineHeight
-    const bottomGuard = Math.max(
-      HORIZONTAL_PAGE_MIN_BOTTOM_GUARD,
-      Math.ceil(lineHeightPx * HORIZONTAL_PAGE_BOTTOM_GUARD_LINES),
-    )
+    const availableHeight = container.clientHeight - config.value.marginTop - config.value.marginBottom
+
     return {
       innerWidth: Math.max(120, horizontalPageStep.value - config.value.marginLeft - config.value.marginRight),
-      pageHeight: Math.max(160, container.clientHeight - config.value.marginTop - config.value.marginBottom - bottomGuard),
+      pageHeight: Math.max(160, availableHeight),
     }
   }
 
@@ -237,12 +232,14 @@ export function useHorizontalPaging(
     const paragraphs = buildHorizontalParagraphs()
 
     const measurer = document.createElement('div')
-    measurer.style.position = 'fixed'
+    measurer.className = 'chapter-text horizontal-page-content'
+    measurer.style.position = 'absolute'
     measurer.style.left = '-99999px'
     measurer.style.top = '0'
     measurer.style.width = `${innerWidth}px`
-    measurer.style.height = `${pageHeight}px`
-    measurer.style.overflow = 'hidden'
+    measurer.style.height = 'auto'
+    measurer.style.maxHeight = 'none'
+    measurer.style.overflow = 'visible'
     measurer.style.visibility = 'hidden'
     measurer.style.pointerEvents = 'none'
     measurer.style.boxSizing = 'border-box'
@@ -253,27 +250,19 @@ export function useHorizontalPaging(
     measurer.style.wordBreak = 'normal'
     measurer.style.overflowWrap = 'break-word'
     measurer.style.textAlign = 'left'
-    document.body.appendChild(measurer)
+    measurer.style.setProperty('--p-spacing', `${config.value.paragraphSpacing}em`)
+    container.appendChild(measurer)
 
     const pages: string[] = []
     let currentParts: string[] = [titleHtml]
 
     const measureContentHeight = (parts: string[]) => {
       measurer.innerHTML = parts.join('')
-      const children = Array.from(measurer.children) as HTMLElement[]
-      if (!children.length) return 0
-      const top = measurer.getBoundingClientRect().top
-      return children.reduce((bottom, child, idx) => {
-        const rect = child.getBoundingClientRect()
-        const style = window.getComputedStyle(child)
-        const isLastParagraph = idx === children.length - 1 && child.tagName.toLowerCase() === 'p'
-        const marginBottom = isLastParagraph ? 0 : parseFloat(style.marginBottom) || 0
-        return Math.max(bottom, rect.bottom - top + marginBottom)
-      }, 0)
+      return measurer.scrollHeight
     }
 
     const overflows = (parts: string[]) => {
-      return measureContentHeight(parts) > measurer.clientHeight
+      return measureContentHeight(parts) > pageHeight
     }
 
     const flushPage = () => {
@@ -298,7 +287,7 @@ export function useHorizontalPaging(
 
       const { style, text, className } = parsed
       const currentHeight = measureContentHeight(currentParts)
-      const remainingHeight = measurer.clientHeight - currentHeight
+      const remainingHeight = pageHeight - currentHeight
       const minRemainingHeight = (options.minRemainingLines || 0) * config.value.fontSize * config.value.lineHeight
       if (remainingHeight < minRemainingHeight) return null
 
@@ -406,7 +395,7 @@ export function useHorizontalPaging(
 
     const mergedPages = mergeOrphanPunctuationPages(pages)
 
-    document.body.removeChild(measurer)
+    container.removeChild(measurer)
     horizontalPages.value = mergedPages
     horizontalPageIndex.value = Math.min(horizontalPageIndex.value, mergedPages.length - 1)
 

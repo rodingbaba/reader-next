@@ -484,7 +484,7 @@ async function handleRefreshBooks() {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding-bottom: var(--space-6);
+  padding-bottom: calc(84px + var(--safe-area-bottom));
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
