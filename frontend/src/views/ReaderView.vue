@@ -3057,9 +3057,20 @@ watch(() => store.isSpeaking, (speaking) => {
 })
 
 watch(
-  [() => store.isNight, () => store.currentTheme.body, () => appStore.theme],
-  ([isNight, body]) => {
-    applySystemTheme(isNight ? 'dark' : appStore.theme, body)
+  [
+    () => store.isNight,
+    () => store.currentTheme.body,
+    () => store.currentTheme.popup,
+    () => appStore.theme,
+    () => showControls.value,
+    () => store.activePanel
+  ],
+  ([isNight, body, popup, theme, showControlsVal, activePanelVal]) => {
+    let resolvedColor = body
+    if (showControlsVal || activePanelVal) {
+      resolvedColor = isNight || theme === 'dark' ? '#141414' : popup
+    }
+    applySystemTheme(isNight ? 'dark' : theme, resolvedColor)
   },
   { immediate: true },
 )
@@ -3805,7 +3816,7 @@ watch(
 }
 
 .horizontal-next-floating {
-  position: absolute;
+  position: fixed;
   left: 50%;
   bottom: calc(20px + var(--safe-area-bottom));
   transform: translateX(-50%);

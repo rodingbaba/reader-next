@@ -156,7 +156,7 @@ defineEmits<{
 
 <style scoped>
 .mobile-controls {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 30;
   pointer-events: none;
