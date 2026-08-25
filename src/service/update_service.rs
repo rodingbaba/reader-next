@@ -13,6 +13,7 @@ const UPDATE_CACHE_NAME: &str = "version-update-cache";
 const UPDATE_PREFERENCES_NAME: &str = "version-update-preferences";
 const LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/rodingbaba/reader-next/releases/latest";
+const UPDATE_CACHE_TTL_MS: i64 = 6 * 60 * 60 * 1000;
 
 #[derive(Clone)]
 pub struct UpdateService {

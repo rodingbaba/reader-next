@@ -3934,7 +3934,7 @@ watch(
   }
 
   .horizontal-page {
-    padding: var(--reader-margin-top) var(--reader-margin-right) max(8px, calc(var(--reader-margin-bottom) - 16px)) var(--reader-margin-left);
+    padding: var(--reader-margin-top) var(--reader-margin-right) var(--reader-margin-bottom) var(--reader-margin-left);
   }
 
   .continuous-reading {

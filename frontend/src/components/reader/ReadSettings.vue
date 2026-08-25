@@ -106,30 +106,41 @@
       </div>
 
       <!-- 页面边距 -->
-      <div class="setting-row">
-        <label>页面上下边距</label>
-        <div class="stepper">
-          <button class="step-btn" @click="step('marginTop', -2, 0, 100); step('marginBottom', -2, 0, 100)">—</button>
-          <span class="step-val">{{ config.marginTop }}</span>
-          <button class="step-btn" @click="step('marginTop', 2, 0, 100); step('marginBottom', 2, 0, 100)">+</button>
+      <template v-if="config.readMethod === '左右翻页'">
+        <div class="setting-row">
+          <label>页面上边距</label>
+          <div class="stepper">
+            <button class="step-btn" @click="step('marginTop', -2, 0, 100)">—</button>
+            <span class="step-val">{{ config.marginTop }}</span>
+            <button class="step-btn" @click="step('marginTop', 2, 0, 100)">+</button>
+          </div>
         </div>
-      </div>
+
+        <div class="setting-row">
+          <label>页面下边距</label>
+          <div class="stepper">
+            <button class="step-btn" @click="step('marginBottom', -2, 0, 100)">—</button>
+            <span class="step-val">{{ config.marginBottom }}</span>
+            <button class="step-btn" @click="step('marginBottom', 2, 0, 100)">+</button>
+          </div>
+        </div>
+      </template>
 
       <div class="setting-row">
-        <label>页面左右边距</label>
+        <label>页面左边距</label>
         <div class="stepper">
-          <button class="step-btn" @click="step('marginLeft', -2, 0, 100); step('marginRight', -2, 0, 100)">—</button>
+          <button class="step-btn" @click="step('marginLeft', -2, 0, 100)">—</button>
           <span class="step-val">{{ config.marginLeft }}</span>
-          <button class="step-btn" @click="step('marginLeft', 2, 0, 100); step('marginRight', 2, 0, 100)">+</button>
+          <button class="step-btn" @click="step('marginLeft', 2, 0, 100)">+</button>
         </div>
       </div>
 
-      <!-- 页面模式 -->
       <div class="setting-row">
-        <label>页面模式</label>
-        <div class="btn-group">
-          <button class="opt-btn" :class="{ active: config.pageMode === 'auto' }" @click="store.updateConfig('pageMode', 'auto')">自适应</button>
-          <button class="opt-btn" :class="{ active: config.pageMode === 'mobile' }" @click="store.updateConfig('pageMode', 'mobile')">手机模式</button>
+        <label>页面右边距</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('marginRight', -2, 0, 100)">—</button>
+          <span class="step-val">{{ config.marginRight }}</span>
+          <button class="step-btn" @click="step('marginRight', 2, 0, 100)">+</button>
         </div>
       </div>
 
