@@ -1095,6 +1095,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+
+
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAiBookStore } from '../stores/aiBook'
@@ -3065,9 +3067,7 @@ watch(
 
 <style scoped>
 .reader-view {
-  height: 100vh;
-  height: 100dvh;
-  height: var(--app-visual-height, var(--app-height, 100dvh));
+  height: var(--app-height, 100dvh);
   width: 100%;
   display: flex;
   position: relative;
@@ -3860,13 +3860,16 @@ watch(
 
 .reader-drawer {
   position: fixed;
-  top: var(--safe-area-top);
-  bottom: var(--safe-area-bottom);
+  top: 0;
+  bottom: 0;
   left: 0;
   width: min(340px, 85vw);
   z-index: 50;
   box-shadow: 4px 0 24px rgba(0,0,0,0.15);
   transition: background 0.3s;
+  padding-top: var(--safe-area-top);
+  padding-bottom: 8px;
+  box-sizing: border-box;
 }
 
 .selection-menu {
@@ -3925,9 +3928,13 @@ watch(
   }
 
   .chapter-content {
-    padding: var(--reader-margin-top) var(--reader-margin-right) var(--reader-margin-bottom) var(--reader-margin-left);
+    padding: var(--reader-margin-top) var(--reader-margin-right) max(8px, calc(var(--reader-margin-bottom) - 16px)) var(--reader-margin-left);
     min-height: auto;
     height: auto;
+  }
+
+  .horizontal-page {
+    padding: var(--reader-margin-top) var(--reader-margin-right) max(8px, calc(var(--reader-margin-bottom) - 16px)) var(--reader-margin-left);
   }
 
   .continuous-reading {
@@ -3954,11 +3961,11 @@ watch(
   }
 
   .reader-drawer {
-    top: var(--safe-area-top);
-    bottom: var(--safe-area-bottom);
+    top: 0;
+    bottom: 0;
     width: min(340px, 85vw);
     padding-top: var(--safe-area-top);
-    padding-bottom: var(--safe-area-bottom);
+    padding-bottom: 4px;
     box-sizing: border-box;
   }
 }

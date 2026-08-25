@@ -46,4 +46,11 @@ const router = createRouter({
   ],
 })
 
+import { syncViewportSize } from '../utils/viewport'
+router.afterEach(() => {
+  setTimeout(() => {
+    syncViewportSize()
+  }, 50)
+})
+
 export default router

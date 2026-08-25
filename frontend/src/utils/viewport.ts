@@ -16,8 +16,24 @@ function getViewportMetrics() {
   }
 
   const viewport = window.visualViewport
+  const isStandalone = typeof window !== 'undefined' && ('standalone' in window.navigator || window.matchMedia('(display-mode: standalone)').matches)
+  const isIOS = typeof window !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
   const layoutHeightCandidates = [window.innerHeight, document.documentElement.clientHeight]
+  
+  if (isStandalone && isIOS && window.screen?.height && window.screen?.width) {
+    const isPortrait = window.innerHeight >= window.innerWidth
+    const screenLong = Math.max(window.screen.height, window.screen.width)
+    const screenShort = Math.min(window.screen.height, window.screen.width)
+    layoutHeightCandidates.push(isPortrait ? screenLong : screenShort)
+  }
+  
   const layoutWidthCandidates = [window.innerWidth, document.documentElement.clientWidth]
+  if (isStandalone && isIOS && window.screen?.height && window.screen?.width) {
+    const isPortrait = window.innerHeight >= window.innerWidth
+    const screenLong = Math.max(window.screen.height, window.screen.width)
+    const screenShort = Math.min(window.screen.height, window.screen.width)
+    layoutWidthCandidates.push(isPortrait ? screenShort : screenLong)
+  }
   const validHeights = layoutHeightCandidates.filter(value => Number.isFinite(value) && value > 0)
   const validWidths = layoutWidthCandidates.filter(value => Number.isFinite(value) && value > 0)
   const height = validHeights.length ? Math.max(...validHeights) : 0
@@ -79,13 +95,6 @@ function setViewportCssVariables() {
   root.style.setProperty('--viewport-offset-left', nextOffsetLeft)
   root.style.setProperty('--viewport-offset-bottom', nextOffsetBottom)
   root.style.setProperty('--viewport-offset-right', nextOffsetRight)
-  root.style.setProperty('height', nextHeight)
-  root.style.setProperty('min-height', nextHeight)
-
-  if (document.body) {
-    document.body.style.setProperty('height', nextHeight)
-    document.body.style.setProperty('min-height', nextHeight)
-  }
 
   if (changed) {
     window.dispatchEvent(new CustomEvent(APP_VIEWPORT_CHANGE_EVENT, { detail: metrics }))
@@ -102,7 +111,7 @@ export function syncViewportSize() {
 
 export function registerViewportSync() {
   if (typeof window === 'undefined') {
-    return () => {}
+    return () => { }
   }
 
   if (cleanupViewportSync) return cleanupViewportSync

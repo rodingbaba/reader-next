@@ -108,6 +108,7 @@
         </button>
       </div>
     </Transition>
+
   </div>
 </template>
 
@@ -148,6 +149,9 @@ defineEmits<{
   tts: []
   progress: []
 }>()
+
+
+
 </script>
 
 <style scoped>
@@ -205,14 +209,14 @@ defineEmits<{
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 16px calc(16px + var(--safe-area-right)) calc(16px + var(--safe-area-bottom)) calc(16px + var(--safe-area-left));
+  padding: 16px calc(16px + var(--safe-area-right)) var(--safe-area-bottom) calc(16px + var(--safe-area-left));
   background: var(--popup-bg);
   z-index: 20;
   box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
   color: var(--font-color);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   box-sizing: border-box;
   pointer-events: auto;
 }
@@ -283,13 +287,13 @@ defineEmits<{
 
 .m-float {
   position: absolute;
-  top: calc(50% + (var(--safe-area-top) - var(--safe-area-bottom)) / 2);
+  top: calc(50% + var(--safe-area-top) / 2);
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   gap: 16px;
   z-index: 20;
-  max-height: calc(100% - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  max-height: calc(100% - var(--safe-area-top) - 32px);
   overflow: auto;
   scrollbar-width: none;
   pointer-events: auto;
@@ -347,6 +351,7 @@ defineEmits<{
 
   .m-bottom-bar {
     gap: 12px;
+    padding: 10px calc(14px + var(--safe-area-right)) var(--safe-area-bottom) calc(14px + var(--safe-area-left));
   }
 
   .progress-row {

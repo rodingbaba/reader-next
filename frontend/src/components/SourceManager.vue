@@ -623,8 +623,8 @@ watch(() => props.modelValue, (v) => {
 
 .source-modal {
   width: min(1180px, 100%);
-  height: min(780px, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
-  max-height: min(88vh, calc(var(--app-height, 100dvh) - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+  height: min(780px, calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+  max-height: min(88vh, calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
   background: var(--color-bg-elevated);
   border-radius: var(--radius-xl);
   display: flex;
@@ -765,8 +765,8 @@ watch(() => props.modelValue, (v) => {
 
   .source-modal {
     width: 100%;
-    height: calc(var(--app-height, 100dvh) - 16px);
-    max-height: calc(var(--app-height, 100dvh) - 16px);
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
     border-radius: 24px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;

@@ -196,7 +196,11 @@ export function useHorizontalPaging(
   }
 
   function getHorizontalPageMeasure(container: HTMLElement) {
-    const availableHeight = container.clientHeight - config.value.marginTop - config.value.marginBottom
+    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768
+    const effectiveMarginBottom = isMobile
+      ? Math.max(8, config.value.marginBottom - 16)
+      : config.value.marginBottom
+    const availableHeight = container.clientHeight - config.value.marginTop - effectiveMarginBottom
 
     return {
       innerWidth: Math.max(120, horizontalPageStep.value - config.value.marginLeft - config.value.marginRight),
