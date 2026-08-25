@@ -1,5 +1,5 @@
-const SHELL_CACHE = 'reader-shell-v1-0-12'
-const RUNTIME_CACHE = 'reader-runtime-v1-0-12'
+const SHELL_CACHE = 'reader-shell-v1-0-16'
+const RUNTIME_CACHE = 'reader-runtime-v1-0-16'
 '/index.html',
   '/offline.html',
   '/site.webmanifest',
