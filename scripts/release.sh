@@ -174,8 +174,7 @@ gh release create "$TAG" \
   --generate-notes
 
 echo "Release completed: $TAG"
-echo "GitHub release: https://github.com/Maple0517/reader-next/releases/tag/${TAG}"
-echo "Docker publish workflow should create:"
+echo "GitHub release: https://github.com/rodingbaba/reader-next/releases/tag/${TAG}"
 echo "  ${DOCKER_REPO}:${TAG}"
 echo "  ${DOCKER_REPO}:${SEMVER}"
 echo "  ${DOCKER_REPO}:${SEMVER%.*}"

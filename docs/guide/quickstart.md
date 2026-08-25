@@ -9,8 +9,7 @@
 ## 克隆项目
 
 ```bash
-git clone https://github.com/Maple0517/reader-next.git
-cd reader-next
+git clone https://github.com/rodingbaba/reader-next.git
 ```
 
 ## 推荐启动方式
@@ -91,5 +90,5 @@ npm run docs:dev
 线上地址：
 
 ```text
-https://maple0517.github.io/reader-next/
+https://rodingbaba.github.io/reader-next/
 ```

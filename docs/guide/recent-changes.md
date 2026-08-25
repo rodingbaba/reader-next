@@ -58,5 +58,4 @@
 
 ## 文档站
 
-- GitHub Pages 地址：`https://maple0517.github.io/reader-next/`
-- README 和 Pages 首页已调整为当前主线：章节摘要、AI 资料、AI 追赶、provider preset、本地书籍和单端口开发。
+- GitHub Pages 地址：`https://rodingbaba.github.io/reader-next/`

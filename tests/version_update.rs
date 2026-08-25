@@ -15,8 +15,7 @@ fn dismissed_latest_release_remains_update_without_reminder() {
     let release = GithubRelease {
         tag_name: "v1.0.6".to_string(),
         name: Some("v1.0.6".to_string()),
-        html_url: "https://github.com/Maple0517/reader-next/releases/tag/v1.0.6".to_string(),
-        published_at: Some("2026-05-15T08:00:00Z".to_string()),
+        html_url: "https://github.com/rodingbaba/reader-next/releases/tag/v1.0.6".to_string(),
     };
     let preferences = UpdatePreferences {
         dismissed_version: Some("v1.0.6".to_string()),

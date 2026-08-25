@@ -3,8 +3,7 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/reader/app}"
 BRANCH="${BRANCH:-main}"
-REPO="${REPO:-https://github.com/Maple0517/reader-next.git}"
-
+REPO="${REPO:-https://github.com/rodingbaba/reader-next.git}"
 if [[ ! -d "$APP_DIR/.git" ]]; then
   mkdir -p "$(dirname "$APP_DIR")"
   git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
