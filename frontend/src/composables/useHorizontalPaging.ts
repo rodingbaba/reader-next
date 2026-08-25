@@ -220,6 +220,11 @@ export function useHorizontalPaging(
       horizontalPages.value = []
       return
     }
+
+    // Capture current progress before rebuild
+    const oldMaxPage = Math.max(0, horizontalPages.value.length - 1)
+    const oldProgress = oldMaxPage <= 0 ? 0 : horizontalPageIndex.value / oldMaxPage
+
     await nextTick()
     const container = scrollContainerRef.value
     if (!container) return
@@ -397,7 +402,10 @@ export function useHorizontalPaging(
 
     container.removeChild(measurer)
     horizontalPages.value = mergedPages
-    horizontalPageIndex.value = Math.min(horizontalPageIndex.value, mergedPages.length - 1)
+
+    // Restore relative progress
+    const newMaxPage = Math.max(0, mergedPages.length - 1)
+    horizontalPageIndex.value = Math.round(newMaxPage * oldProgress)
 
     container.scrollTo({ left: 0, behavior: 'auto' })
     updateHorizontalEndState()

@@ -42,7 +42,8 @@
             <div class="progress-fill" :style="{ width: store.readingProgress }"></div>
             <div class="progress-thumb" :style="{ left: store.readingProgress }"></div>
           </div>
-          <span class="page-text">第 1/1 页</span>
+          <span class="page-text" v-if="currentPage && totalPages">第 {{ currentPage }} / {{ totalPages }} 页</span>
+          <span class="page-text" v-else>第 1/1 页</span>
         </div>
         <div class="nav-row">
           <div class="nav-btn" :class="{ disabled: !store.hasPrev }" @click="$emit('prev')">
@@ -134,6 +135,8 @@ defineProps<{
   show: boolean
   isSpeaking?: boolean
   isPaused?: boolean
+  currentPage?: number
+  totalPages?: number
 }>()
 
 defineEmits<{

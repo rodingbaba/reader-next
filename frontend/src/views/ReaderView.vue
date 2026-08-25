@@ -60,6 +60,8 @@
     <ReaderMobileControls
       v-if="isMobile"
       :show="showControls || !!store.activePanel"
+      :current-page="isHorizontalPageMode ? horizontalPageIndex + 1 : undefined"
+      :total-pages="isHorizontalPageMode ? Math.max(1, horizontalPages.length) : undefined"
       @goHome="goHome"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
@@ -1619,17 +1621,15 @@ function scheduleRefreshOfflineCacheState() {
 function checkMedia() {
   viewportWidth.value = window.innerWidth
   isMobile.value = window.innerWidth <= 768
-  window.setTimeout(() => {
-    updateHorizontalMetrics()
-    if (isHorizontalPageMode.value) {
-      rebuildHorizontalPages()
-    }
-  }, 0)
+  updateHorizontalMetrics()
 }
 
 function handleViewportChange() {
   syncViewportSize()
   checkMedia()
+  if (isHorizontalPageMode.value) {
+    rebuildHorizontalPages()
+  }
   scheduleRestoreReadingPosition()
 }
 
@@ -2090,22 +2090,22 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
   }
 
   if (isHorizontalPageMode.value) {
-    if (store.loading || container.scrollWidth <= container.clientWidth + 4) {
+    if (store.loading || !horizontalPages.value.length) {
       debugPositionLog('restore waiting: horizontal content not ready', {
         saved,
         loading: store.loading,
-        scrollWidth: container.scrollWidth,
-        clientWidth: container.clientWidth,
+        pages: horizontalPages.value.length
       })
       return false
     }
-    const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth)
-    container.scrollTo({ left: maxScroll * Math.max(0, Math.min(1, saved.progress || 0)), behavior: 'auto' })
+    const maxPage = Math.max(0, horizontalPages.value.length - 1)
+    horizontalPageIndex.value = Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0)))
+    updateHorizontalEndState()
     if (finalize) {
       pendingRestorePosition.value = null
       pendingRestoreAttempts = 0
     }
-    debugPositionLog('restored horizontal position', { saved, maxScroll })
+    debugPositionLog('restored horizontal position', { saved, maxPage, horizontalPageIndex: horizontalPageIndex.value })
     return true
   }
 
@@ -2837,7 +2837,12 @@ onMounted(async () => {
   document.addEventListener('touchend', handleTouchEndSelection)
     document.addEventListener('selectionchange', handleSelectionChange)
     checkMedia()
-    window.addEventListener('resize', checkMedia)
+    window.addEventListener('resize', () => {
+      checkMedia()
+      if (isHorizontalPageMode.value) {
+        rebuildHorizontalPages()
+      }
+    })
     window.addEventListener(APP_VIEWPORT_CHANGE_EVENT, handleViewportChange)
     window.addEventListener('pagehide', handlePageHide)
     window.addEventListener('beforeunload', handleBeforeUnload)
@@ -2969,9 +2974,12 @@ watch(
 
 watch(
   [() => store.content, () => config.value.fontSize, () => config.value.fontWeight, () => config.value.lineHeight, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.marginTop, () => config.value.marginBottom, () => config.value.marginLeft, () => config.value.marginRight, showSearch, searchQuery],
-  () => {
+  (newValues, oldValues) => {
     if (isHorizontalPageMode.value) {
-      horizontalPageIndex.value = 0
+      if (newValues[0] !== oldValues[0]) {
+        horizontalPageIndex.value = 0
+        horizontalPages.value = [] // Clear pages so restore waits
+      }
       rebuildHorizontalPages()
     }
   },
