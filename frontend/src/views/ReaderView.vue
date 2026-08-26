@@ -1230,7 +1230,10 @@ const offlineCachedCount = ref(0)
 const chapterSummary = ref<ChapterSummaryRecord | null>(null)
 const chapterSummaryStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const chapterSummaryError = ref('')
-const showAiPanel = ref(config.value.showAiPanel)
+const showAiPanel = computed(() => {
+  if (!store.book) return false
+  return appStore.enabledAiPanelBooks.includes(store.book.bookUrl)
+})
 type AiPanelTab = 'summary' | 'relationships' | 'map' | 'settings'
 const aiPanelActiveTab = ref<AiPanelTab>(config.value.aiPanelActiveTab)
 const chapterSummaryRelationshipMemory = ref<AiBookMemoryViewModel | null>(null)
@@ -2738,19 +2741,21 @@ async function openInfo() {
 }
 
 function toggleAiPanel() {
-  showAiPanel.value = !showAiPanel.value
-  store.updateConfig('showAiPanel', showAiPanel.value)
-  if (showAiPanel.value && !chapterSummary.value && chapterSummaryStatus.value !== 'loading') {
+  if (!store.book) return
+  const isEnabled = appStore.enabledAiPanelBooks.includes(store.book.bookUrl)
+  appStore.toggleAiPanel(store.book.bookUrl, !isEnabled)
+
+  if (!isEnabled && !chapterSummary.value && chapterSummaryStatus.value !== 'loading') {
     scheduleAutoChapterSummary(currentChapterSummaryIdentity.value)
-  } else if (!showAiPanel.value) {
+  } else if (isEnabled) {
     clearChapterSummaryTimer()
   }
-  appStore.showToast(showAiPanel.value ? '已显示 AI 面板' : '已隐藏 AI 面板', 'success')
+  appStore.showToast(!isEnabled ? '已显示 AI 面板' : '已隐藏 AI 面板', 'success')
 }
 
 function hideAiPanel() {
-  showAiPanel.value = false
-  store.updateConfig('showAiPanel', false)
+  if (!store.book) return
+  appStore.toggleAiPanel(store.book.bookUrl, false)
   clearChapterSummaryTimer()
 }
 

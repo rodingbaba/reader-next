@@ -97,11 +97,20 @@
 
           <!-- Settings -->
           <div class="book-settings" v-if="book">
-            <span class="setting-title">显示未读红点</span>
-            <label class="switch">
-              <input type="checkbox" :checked="appStore.enabledUnreadBadgeBooks.includes((book as Book).bookUrl)" @change="appStore.toggleUnreadBadge((book as Book).bookUrl, ($event.target as HTMLInputElement).checked)">
-              <span class="slider"></span>
-            </label>
+            <div class="setting-item">
+              <span class="setting-title">显示未读红点</span>
+              <label class="switch">
+                <input type="checkbox" :checked="appStore.enabledUnreadBadgeBooks.includes((book as Book).bookUrl)" @change="appStore.toggleUnreadBadge((book as Book).bookUrl, ($event.target as HTMLInputElement).checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <span class="setting-title">启用AI资料</span>
+              <label class="switch">
+                <input type="checkbox" :checked="appStore.enabledAiPanelBooks.includes((book as Book).bookUrl)" @change="appStore.toggleAiPanel((book as Book).bookUrl, ($event.target as HTMLInputElement).checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
 
           <!-- Actions -->
@@ -113,7 +122,7 @@
               </svg>
               {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
             </button>
-            <button class="action-btn" @click="openAiBook">
+            <button v-if="appStore.enabledAiPanelBooks.includes((book as Book).bookUrl)" class="action-btn" @click="openAiBook">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M12 2v4" />
                 <path d="M12 18v4" />
@@ -184,13 +193,19 @@ async function saveBookInfo() {
   savingInfo.value = true
   try {
     const updatedBook = await saveBook({
-      bookUrl: props.book.bookUrl,
+      ...props.book,
       name: editForm.name.trim(),
       author: editForm.author.trim()
     })
-    // Emit updated book
+    
+    // Mutate the local object directly so the modal UI updates instantly
+    const b = props.book as Book;
+    b.name = updatedBook.name || editForm.name.trim();
+    b.author = updatedBook.author || editForm.author.trim();
+    
+    // Emit updated book just in case
     emit('update:book', { ...props.book, ...updatedBook })
-    // Refresh shelf
+    // Refresh shelf (this fetches from server in background)
     await shelfStore.fetchBooks()
     isEditingInfo.value = false
     appStore.showToast('书籍信息已保存', 'success')
@@ -562,10 +577,16 @@ function openAiBook() {
 
 .book-settings {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+}
+
+.setting-item {
+  display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-4);
 }
 
 .setting-title {

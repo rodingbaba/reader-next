@@ -15,6 +15,7 @@ export const useAppStore = defineStore('app', () => {
     savedTheme || (legacyReaderNight ? 'dark' : 'light')
   )
   const enabledUnreadBadgeBooks = ref<string[]>(JSON.parse(localStorage.getItem('enabledUnreadBadgeBooks') || '[]'))
+  const enabledAiPanelBooks = ref<string[]>(JSON.parse(localStorage.getItem('enabledAiPanelBooks') || '[]'))
 
   function toggleUnreadBadge(bookUrl: string, enabled: boolean) {
     if (!enabled) {
@@ -25,6 +26,17 @@ export const useAppStore = defineStore('app', () => {
       }
     }
     localStorage.setItem('enabledUnreadBadgeBooks', JSON.stringify(enabledUnreadBadgeBooks.value))
+  }
+
+  function toggleAiPanel(bookUrl: string, enabled: boolean) {
+    if (!enabled) {
+      enabledAiPanelBooks.value = enabledAiPanelBooks.value.filter(u => u !== bookUrl)
+    } else {
+      if (!enabledAiPanelBooks.value.includes(bookUrl)) {
+        enabledAiPanelBooks.value.push(bookUrl)
+      }
+    }
+    localStorage.setItem('enabledAiPanelBooks', JSON.stringify(enabledAiPanelBooks.value))
   }
 
   function setTheme(value: 'light' | 'dark') {
@@ -288,5 +300,6 @@ export const useAppStore = defineStore('app', () => {
     readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,
     toasts, showToast,
     enabledUnreadBadgeBooks, toggleUnreadBadge,
+    enabledAiPanelBooks, toggleAiPanel,
   }
 })
