@@ -26,14 +26,36 @@
               </div>
             </div>
             <div class="book-header-info">
-              <h2>{{ book.name }}</h2>
-              <p class="author">{{ book.author || '未知作者' }}</p>
-              <div class="book-tags">
+              <div v-if="!isEditingInfo" class="title-row">
+                <h2>{{ book.name }}</h2>
+                <button class="edit-btn" @click="startEditingInfo">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                  </svg>
+                </button>
+              </div>
+              <div v-else class="title-row edit-mode">
+                <input v-model="editForm.name" class="edit-input" placeholder="书名" />
+              </div>
+
+              <div v-if="!isEditingInfo" class="author-row">
+                <p class="author">{{ book.author || '未知作者' }}</p>
+              </div>
+              <div v-else class="author-row edit-mode">
+                <input v-model="editForm.author" class="edit-input" placeholder="作者" />
+              </div>
+              
+              <div v-if="isEditingInfo" class="edit-actions-inline">
+                <button @click="saveBookInfo" class="save-btn" :disabled="savingInfo">保存</button>
+                <button @click="isEditingInfo = false" class="cancel-btn" :disabled="savingInfo">取消</button>
+              </div>
+
+              <div class="book-tags" v-if="!isEditingInfo">
                 <span v-if="book.kind" class="tag">{{ book.kind }}</span>
                 <span v-if="(book as Book).totalChapterNum" class="tag">共{{ (book as Book).totalChapterNum }}章</span>
                 <span v-if="(book as Book).originName" class="tag origin">{{ (book as Book).originName }}</span>
               </div>
-              <p v-if="(book as Book).durChapterTitle" class="progress">
+              <p v-if="(book as Book).durChapterTitle && !isEditingInfo" class="progress">
                 已读至：{{ (book as Book).durChapterTitle }}
               </p>
             </div>
@@ -110,9 +132,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getCoverUrl, getChapterList } from '../api/bookshelf'
+import { getCoverUrl, getChapterList, saveBook } from '../api/bookshelf'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -127,6 +149,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  'update:book': [book: Book | SearchBook]
 }>()
 
 const router = useRouter()
@@ -137,6 +160,46 @@ const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
 const chaptersLoading = ref(false)
 const showAllChapters = ref(false)
+
+const isEditingInfo = ref(false)
+const savingInfo = ref(false)
+const editForm = reactive({
+  name: '',
+  author: ''
+})
+
+function startEditingInfo() {
+  if (!props.book) return
+  editForm.name = props.book.name
+  editForm.author = props.book.author
+  isEditingInfo.value = true
+}
+
+async function saveBookInfo() {
+  if (!props.book) return
+  if (!editForm.name.trim()) {
+    appStore.showToast('书名不能为空', 'warning')
+    return
+  }
+  savingInfo.value = true
+  try {
+    const updatedBook = await saveBook({
+      bookUrl: props.book.bookUrl,
+      name: editForm.name.trim(),
+      author: editForm.author.trim()
+    })
+    // Emit updated book
+    emit('update:book', { ...props.book, ...updatedBook })
+    // Refresh shelf
+    await shelfStore.fetchBooks()
+    isEditingInfo.value = false
+    appStore.showToast('书籍信息已保存', 'success')
+  } catch (e: any) {
+    appStore.showToast(e.message || '保存失败', 'error')
+  } finally {
+    savingInfo.value = false
+  }
+}
 
 const coverSrc = computed(() => {
   if (coverFailed.value || !props.book) return ''
@@ -558,5 +621,91 @@ input:focus + .slider {
 
 input:checked + .slider:before {
   transform: translateX(16px);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.title-row h2 {
+  margin-bottom: 0 !important;
+}
+
+.author-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.edit-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast);
+}
+
+.edit-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.edit-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.edit-input {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.title-row.edit-mode .edit-input {
+  font-size: var(--text-base);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.author-row.edit-mode .edit-input {
+  margin-bottom: var(--space-3);
+}
+
+.edit-actions-inline {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.edit-actions-inline button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.edit-actions-inline .save-btn {
+  background: var(--color-primary);
+  color: white;
+}
+
+.edit-actions-inline .cancel-btn {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
 }
 </style>
