@@ -57,7 +57,9 @@ docker run -d \
   --name reader-next \
   --restart unless-stopped \
   -p 18080:18080 \
-  -v reader-storage:/app/storage \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -v ./storage:/app/storage \
   ghcr.io/rodingbaba/reader-next:latest
 ```
 
@@ -128,6 +130,8 @@ services:
     container_name: reader-next
     restart: unless-stopped
     environment:
+      PUID: 1000
+      PGID: 1000
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 18080
       DATABASE_URL: sqlite:/app/storage/reader.db?mode=rwc
@@ -145,16 +149,13 @@ services:
     ports:
       - "18080:18080"
     volumes:
-      - reader-storage:/app/storage
+      - ./storage:/app/storage
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18080/ >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
-
-volumes:
-  reader-storage:
 ```
 
 启动：
@@ -171,6 +172,9 @@ docker compose up -d
 ```
 
 注意：`SECURE="false"` 即开启**单用户模式**，所有人访问该系统都将直接获取到 `admin` 管理员权限。因此**仅限在可信内网或本地电脑使用**！如果需要公网暴露或多用户隔离，请务必改回 `SECURE="true"`，并配置 `SECURE_KEY` 与 `INVITE_CODE`。
+
+**关于权限问题 (PUID / PGID)**:
+容器默认以指定的 `PUID` 和 `PGID` (默认 10001) 运行，并在启动时自动修正 `/app/storage` 的读写权限。这可以避免使用绑定挂载 (`./storage`) 时产生的 `Permission denied` 错误。你可以将它们修改为你宿主机的当前用户的 UID 和 GID。
 
 完整 Docker 部署和发布说明见 [docs/deploy/docker.md](docs/deploy/docker.md)。
 

@@ -21,15 +21,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get -o Acquire::Retries=3 update \
-    && apt-get install -y -o Acquire::Retries=3 --no-install-recommends ca-certificates curl libsqlite3-0 tzdata \
+    && apt-get install -y -o Acquire::Retries=3 --no-install-recommends ca-certificates curl libsqlite3-0 tzdata gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-RUN useradd --system --uid 10001 --create-home --home-dir /app reader
+RUN groupadd -g 10001 reader && \
+    useradd --system --uid 10001 --gid 10001 --home-dir /app reader
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --from=backend-builder /app/reader-next /app/reader-next
 COPY --from=frontend-builder /app/frontend/dist /app/web/dist
-RUN mkdir -p /app/storage/assets \
-    && chown -R reader:reader /app/storage
+RUN mkdir -p /app/storage/assets
 
 ENV SERVER_HOST=0.0.0.0 \
     SERVER_PORT=18080 \
@@ -42,7 +44,7 @@ ENV SERVER_HOST=0.0.0.0 \
 
 EXPOSE 18080
 VOLUME ["/app/storage"]
-USER reader
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
     CMD curl -fsS http://127.0.0.1:18080/ >/dev/null || exit 1
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/app/reader-next"]
