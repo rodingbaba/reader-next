@@ -896,7 +896,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_get_memory_wraps_api_response() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-memory";
         seed_shelf_book(&state, user_ns, book_url).await;
         state
@@ -937,7 +937,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_get_memory_allows_missing_shelf_book() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-memory-no-shelf";
         state
             .ai_book_service
@@ -976,7 +976,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_get_chapter_memory_allows_missing_shelf_book() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-chapter-no-shelf";
         let mut memory = create_empty_ai_book_memory_v3(
             book_url,
@@ -1029,7 +1029,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_get_catchup_status_allows_missing_shelf_book() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-catchup-no-shelf";
         let mut memory = create_empty_ai_book_memory_v3(
             book_url,
@@ -1074,7 +1074,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_reset_and_enabled_handlers_return_memory_view() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-actions";
         seed_shelf_book(&state, user_ns, book_url).await;
 
@@ -1128,7 +1128,7 @@ mod tests {
     #[tokio::test]
     async fn ai_book_v3_map_generate_persists_blueprint_when_image_model_disabled() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://api-map-disabled";
         seed_shelf_book(&state, user_ns, book_url).await;
         let mut memory = create_empty_ai_book_memory_v3(
@@ -1291,7 +1291,7 @@ mod tests {
     #[tokio::test]
     async fn persist_catchup_status_saves_stats_for_v3_memory() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://catchup-v3";
         seed_shelf_book(&state, user_ns, book_url).await;
         state
@@ -1345,7 +1345,7 @@ mod tests {
     #[tokio::test]
     async fn catchup_save_memory_persists_v3_via_typed_path() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://catchup-save-v3";
         let mut memory = create_empty_ai_book_memory_v3(
             book_url,
@@ -1379,7 +1379,7 @@ mod tests {
     #[tokio::test]
     async fn catchup_start_rejects_when_same_book_generation_guard_is_held() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book://catchup-guard";
         seed_shelf_book(&state, user_ns, book_url).await;
         let _guard = state
@@ -1407,7 +1407,7 @@ mod tests {
     #[tokio::test]
     async fn idle_catchup_status_does_not_restore_persisted_public_task() {
         let (state, dir) = create_test_state().await;
-        let user_ns = "default";
+        let user_ns = "admin";
         let book_url = "book-a";
         let mut memory = create_empty_ai_book_memory_v3(
             book_url,

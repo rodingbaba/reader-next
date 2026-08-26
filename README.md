@@ -111,9 +111,15 @@ docker compose -f deploy/compose.yml up -d
 - `ghcr.io/rodingbaba/reader-next:X.Y.Z`：同一个固定版本，不带 `v`。
 - `ghcr.io/rodingbaba/reader-next:X.Y`：同一 minor 的最新版本。
 
-### 纯内网部署（无密码）
+### 单用户模式（纯内网部署）
 
-适合内网环境直接拉起一个不开启安全模式、不设邀请码的实例。把下面的内容存成 `docker-compose.yml`，然后 `docker compose up -d` 即可。
+适合内网环境直接拉起一个开箱即用的单用户实例。配置 `SECURE="false"` 后，将启用单用户模式：
+- **无需登录**：打开网页即用，隐藏登录界面与多用户配置功能。
+- **内置账号**：系统自动启用内置账号 `admin`，默认密码 `123456`。
+- **无缝备份**：支持服务端数据备份及本地文件上传同步。
+- **客户端直连**：第三方客户端（如 iOS IPA 阅读器）可通过 `admin/123456` 直接连接服务器 WebDAV 或 API 进行同步。
+
+把下面的内容存成 `docker-compose.yml`，然后 `docker compose up -d` 即可。
 
 ```yaml
 services:
@@ -164,7 +170,7 @@ docker compose pull
 docker compose up -d
 ```
 
-注意：`SECURE=false` 表示不启用安全模式，任何人能直接访问 Reader 并注册（受 `USER_LIMIT` 限制），仅在可信内网使用。如果需要公网暴露，请改回 `SECURE=true` 并配置 `SECURE_KEY` 与 `INVITE_CODE`。
+注意：`SECURE="false"` 即开启**单用户模式**，所有人访问该系统都将直接获取到 `admin` 管理员权限。因此**仅限在可信内网或本地电脑使用**！如果需要公网暴露或多用户隔离，请务必改回 `SECURE="true"`，并配置 `SECURE_KEY` 与 `INVITE_CODE`。
 
 完整 Docker 部署和发布说明见 [docs/deploy/docker.md](docs/deploy/docker.md)。
 

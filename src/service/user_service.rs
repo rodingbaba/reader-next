@@ -139,6 +139,19 @@ impl UserService {
         access_token: Option<&str>,
         secure_key: Option<&str>,
     ) -> Result<(Option<Value>, bool, bool, bool), AppError> {
+        if !self.cfg.secure {
+            if let Ok(users) = self.load_users().await {
+                if let Some(admin_user) = users.get("admin") {
+                    return Ok((
+                        Some(self.format_user(admin_user)),
+                        false,
+                        false,
+                        true,
+                    ));
+                }
+            }
+        }
+
         let admin_authorized = self.is_admin(access_token, secure_key).await?;
         if let Some(token) = access_token {
             match self.check_auth(token).await {
@@ -438,7 +451,7 @@ impl UserService {
             }
         }
         if !self.cfg.secure {
-            return Ok("default".to_string());
+            return Ok("admin".to_string());
         }
         Err(AppError::BadRequest("NEED_LOGIN".to_string()))
     }
@@ -470,7 +483,7 @@ impl UserService {
         access_token: Option<&str>,
     ) -> Result<String, AppError> {
         if !self.cfg.secure {
-            return Err(AppError::BadRequest("仅安全模式支持WebDAV功能".to_string()));
+            return Ok("admin".to_string());
         }
         let token = access_token.ok_or_else(|| AppError::BadRequest("NEED_LOGIN".to_string()))?;
         let user = self
@@ -661,17 +674,39 @@ impl UserService {
         if row.is_some() {
             return Ok(());
         }
-        let row = sqlx::query(
-            "SELECT username FROM users ORDER BY CASE WHEN created_at <= 0 THEN 9223372036854775807 ELSE created_at END ASC, username ASC LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(row) = row {
-            let username: String = row.get("username");
-            sqlx::query("UPDATE users SET is_admin=1 WHERE username=?1")
-                .bind(username)
-                .execute(&self.pool)
-                .await?;
+        let row = sqlx::query("SELECT username FROM users LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await?;
+        if row.is_some() {
+            let row2 = sqlx::query(
+                "SELECT username FROM users ORDER BY CASE WHEN created_at <= 0 THEN 9223372036854775807 ELSE created_at END ASC, username ASC LIMIT 1",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            if let Some(row2) = row2 {
+                let username: String = row2.get("username");
+                sqlx::query("UPDATE users SET is_admin=1 WHERE username=?1")
+                    .bind(username)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        } else {
+            let salt = random_string(8);
+            let password = gen_encrypted_password("123456", &salt);
+            let admin = User {
+                username: "admin".to_string(),
+                password,
+                salt,
+                token: "default".to_string(),
+                last_login_at: now_ms(),
+                created_at: now_ms(),
+                enable_ai_model: true,
+                is_admin: true,
+                enable_webdav: true,
+                enable_local_store: true,
+                token_map: None,
+            };
+            self.upsert_user_row(&admin).await?;
         }
         Ok(())
     }
@@ -940,6 +975,7 @@ mod tests {
         let short_expire_at = now_ms() + 1000;
         let mut users = service.load_users().await.unwrap();
         let user = users.get_mut("reader2").unwrap();
+        user.is_admin = true;
         user.token_map
             .as_mut()
             .unwrap()
@@ -1039,8 +1075,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(logged_in_ns, "reader1");
-        assert_eq!(anonymous_ns, "default");
-        assert_eq!(invalid_token_ns, "default");
+        assert_eq!(anonymous_ns, "admin");
+        assert_eq!(invalid_token_ns, "admin");
 
         let _ = fs::remove_dir_all(temp_dir).await;
     }
@@ -1060,6 +1096,7 @@ mod tests {
             .unwrap();
 
         let mut users = service.load_users().await.unwrap();
+        users.remove("admin"); // 模拟没有 admin 用户的 legacy 场景
         users.get_mut("reader1").unwrap().is_admin = false;
         users.get_mut("reader1").unwrap().created_at = 100;
         users.get_mut("reader2").unwrap().is_admin = false;
@@ -1227,7 +1264,7 @@ mod tests {
         let (service, temp_dir) = create_user_service().await;
 
         let _admin = service
-            .login("admin", "password123", false, None)
+            .login("admin", "123456", true, None)
             .await
             .unwrap();
         let login = service

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <Teleport to="body">
     <Transition name="fade">
       <div v-if="modelValue" class="drawer-overlay" @click="close"></div>
@@ -33,9 +33,9 @@
                     <span class="user-name">{{ appStore.userInfo?.username }}</span>
                     <span class="user-role">{{ appStore.userInfo?.isAdmin ? '\u7ba1\u7406\u5458' : '\u666e\u901a\u7528\u6237' }}</span>
                   </div>
-                  <button class="action-btn danger" @click="handleLogout">&#27880;&#38144;</button>
+                  <button v-if="appStore.isSecureMode" class="action-btn danger" @click="handleLogout">&#27880;&#38144;</button>
                 </div>
-                <button class="action-btn inline-link" @click="togglePasswordPanel">
+                <button v-if="appStore.isSecureMode" class="action-btn inline-link" @click="togglePasswordPanel">
                   {{ showPasswordPanel ? '\u6536\u8d77\u4fee\u6539\u5bc6\u7801' : '\u4fee\u6539\u5bc6\u7801' }}
                 </button>
                 <div v-if="showPasswordPanel" class="password-panel embedded">
@@ -64,7 +64,7 @@
             </button>
           </section>
 
-          <section class="drawer-section">
+          <section v-if="appStore.isSecureMode" class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M12 3a4 4 0 0 0-4 4v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a4 4 0 0 0-4-4Z" />
@@ -111,7 +111,7 @@
             </div>
           </section>
 
-          <section class="drawer-section">
+          <section v-if="appStore.isSecureMode" class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -344,14 +344,11 @@ const userManagerMessage = computed(() => {
     ? '\u652f\u6301\u65b0\u589e\u7528\u6237\u3001\u91cd\u7f6e\u5bc6\u7801\u3001\u5220\u9664\u7528\u6237\u548c\u8c03\u6574\u6743\u9650\u3002'
     : '\u8bf7\u4f7f\u7528\u7ba1\u7406\u5458\u8d26\u53f7\u767b\u5f55\u540e\u518d\u8fdb\u884c\u7528\u6237\u7ba1\u7406\u3002'
 })
-const canOpenWebdav = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav)
+const canOpenWebdav = computed(() => appStore.isLoggedIn && !!appStore.userInfo?.enableWebdav)
 const webdavStatusTitle = computed(() => {
-  if (!appStore.isSecureMode) return '\u4ec5\u5b89\u5168\u6a21\u5f0f\u652f\u6301\u670d\u52a1\u5668\u5907\u4efd'
   if (!appStore.isLoggedIn) return '\u767b\u5f55\u540e\u53ef\u7528'
-  return appStore.userInfo?.enableWebdav ? '\u5f53\u524d\u8d26\u53f7\u5df2\u5f00\u542f\u670d\u52a1\u5668\u5907\u4efd' : '\u5f53\u524d\u8d26\u53f7\u672a\u5f00\u542f\u670d\u52a1\u5668\u5907\u4efd'
 })
 const webdavStatusMessage = computed(() => {
-  if (!appStore.isSecureMode) return '\u4e3a\u907f\u514d\u5171\u4eab\u5907\u4efd\u7a7a\u95f4\uff0c\u8bf7\u5148\u5f00\u542f\u591a\u7528\u6237\u5b89\u5168\u6a21\u5f0f\u3002'
   if (!appStore.isLoggedIn) return '\u767b\u5f55\u5e76\u5177\u5907\u5907\u4efd\u6743\u9650\u540e\uff0c\u53ef\u7ba1\u7406\u670d\u52a1\u5668\u4e2d\u7684\u5907\u4efd\u6587\u4ef6\u3002'
   return appStore.userInfo?.enableWebdav
     ? '\u652f\u6301\u5c06\u6570\u636e\u5907\u4efd\u5230\u670d\u52a1\u5668\u3001\u4e0b\u8f7d\u5907\u4efd\u6587\u4ef6\u3001\u4e0a\u4f20\u5907\u4efd\u6587\u4ef6\u5e76\u6267\u884c\u6062\u590d\u3002'
