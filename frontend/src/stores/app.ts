@@ -14,6 +14,18 @@ export const useAppStore = defineStore('app', () => {
   const theme = ref<'light' | 'dark'>(
     savedTheme || (legacyReaderNight ? 'dark' : 'light')
   )
+  const enabledUnreadBadgeBooks = ref<string[]>(JSON.parse(localStorage.getItem('enabledUnreadBadgeBooks') || '[]'))
+
+  function toggleUnreadBadge(bookUrl: string, enabled: boolean) {
+    if (!enabled) {
+      enabledUnreadBadgeBooks.value = enabledUnreadBadgeBooks.value.filter(u => u !== bookUrl)
+    } else {
+      if (!enabledUnreadBadgeBooks.value.includes(bookUrl)) {
+        enabledUnreadBadgeBooks.value.push(bookUrl)
+      }
+    }
+    localStorage.setItem('enabledUnreadBadgeBooks', JSON.stringify(enabledUnreadBadgeBooks.value))
+  }
 
   function setTheme(value: 'light' | 'dark') {
     theme.value = value
@@ -275,5 +287,6 @@ export const useAppStore = defineStore('app', () => {
     setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
     readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,
     toasts, showToast,
+    enabledUnreadBadgeBooks, toggleUnreadBadge,
   }
 })

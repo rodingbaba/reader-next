@@ -52,7 +52,7 @@ describe('app update reminders', () => {
 
     expect(store.versionUpdate?.latestVersion).toBe('v1.0.6')
     expect(store.hasVersionUpdateReminder).toBe(true)
-    expect(store.toasts.map((toast) => toast.message)).toContain('发现服务端新版本 v1.0.6')
+    expect(store.toasts.map((toast: any) => toast.message)).toContain('发现服务端新版本 v1.0.6')
   })
 
   it('dismisses the current latest release reminder', async () => {

@@ -30,7 +30,7 @@
       </div>
 
       <!-- Unread badge -->
-      <div v-if="unreadCount > 0 && !editMode" class="unread-badge">
+      <div v-if="appStore.enabledUnreadBadgeBooks.includes(book.bookUrl) && unreadCount > 0 && !editMode" class="unread-badge">
         {{ unreadCount > 99 ? '99+' : unreadCount }}
       </div>
 
@@ -104,6 +104,8 @@ import { computed, ref } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
 import { isLocalTxtBook } from '../utils/localBook'
 import type { Book, SearchBook } from '../types'
+import { useAppStore } from '../stores/app'
+const appStore = useAppStore()
 
 const props = defineProps<{
   book: Book | SearchBook

@@ -245,7 +245,6 @@ async function handleTxtFileChange(event: Event) {
     const book = await uploadFn(file)
     await shelfStore.fetchBooks()
     appStore.showToast(`已导入《${book.name}》`, 'success')
-    await handleBookClick(book)
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || `${formatLabel} 上传失败`, 'error')
   } finally {

@@ -73,6 +73,15 @@
             加载目录中...
           </div>
 
+          <!-- Settings -->
+          <div class="book-settings" v-if="book">
+            <span class="setting-title">显示未读红点</span>
+            <label class="switch">
+              <input type="checkbox" :checked="appStore.enabledUnreadBadgeBooks.includes((book as Book).bookUrl)" @change="appStore.toggleUnreadBadge((book as Book).bookUrl, ($event.target as HTMLInputElement).checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+
           <!-- Actions -->
           <div class="modal-actions">
             <button class="action-btn primary" @click="startReading">
@@ -106,7 +115,10 @@ import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList } from '../api/bookshelf'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
+import { useAppStore } from '../stores/app'
 import type { Book, SearchBook, BookChapter } from '../types'
+
+const appStore = useAppStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -483,5 +495,68 @@ function openAiBook() {
 
 .action-btn.primary:hover {
   background: var(--color-primary-dark);
+}
+
+.book-settings {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.setting-title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--color-border);
+  transition: .4s;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--color-primary);
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--color-primary);
+}
+
+input:checked + .slider:before {
+  transform: translateX(16px);
 }
 </style>
