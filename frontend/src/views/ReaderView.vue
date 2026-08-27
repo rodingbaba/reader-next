@@ -2276,7 +2276,10 @@ const {
   isContinuousMode,
   isHorizontalPageMode,
   horizontalPageIndex,
-  (index: number) => { horizontalPageIndex.value = index },
+  (index: number) => {
+    horizontalPageIndex.value = index
+    syncHorizontalPageState()
+  },
   scrollContainerRef,
   chapterTextRef,
   nextChapter,
