@@ -2230,7 +2230,7 @@ function scheduleRestoreReadingPosition() {
   restorePositionTimer = window.setTimeout(() => {
     void nextTick(() => {
       const restored = restoreReadingPosition()
-      if (!restored && pendingRestorePosition.value && pendingRestoreAttempts < 12) {
+      if (!restored && pendingRestorePosition.value && pendingRestoreAttempts < 50) {
         pendingRestoreAttempts += 1
         debugPositionLog('restore retry', {
           attempts: pendingRestoreAttempts,
