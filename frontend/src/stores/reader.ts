@@ -667,6 +667,7 @@ export const useReaderStore = defineStore('reader', () => {
   let synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null
   let currentUtterance: SpeechSynthesisUtterance | null = null
   let currentOpenAIAudio: HTMLAudioElement | null = null
+  const globalAudioElement = typeof window !== 'undefined' ? new window.Audio() : null
   let currentOpenAIAudioUrl = ''
   let currentOpenAIAbortController: AbortController | null = null
   const preloadedOpenAIAudio = ref<PreloadedOpenAIAudio[]>([])
@@ -690,6 +691,22 @@ export const useReaderStore = defineStore('reader', () => {
         .join(' | ')
     } catch {
       return ''
+    }
+  }
+
+
+  function setupMediaSession(text: string) {
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
+        artist: book.value?.name || 'Antigravity Reader',
+        album: chapters.value[currentIndex.value]?.title || '阅读',
+        artwork: book.value?.coverUrl ? [{ src: book.value.coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+      })
+      navigator.mediaSession.setActionHandler('play', () => { pauseTTS() })
+      navigator.mediaSession.setActionHandler('pause', () => { pauseTTS() })
+      navigator.mediaSession.setActionHandler('previoustrack', null) // Handle in component if needed
+      navigator.mediaSession.setActionHandler('nexttrack', null)
     }
   }
 
@@ -1185,7 +1202,8 @@ export const useReaderStore = defineStore('reader', () => {
       if (!isCurrentTTSSession(sessionId)) return
       isSpeechLoading.value = false
       currentOpenAIAudioUrl = URL.createObjectURL(blob)
-      const audio = new Audio(currentOpenAIAudioUrl)
+      const audio = globalAudioElement || new Audio()
+      audio.src = currentOpenAIAudioUrl
       currentOpenAIAudio = audio
       currentOpenAIAbortController = null
 
@@ -1254,7 +1272,8 @@ export const useReaderStore = defineStore('reader', () => {
     const key = buildOpenAIAudioCacheKey(rawText)
     const cached = preloadedOpenAIAudio.value.find((entry) => entry.key === key)
     if (cached) {
-      void Promise.resolve(playBlob(cached.blob, controller))
+      // Synchronous execution is critical for mobile background audio continuation
+      playBlob(cached.blob, controller)
       return
     }
 
@@ -1305,6 +1324,7 @@ export const useReaderStore = defineStore('reader', () => {
     if (!rawText) return
 
     const sessionId = beginTTSSession()
+    setupMediaSession(rawText)
     logTTS('startTTS', {
       sessionId,
       provider: speechConfig.provider,

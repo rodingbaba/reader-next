@@ -484,21 +484,24 @@ export function useReaderAutoPlayback(
 
     const continueDelay = store.speechConfig.provider === 'system'
       ? ((isSafariSpeechDelayBrowser() && !store.systemTtsNativeEventsReliable) ? 160 : 40)
-      : 120
+      : 0
 
     if (paragraph) {
       store.isSpeechTransitioning = true
       if (resetChunks) {
         resetSpeechChunkState()
       }
-      speechRestartTimer = window.setTimeout(() => {
-        if (store.isPaused) {
-          
-          return
+      if (continueDelay <= 0) {
+        if (!store.isPaused) {
+          startSpeech(paragraph, false)
         }
-        
-        startSpeech(paragraph, false)
-      }, continueDelay)
+      } else {
+        speechRestartTimer = window.setTimeout(() => {
+          if (!store.isPaused) {
+            startSpeech(paragraph, false)
+          }
+        }, continueDelay)
+      }
       return
     }
 
@@ -514,14 +517,18 @@ export function useReaderAutoPlayback(
     }
     Promise.resolve(nextChapter())
       .then(() => {
-        speechRestartTimer = window.setTimeout(() => {
-          if (store.isPaused) {
-            
-            return
+        if (continueDelay <= 0) {
+          if (!store.isPaused) {
+            startSpeech(getFilteredParagraphs()[0] || null, false)
           }
-          
-          startSpeech(getFilteredParagraphs()[0] || null, false)
-        }, continueDelay)
+        } else {
+          speechRestartTimer = window.setTimeout(() => {
+            if (store.isPaused) {
+              return
+            }
+            startSpeech(getFilteredParagraphs()[0] || null, false)
+          }, continueDelay)
+        }
       })
       .catch(() => {
         
@@ -591,9 +598,7 @@ export function useReaderAutoPlayback(
     }, interruptCurrent)
     const preloadTexts = getUpcomingSpeechChunks(nextParagraph)
     if (preloadTexts.length) {
-      window.setTimeout(() => {
-        void store.preloadOpenAITTS(preloadTexts)
-      }, 0)
+      void store.preloadOpenAITTS(preloadTexts)
     }
   }
 
