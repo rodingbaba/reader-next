@@ -928,9 +928,24 @@ export const useReaderStore = defineStore('reader', () => {
       void promise
         .then((blob) => {
           if (generation !== preloadGeneration) return
-          const nextQueue = preloadedOpenAIAudio.value.filter((entry) => entry.key !== key)
-          nextQueue.push({ key, blob, generation })
-          preloadedOpenAIAudio.value = nextQueue
+          
+          const processBlob = async () => {
+            let audioBuffer: AudioBuffer | undefined
+            try {
+              if (!audioCtx) {
+                audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+              }
+              const arrayBuffer = await blob.arrayBuffer()
+              audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+            } catch (e) {}
+            
+            if (generation !== preloadGeneration) return
+            const nextQueue = preloadedOpenAIAudio.value.filter((entry) => entry.key !== key)
+            nextQueue.push({ key, blob, audioBuffer, generation })
+            preloadedOpenAIAudio.value = nextQueue
+          }
+          
+          void processBlob()
         })
         .catch(() => undefined)
         .finally(() => {

@@ -3071,7 +3071,7 @@ watch(() => store.isSpeaking, (speaking) => {
   if (speaking && !ttsPanelDismissed.value) {
     showTTSPanel.value = true
   }
-  if (!speaking && !store.isAutoScrolling) {
+  if (!speaking && !store.isAutoScrolling && !store.isSpeechTransitioning) {
     clearReadingClass()
   }
 })

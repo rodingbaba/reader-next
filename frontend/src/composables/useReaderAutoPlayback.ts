@@ -434,7 +434,7 @@ export function useReaderAutoPlayback(
       clearTimeout(autoParagraphTimer)
       autoParagraphTimer = null
     }
-    if (!store.isSpeaking) {
+    if (!store.isSpeaking && !store.isSpeechTransitioning) {
       clearReadingClass()
     }
   }
