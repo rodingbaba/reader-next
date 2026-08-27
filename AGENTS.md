@@ -80,6 +80,7 @@ cd frontend && npm run build                 # Builds to frontend/dist/
 - After the Docker publish workflow is queued or running, do not wait for completion by default. Wait only when the user explicitly needs immediate deploy verification or the workflow has recently been unstable.
 - Release notes must summarize the actual service/product changes since the previous release. Inspect the diff, relevant files, and user-facing behavior; do not copy commit messages directly as release details.
 - When writing release notes, call out backend/API/schema/storage changes, frontend behavior changes, deployment or Docker-impacting changes, and known risks or follow-up checks.
+- Always provide the release notes in a raw Markdown code block (e.g. ` ```markdown ... ``` `) in the chat response so the user can easily copy them.
 
 ## Configuration
 

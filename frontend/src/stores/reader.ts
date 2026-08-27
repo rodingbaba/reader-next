@@ -1408,6 +1408,17 @@ export const useReaderStore = defineStore('reader', () => {
     }
 
     if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
+      // Synchronously initialize audio context and silent audio to satisfy iOS media session requirements
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {})
+      }
+      if (silentAudio && silentAudio.paused) {
+        silentAudio.play().catch(() => {})
+      }
+
       void startOpenAITTS(rawText, options, sessionId)
       return
     }
