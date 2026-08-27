@@ -19,6 +19,9 @@ export function useReaderAutoPlayback(
   store: ReaderStore,
   config: ComputedRef<AutoPlaybackConfig>,
   isContinuousMode: ComputedRef<boolean>,
+  isHorizontalPageMode: ComputedRef<boolean>,
+  horizontalPageIndex: Ref<number>,
+  setHorizontalPageIndex: (index: number) => void,
   scrollContainerRef: Ref<HTMLElement | undefined>,
   chapterTextRef: Ref<HTMLElement | undefined>,
   nextChapter: () => void | Promise<void>,
@@ -29,7 +32,7 @@ export function useReaderAutoPlayback(
   let autoReadingParagraphIndex = -1
   let autoReadingProcessing = false
   let speechRestartTimer: number | null = null
-  let isSpeechTransitioning = false
+  
   let currentSpeechParagraph: HTMLElement | null = null
   let currentSpeechSegments: { text: string; nextParagraph: HTMLElement | null }[] = []
   let currentSpeechSegmentIndex = 0
@@ -49,10 +52,36 @@ export function useReaderAutoPlayback(
     void payload
   }
 
-  function getFilteredParagraphs() {
+  function getAllParagraphs() {
     const roots = isContinuousMode.value
       ? Array.from(scrollContainerRef.value?.querySelectorAll('.chapter-text[data-role="continuous"]') || []) as HTMLElement[]
       : (chapterTextRef.value ? [chapterTextRef.value] : [])
+    if (!roots.length) return [] as HTMLElement[]
+    const allElements = roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
+    const list: HTMLElement[] = []
+    let lastText = ''
+    allElements.forEach((el) => {
+      const text = el.innerText.trim()
+      if (text && text !== lastText) {
+        list.push(el)
+        lastText = text
+      }
+    })
+    return list
+  }
+
+  function getFilteredParagraphs() {
+    let roots: HTMLElement[] = []
+    if (isContinuousMode.value) {
+      roots = Array.from(scrollContainerRef.value?.querySelectorAll('.chapter-text[data-role="continuous"]') || []) as HTMLElement[]
+    } else if (isHorizontalPageMode.value && chapterTextRef.value) {
+      const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page')) as HTMLElement[]
+      const currentPage = pages[horizontalPageIndex.value]
+      if (currentPage) roots = [currentPage]
+    } else if (chapterTextRef.value) {
+      roots = [chapterTextRef.value]
+    }
+    
     if (!roots.length) return [] as HTMLElement[]
     const allElements = roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
     const list: HTMLElement[] = []
@@ -74,7 +103,7 @@ export function useReaderAutoPlayback(
     const container = scrollContainerRef.value
     if (!container) return null
 
-    const list = getFilteredParagraphs()
+    const list = isHorizontalPageMode.value ? getFilteredParagraphs() : getAllParagraphs()
     for (const paragraph of list) {
       const top = paragraph.offsetTop - container.scrollTop
       const bottom = top + paragraph.offsetHeight
@@ -92,7 +121,7 @@ export function useReaderAutoPlayback(
   }
 
   function getPrevParagraphFrom(current: HTMLElement | null) {
-    const list = getFilteredParagraphs()
+    const list = getAllParagraphs()
     const index = current ? list.indexOf(current) : -1
     if (index > 0) return list[index - 1]
     return null
@@ -104,7 +133,7 @@ export function useReaderAutoPlayback(
   }
 
   function getNextParagraphFrom(current: HTMLElement | null) {
-    const list = getFilteredParagraphs()
+    const list = getAllParagraphs()
     const index = current ? list.indexOf(current) : -1
     if (index >= 0 && index < list.length - 1) return list[index + 1]
     return null
@@ -177,7 +206,7 @@ export function useReaderAutoPlayback(
       }
     }
 
-    const list = getFilteredParagraphs()
+    const list = getAllParagraphs()
     const startIndex = paragraph ? list.indexOf(paragraph) : -1
     if (startIndex < 0) {
       return {
@@ -231,7 +260,7 @@ export function useReaderAutoPlayback(
   }
 
   function ensureSpeechChunkState(paragraph: HTMLElement) {
-    if (store.speechConfig.provider !== 'openai') {
+    if (store.speechConfig.provider !== 'openai' && store.speechConfig.provider !== 'http') {
       return {
         text: paragraph.innerText.trim(),
         nextParagraph: getNextParagraphFrom(paragraph),
@@ -253,7 +282,7 @@ export function useReaderAutoPlayback(
   function getUpcomingSpeechChunks(startParagraph: HTMLElement | null) {
     const chunks: string[] = []
 
-    if (store.speechConfig.provider !== 'openai') {
+    if (store.speechConfig.provider !== 'openai' && store.speechConfig.provider !== 'http') {
       return chunks
     }
 
@@ -277,7 +306,7 @@ export function useReaderAutoPlayback(
         if (chunks.length >= OPENAI_PRELOAD_CHUNK_LIMIT) break
         chunks.push(chunk)
       }
-      const list = getFilteredParagraphs()
+      const list = getAllParagraphs()
       const index = list.indexOf(cursor)
       cursor = index >= 0 ? (list[index + 1] || null) : null
     }
@@ -292,6 +321,18 @@ export function useReaderAutoPlayback(
   function showParagraph(paragraph: HTMLElement | null, smooth = true) {
     const container = scrollContainerRef.value
     if (!container || !paragraph) return
+
+    if (isHorizontalPageMode.value && chapterTextRef.value) {
+      const pageEl = paragraph.closest('.horizontal-page')
+      if (pageEl) {
+        const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page'))
+        const index = pages.indexOf(pageEl)
+        if (index >= 0 && index !== horizontalPageIndex.value) {
+          setHorizontalPageIndex(index)
+        }
+      }
+      return
+    }
 
     const targetTop = Math.max(0, paragraph.offsetTop - 24)
     container.scrollTo({
@@ -330,7 +371,7 @@ export function useReaderAutoPlayback(
     if (!store.isAutoScrolling) return
     if (autoReadingProcessing) return
 
-    const list = getFilteredParagraphs()
+    const list = getAllParagraphs()
     if (!list.length) return
 
     autoReadingProcessing = true
@@ -402,15 +443,15 @@ export function useReaderAutoPlayback(
     logSpeech('restartSpeechTarget', {
       interruptCurrent,
       paragraph: paragraphPreview(paragraph),
-      isSpeechTransitioning,
+      isSpeechTransitioning: store.isSpeechTransitioning,
     })
     if (!paragraph) {
       store.stopTTS()
       resetSpeechChunkState()
       return
     }
-    if (isSpeechTransitioning) return
-    isSpeechTransitioning = true
+    if (store.isSpeechTransitioning) return
+    store.isSpeechTransitioning = true
     resetSpeechChunkState()
     if (interruptCurrent) {
       store.stopTTS(false)
@@ -423,10 +464,10 @@ export function useReaderAutoPlayback(
       : 150
     speechRestartTimer = window.setTimeout(() => {
       if (store.isPaused) {
-        isSpeechTransitioning = false
+        
         return
       }
-      isSpeechTransitioning = false
+      
       startSpeech(paragraph, interruptCurrent)
     }, restartDelay)
   }
@@ -446,16 +487,16 @@ export function useReaderAutoPlayback(
       : 120
 
     if (paragraph) {
-      isSpeechTransitioning = true
+      store.isSpeechTransitioning = true
       if (resetChunks) {
         resetSpeechChunkState()
       }
       speechRestartTimer = window.setTimeout(() => {
         if (store.isPaused) {
-          isSpeechTransitioning = false
+          
           return
         }
-        isSpeechTransitioning = false
+        
         startSpeech(paragraph, false)
       }, continueDelay)
       return
@@ -467,7 +508,7 @@ export function useReaderAutoPlayback(
       return
     }
 
-    isSpeechTransitioning = true
+    store.isSpeechTransitioning = true
     if (resetChunks) {
       resetSpeechChunkState()
     }
@@ -475,15 +516,15 @@ export function useReaderAutoPlayback(
       .then(() => {
         speechRestartTimer = window.setTimeout(() => {
           if (store.isPaused) {
-            isSpeechTransitioning = false
+            
             return
           }
-          isSpeechTransitioning = false
+          
           startSpeech(getFilteredParagraphs()[0] || null, false)
         }, continueDelay)
       })
       .catch(() => {
-        isSpeechTransitioning = false
+        
       })
   }
 
@@ -532,7 +573,7 @@ export function useReaderAutoPlayback(
           chunkIndex: currentSpeechSegmentIndex,
           chunkCount: currentSpeechSegments.length,
         })
-        if (store.speechConfig.provider === 'openai' && currentSpeechParagraph === current && currentSpeechSegmentIndex < currentSpeechSegments.length - 1) {
+        if ((store.speechConfig.provider === 'openai' || store.speechConfig.provider === 'http') && currentSpeechParagraph === current && currentSpeechSegmentIndex < currentSpeechSegments.length - 1) {
           currentSpeechSegmentIndex += 1
           continueSpeechTarget(current, false)
           return
@@ -574,7 +615,7 @@ export function useReaderAutoPlayback(
     store.stopTTS(false)
     Promise.resolve(prevChapter()).then(() => {
       window.setTimeout(() => {
-        const list = getFilteredParagraphs()
+        const list = getAllParagraphs()
         restartSpeechTarget(list[list.length - 1] || null)
       }, 120)
     })
@@ -611,10 +652,10 @@ export function useReaderAutoPlayback(
   function restartSpeechFromCurrentParagraph() {
     logSpeech('restartSpeechFromCurrentParagraph', {
       currentParagraph: paragraphPreview(getCurrentParagraph()),
-      isSpeechTransitioning,
+      isSpeechTransitioning: store.isSpeechTransitioning,
     })
-    if (isSpeechTransitioning) return
-    isSpeechTransitioning = true
+    if (store.isSpeechTransitioning) return
+    store.isSpeechTransitioning = true
     resetSpeechChunkState()
     store.stopTTS(false)
     if (speechRestartTimer) {
@@ -622,10 +663,10 @@ export function useReaderAutoPlayback(
     }
     speechRestartTimer = window.setTimeout(() => {
       if (store.isPaused) {
-        isSpeechTransitioning = false
+        
         return
       }
-      isSpeechTransitioning = false
+      
       startSpeech()
     }, 150)
   }
@@ -634,8 +675,9 @@ export function useReaderAutoPlayback(
     if (speechRestartTimer) {
       clearTimeout(speechRestartTimer)
       speechRestartTimer = null
+    store.isSpeechTransitioning = false
     }
-    isSpeechTransitioning = false
+    
   }
 
   function resetAutoParagraphIndex() {

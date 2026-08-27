@@ -42,7 +42,7 @@
     />
     <ReaderToolbar
       v-if="!isMobile"
-      :is-speaking="store.isSpeaking"
+      :is-speaking="store.isSpeaking || store.isSpeechTransitioning"
       :is-paused="store.isPaused"
       :show-ai-panel="showAiPanel"
       @bookmark="toggleBookmark"
@@ -60,6 +60,8 @@
     <ReaderMobileControls
       v-if="isMobile"
       :show="showControls || !!store.activePanel"
+      :is-speaking="store.isSpeaking || store.isSpeechTransitioning"
+      :is-paused="store.isPaused"
       :current-page="isHorizontalPageMode ? horizontalPageIndex + 1 : undefined"
       :total-pages="isHorizontalPageMode ? Math.max(1, horizontalPages.length) : undefined"
       @goHome="goHome"
@@ -81,7 +83,7 @@
       :chapter-title="store.currentChapter?.title"
       :provider="store.speechConfig.provider"
       :provider-label="store.speechProviderLabel"
-      :is-speaking="store.isSpeaking"
+      :is-speaking="store.isSpeaking || store.isSpeechTransitioning"
       :is-loading="store.isSpeechLoading"
       :is-paused="store.isPaused"
       :voices="store.voiceList"
@@ -92,6 +94,8 @@
       :openai-model="store.speechConfig.openaiModel"
       :openai-voice="store.speechConfig.openaiVoice"
       :openai-source="store.speechConfig.openaiSource"
+      :http-tts-engines="store.speechConfig.httpTtsEngines"
+      :http-tts-active-id="store.speechConfig.httpTtsActiveId"
       :stop-after-minutes="store.speechConfig.stopAfterMinutes"
       :timer-text="speechTimerText"
       @close="closeTTSPanel"
@@ -2270,6 +2274,9 @@ const {
     lineHeight: config.value.lineHeight,
   })),
   isContinuousMode,
+  isHorizontalPageMode,
+  horizontalPageIndex,
+  (index: number) => { horizontalPageIndex.value = index },
   scrollContainerRef,
   chapterTextRef,
   nextChapter,

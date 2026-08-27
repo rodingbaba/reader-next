@@ -1,9 +1,9 @@
-﻿<template>
+<template>
   <Transition name="slide-up">
     <div v-if="show" class="tts-controls" :style="{ background: theme.popup, color: theme.fontColor }">
       <div class="tts-head">
         <div class="tts-info">
-          <div>正在朗读: {{ chapterTitle }}</div>
+          <div v-if="isSpeaking || isPaused">正在朗读: {{ chapterTitle }}</div><div v-else>当前章节: {{ chapterTitle }}</div>
           <div class="tts-mode">
             当前模式: {{ providerLabel }}
             <span v-if="provider === 'openai'"> · {{ openaiSource === 'server' ? '后端配置' : `${openaiModel} / ${openaiVoice}` }}</span>
@@ -21,17 +21,27 @@
         <button @click="$emit('stop')">停止</button>
         <button @click="$emit('next')">下一段</button>
       </div>
-      <select v-if="provider === 'system'" class="tts-voice-select" :value="voiceName" @change="$emit('voice-change', ($event.target as HTMLSelectElement).value)">
-        <option value="">系统默认</option>
-        <option v-for="voice in voices" :key="voice.name" :value="voice.name">
-          {{ voice.name }} ({{ voice.lang }})
-        </option>
-      </select>
-      <div v-else-if="openaiSource === 'server'" class="tts-source-note">
+      <CustomSelect 
+        v-if="provider === 'system'"
+        :model-value="voiceName"
+        @change="$emit('voice-change', $event as string)"
+        :options="[
+          { label: '系统默认', value: '' },
+          ...voices.map(v => ({ label: v.name + ' (' + v.lang + ')', value: v.name }))
+        ]"
+      />
+      <CustomSelect
+        v-else-if="provider === 'http'"
+        :model-value="httpTtsActiveId"
+        @change="$emit('http-tts-change', $event as string)"
+        placeholder="请添加 TTS"
+        :options="httpTtsEngines.map(e => ({ label: e.name, value: e.id }))"
+      />
+      <div v-else-if="provider === 'openai' && openaiSource === 'server'" class="tts-source-note">
         OpenAI Speech 使用后端配置
       </div>
       <input
-        v-else
+        v-else-if="provider === 'openai'"
         class="tts-voice-select"
         type="text"
         :value="openaiVoice"
@@ -67,13 +77,14 @@
 </template>
 
 <script setup lang="ts">
+import CustomSelect from "../CustomSelect.vue"
 import type { ThemePreset } from '../../stores/reader'
 
 defineProps<{
   show: boolean
   theme: ThemePreset | { popup: string; fontColor: string }
   chapterTitle?: string
-  provider: 'system' | 'openai'
+  provider: 'system' | 'openai' | 'http'
   providerLabel: string
   isSpeaking: boolean
   isLoading: boolean
@@ -86,6 +97,8 @@ defineProps<{
   openaiModel: string
   openaiVoice: string
   openaiSource: 'browser' | 'server'
+  httpTtsEngines: any[]
+  httpTtsActiveId: string
   stopAfterMinutes: number
   timerText: string
 }>()
@@ -98,12 +111,13 @@ defineEmits<{
   next: []
   'voice-change': [value: string]
   'openai-voice-change': [value: string]
+  'http-tts-change': [value: string]
   'rate-change': [delta: number]
   'pitch-change': [delta: number]
   'timer-change': [minutes: number]
 }>()
-</script>
 
+</script>
 <style scoped>
 .tts-controls {
   position: fixed;
@@ -185,17 +199,21 @@ defineEmits<{
 .tts-voice-select {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px 32px 10px 12px;
   border-radius: 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.65);
   color: inherit;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  appearance: none;
 }
 
+input[type="text"].tts-voice-select {
+  background-image: none;
+}
 .tts-source-note {
-  width: 100%;
-  min-width: 0;
   padding: 10px 12px;
+
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.04);
   color: inherit;

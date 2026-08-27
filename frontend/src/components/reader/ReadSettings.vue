@@ -245,18 +245,55 @@
         <div class="btn-group">
           <button class="opt-btn" :class="{ active: store.speechConfig.provider === 'system' }" @click="store.setSpeechProvider('system')">系统语音</button>
           <button class="opt-btn" :class="{ active: store.speechConfig.provider === 'openai' }" @click="store.setSpeechProvider('openai')">OpenAI Speech</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.provider === 'http' }" @click="store.setSpeechProvider('http')">HTTP TTS</button>
         </div>
       </div>
 
       <div v-if="store.speechConfig.provider === 'system'" class="setting-row setting-row-top">
         <label>朗读音源</label>
-        <select class="voice-select" :value="store.speechConfig.voiceName" @change="handleVoiceChange">
-          <option value="">系统默认</option>
-          <option v-for="voice in store.voiceList" :key="voice.name" :value="voice.name">
-            {{ voice.name }} ({{ voice.lang }})
-          </option>
-        </select>
+        <CustomSelect
+          :model-value="store.speechConfig.voiceName"
+          @change="(e: any) => store.setVoiceName(e as string)"
+          :options="[
+            { label: '系统默认', value: '' },
+            ...store.voiceList.map(v => ({ label: v.name + ' (' + v.lang + ')', value: v.name }))
+          ]"
+        />
       </div>
+
+      <template v-else-if="store.speechConfig.provider === 'http'">
+        <div class="setting-row setting-row-top">
+          <label>朗读音源</label>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+            <CustomSelect
+              :model-value="store.speechConfig.httpTtsActiveId"
+              @change="(e: any) => store.setActiveHttpTtsEngine(e as string)"
+              placeholder="请添加 TTS"
+              :options="store.speechConfig.httpTtsEngines.map(e => ({ label: e.name, value: e.id }))"
+            />
+            <div v-if="isAddingHttpTts" class="setting-row setting-row-top" style="flex-direction: column; gap: 8px; align-items: stretch; margin-top: 4px;">
+              <input type="text" class="voice-select" v-model="newHttpTtsName" placeholder="名称" />
+              <textarea class="voice-select" v-model="newHttpTtsUrl" placeholder="URL" rows="2" style="resize: vertical; font-family: monospace; font-size: 12px;"></textarea>
+              <textarea class="voice-select" v-model="newHttpTtsJson" placeholder="粘贴 JSON 配置自动提取" rows="2" style="resize: vertical; font-family: monospace; font-size: 12px;" @input="handleHttpTtsJsonInput"></textarea>
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
+                <button class="opt-btn" @click="isAddingHttpTts = false">取消</button>
+                <button class="opt-btn" @click="saveNewHttpTts" style="color: var(--color-primary)">保存</button>
+              </div>
+            </div>
+            <div v-else style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button class="opt-btn" @click="testHttpTts" :disabled="isTestingHttpTts || !store.speechConfig.httpTtsActiveId">测试</button>
+              <button class="opt-btn" @click="isAddingHttpTts = true">新增</button>
+              <button v-if="store.speechConfig.httpTtsActiveId" class="opt-btn" @click="store.removeHttpTtsEngine(store.speechConfig.httpTtsActiveId)" style="color: var(--color-danger, #e53e3e);">删除</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-hint" v-pre>
+          支持类似阅读 3.0 的 URL 写法。<br/>
+          可用变量: <code>{{speakText}}</code> (朗读文本), <code>{{speakSpeed}}</code> (朗读语速)<br/>
+          例如: <code>http://192.168.6.107:9888/tts?t={{java.encodeURI(speakText)}}&r={{speakSpeed*1}}</code>
+        </div>
+      </template>
 
       <template v-else>
         <div class="setting-row">
@@ -328,17 +365,17 @@
 
         <div class="setting-row setting-row-top">
           <label>音频格式</label>
-          <select
-            class="voice-select"
-            :value="store.speechConfig.openaiFormat"
-            @change="store.setOpenAISpeechFormat(($event.target as HTMLSelectElement).value as 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm')"
-          >
-            <option value="mp3">mp3</option>
-            <option value="wav">wav</option>
-            <option value="opus">opus</option>
-            <option value="flac">flac</option>
-            <option value="pcm">pcm</option>
-          </select>
+          <CustomSelect
+            :model-value="store.speechConfig.openaiFormat"
+            @change="(e: any) => store.setOpenAISpeechFormat(e as 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm')"
+            :options="[
+              { label: 'mp3', value: 'mp3' },
+              { label: 'wav', value: 'wav' },
+              { label: 'opus', value: 'opus' },
+              { label: 'flac', value: 'flac' },
+              { label: 'pcm', value: 'pcm' }
+            ]"
+          />
         </div>
         </template>
 
@@ -425,6 +462,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import CustomSelect from "../CustomSelect.vue"
 import { useReaderStore, themePresets, fontPresets } from '../../stores/reader'
 import { useAiBookStore } from '../../stores/aiBook'
 import { useAppStore } from '../../stores/app'
@@ -436,6 +474,67 @@ const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
 const serverModelLoaded = ref(false)
 const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
+
+const isAddingHttpTts = ref(false)
+const isTestingHttpTts = ref(false)
+
+const newHttpTtsName = ref('')
+const newHttpTtsUrl = ref('')
+const newHttpTtsJson = ref('')
+
+function handleHttpTtsJsonInput() {
+  try {
+    const parsed = JSON.parse(newHttpTtsJson.value.trim())
+    if (parsed.name && parsed.url) {
+      newHttpTtsName.value = parsed.name
+      newHttpTtsUrl.value = parsed.url
+    } else if (parsed._TTSName && parsed.url) {
+      newHttpTtsName.value = parsed._TTSName
+      newHttpTtsUrl.value = parsed.url
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function saveNewHttpTts() {
+  const name = newHttpTtsName.value.trim()
+  const url = newHttpTtsUrl.value.trim()
+  if (!name || !url) return
+  store.addHttpTtsEngine({ id: Date.now().toString(), name, url })
+  newHttpTtsName.value = ''
+  newHttpTtsUrl.value = ''
+  newHttpTtsJson.value = ''
+  isAddingHttpTts.value = false
+}
+
+async function testHttpTts() {
+  const engine = store.speechConfig.httpTtsEngines.find(e => e.id === store.speechConfig.httpTtsActiveId)
+  if (!engine) return
+  isTestingHttpTts.value = true
+  appStore.showToast('正在请求语音测试...')
+  try {
+    const { requestHttpTtsAudio } = await import('../../utils/httpTts')
+    const text = '你好，这是一段语音朗读引擎的测试。'
+    const blob = await requestHttpTtsAudio(engine.url, text, store.speechConfig.speechRate)
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.oncanplaythrough = () => {
+      appStore.showToast('请求成功，开始播放', 'success')
+      audio.play()
+    }
+    audio.onerror = (e) => {
+      appStore.showToast('播放失败: ' + (e as any).message, 'error')
+      isTestingHttpTts.value = false
+    }
+    audio.onended = () => {
+      isTestingHttpTts.value = false
+    }
+  } catch (e: any) {
+    appStore.showToast('语音请求失败: ' + e.message, 'error')
+    isTestingHttpTts.value = false
+  }
+}
 
 function step(key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed' | 'marginTop' | 'marginBottom' | 'marginLeft' | 'marginRight', delta: number, min: number, max: number) {
   const val = Math.max(min, Math.min(max, (config.value[key] as number) + delta))
@@ -457,10 +556,6 @@ function adjustSpeechPitch(delta: number) {
   store.setSpeechPitch(val)
 }
 
-function handleVoiceChange(event: Event) {
-  const target = event.target as HTMLSelectElement | null
-  store.setVoiceName(target?.value || '')
-}
 
 async function selectOpenAISpeechSource(source: 'browser' | 'server') {
   if (source === 'browser') {
@@ -570,11 +665,26 @@ onMounted(async () => {
 .voice-select {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  max-width: 100%;
+  padding: 10px 32px 10px 12px;
   border-radius: 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.6) url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") no-repeat right 10px center / 16px;
   color: inherit;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  appearance: none;
+}
+
+textarea.voice-select, input[type="text"].voice-select, input[type="url"].voice-select, input[type="password"].voice-select {
+  padding-right: 12px;
+  background-image: none;
+}
+
+textarea.voice-select {
+  white-space: pre-wrap;
+  overflow: auto;
 }
 
 .setting-hint {
@@ -767,7 +877,8 @@ onMounted(async () => {
   }
 
   .voice-select {
-    width: auto;
+    width: 100%;
+    max-width: 100%;
   }
 
   .setting-hint {

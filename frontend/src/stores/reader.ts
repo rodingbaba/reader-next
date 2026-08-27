@@ -25,6 +25,7 @@ import {
   DEFAULT_OPENAI_BASE_URL,
   requestOpenAISpeechAudio,
 } from '../utils/openaiSpeech'
+import { requestHttpTtsAudio } from '../utils/httpTts'
 
 const READER_SESSION_KEY = 'reader-last-session'
 const READER_READ_HISTORY_PREFIX = 'reader-read-history:'
@@ -203,10 +204,16 @@ interface PreloadedOpenAIAudio {
 
 const OPENAI_AUDIO_PRELOAD_LIMIT = 8
 
-export type SpeechProvider = 'system' | 'openai'
+export type SpeechProvider = 'system' | 'openai' | 'http'
 export type OpenAISpeechSource = 'browser' | 'server'
 export type OpenAISpeechFormat = 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm'
 export type OpenAISpeechRequestMode = 'chunked' | 'merged'
+
+export interface HttpTtsEngine {
+  id: string
+  name: string
+  url: string
+}
 
 interface SpeechConfig {
   provider: SpeechProvider
@@ -221,6 +228,8 @@ interface SpeechConfig {
   openaiVoice: string
   openaiFormat: OpenAISpeechFormat
   openaiRequestMode: OpenAISpeechRequestMode
+  httpTtsEngines: HttpTtsEngine[]
+  httpTtsActiveId: string
 }
 
 const defaultSpeechConfig: SpeechConfig = {
@@ -236,6 +245,8 @@ const defaultSpeechConfig: SpeechConfig = {
   openaiVoice: 'vivian',
   openaiFormat: 'mp3',
   openaiRequestMode: 'chunked',
+  httpTtsEngines: [],
+  httpTtsActiveId: '',
 }
 
 function loadSpeechConfig(): SpeechConfig {
@@ -248,7 +259,7 @@ function loadSpeechConfig(): SpeechConfig {
 
 function migrateSpeechConfig(saved: Partial<SpeechConfig>): SpeechConfig {
   const merged = { ...defaultSpeechConfig, ...saved }
-  if (merged.provider !== 'system' && merged.provider !== 'openai') {
+  if (merged.provider !== 'system' && merged.provider !== 'openai' && merged.provider !== 'http') {
     merged.provider = defaultSpeechConfig.provider
   }
   if (merged.openaiSource !== 'browser' && merged.openaiSource !== 'server') {
@@ -263,6 +274,12 @@ function migrateSpeechConfig(saved: Partial<SpeechConfig>): SpeechConfig {
   merged.speechRate = normalizeNumber(merged.speechRate, defaultSpeechConfig.speechRate, 0.5)
   merged.speechPitch = normalizeNumber(merged.speechPitch, defaultSpeechConfig.speechPitch, 0.5)
   merged.stopAfterMinutes = normalizeNumber(merged.stopAfterMinutes, defaultSpeechConfig.stopAfterMinutes, 0)
+  if (!Array.isArray(merged.httpTtsEngines)) {
+    merged.httpTtsEngines = defaultSpeechConfig.httpTtsEngines
+  }
+  if (typeof merged.httpTtsActiveId !== 'string') {
+    merged.httpTtsActiveId = defaultSpeechConfig.httpTtsActiveId
+  }
   return merged
 }
 
@@ -628,15 +645,23 @@ export const useReaderStore = defineStore('reader', () => {
   /* ─── TTS (Text To Speech) ─── */
   const isSpeaking = ref(false)
   const isSpeechLoading = ref(false)
+  const isSpeechTransitioning = ref(false)
   const isPaused = ref(false)
   const systemTtsNativeEventsReliable = ref(false)
   const voiceList = ref<SpeechSynthesisVoice[]>([])
   const speechConfig = reactive<SpeechConfig>(loadSpeechConfig())
   const openAISpeechConfigured = computed(() => {
+    if (speechConfig.provider === 'http') return !!speechConfig.httpTtsActiveId && speechConfig.httpTtsEngines.length > 0
     if (speechConfig.openaiSource === 'server') return true
     return !!speechConfig.openaiBaseUrl.trim()
   })
-  const speechProviderLabel = computed(() => speechConfig.provider === 'openai' ? 'OpenAI Speech' : '系统语音')
+  const speechProviderLabel = computed(() => {
+    if (speechConfig.provider === 'http') {
+      const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
+      return active ? active.name : 'HTTP TTS'
+    }
+    return speechConfig.provider === 'openai' ? 'OpenAI Speech' : '系统语音'
+  })
   const speechStopAt = ref(0)
   let speechStopTimer: number | null = null
   let synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null
@@ -709,6 +734,33 @@ export const useReaderStore = defineStore('reader', () => {
     saveSpeechConfig()
   }
 
+  function addHttpTtsEngine(engine: HttpTtsEngine) {
+    const existsIndex = speechConfig.httpTtsEngines.findIndex(e => e.id === engine.id)
+    if (existsIndex >= 0) {
+      speechConfig.httpTtsEngines[existsIndex] = engine
+    } else {
+      speechConfig.httpTtsEngines.push(engine)
+    }
+    speechConfig.httpTtsActiveId = engine.id
+    clearPreloadedOpenAIAudio()
+    saveSpeechConfig()
+  }
+
+  function removeHttpTtsEngine(id: string) {
+    speechConfig.httpTtsEngines = speechConfig.httpTtsEngines.filter(e => e.id !== id)
+    if (speechConfig.httpTtsActiveId === id) {
+      speechConfig.httpTtsActiveId = speechConfig.httpTtsEngines[0]?.id || ''
+    }
+    clearPreloadedOpenAIAudio()
+    saveSpeechConfig()
+  }
+
+  function setActiveHttpTtsEngine(id: string) {
+    speechConfig.httpTtsActiveId = id
+    clearPreloadedOpenAIAudio()
+    saveSpeechConfig()
+  }
+
   function setOpenAISpeechBaseUrl(url: string) {
     speechConfig.openaiBaseUrl = url.trim()
     clearPreloadedOpenAIAudio()
@@ -763,6 +815,15 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function buildOpenAIAudioCacheKey(rawText: string) {
+    if (speechConfig.provider === 'http') {
+      const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
+      return [
+        'http',
+        active?.url?.trim() || '',
+        speechConfig.speechRate.toFixed(1),
+        rawText,
+      ].join('::')
+    }
     return [
       speechConfig.openaiSource,
       speechConfig.openaiBaseUrl.trim(),
@@ -776,6 +837,15 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function fetchOpenAIAudioBlob(rawText: string, signal?: AbortSignal) {
+    if (speechConfig.provider === 'http') {
+      const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
+      return requestHttpTtsAudio(
+        active?.url || '',
+        rawText,
+        speechConfig.speechRate,
+        signal
+      )
+    }
     return requestOpenAISpeechAudio({
       source: speechConfig.openaiSource,
       baseUrl: speechConfig.openaiBaseUrl,
@@ -813,7 +883,7 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function preloadOpenAITTS(rawText?: string | string[] | null) {
-    if (speechConfig.provider !== 'openai' || !openAISpeechConfigured.value) return
+    if ((speechConfig.provider !== 'openai' && speechConfig.provider !== 'http') || !openAISpeechConfigured.value) return
     const texts = Array.isArray(rawText) ? rawText : [rawText || '']
     const normalizedTexts = texts.map((item) => item.trim()).filter(Boolean)
     if (!normalizedTexts.length) return
@@ -948,6 +1018,7 @@ export const useReaderStore = defineStore('reader', () => {
       }
       if (!isCurrentTTSSession(sessionId)) return
       isSpeaking.value = false
+    isSpeechTransitioning.value = false
       isPaused.value = false
       logTTS('system finalize', {
         sessionId,
@@ -1045,6 +1116,7 @@ export const useReaderStore = defineStore('reader', () => {
     utterance.onstart = () => {
       if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
       isSpeaking.value = true
+        isSpeechTransitioning.value = false
       isPaused.value = false
       sawStart = true
       systemTtsNativeEventsReliable.value = true
@@ -1079,12 +1151,12 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function startOpenAITTS(rawText: string, options: TTSOptions, sessionId: number) {
     if (!openAISpeechConfigured.value) {
-      const error = new Error('请先配置 OpenAI Speech')
+      const error = new Error(`请先配置 ${speechConfig.provider === 'http' ? 'HTTP TTS' : 'OpenAI Speech'}`)
       appStore.showToast(error.message, 'warning')
       options.onError?.(error)
       return
     }
-    if (speechConfig.openaiSource === 'server') {
+    if (speechConfig.provider === 'openai' && speechConfig.openaiSource === 'server') {
       const serverConfig = await aiBookStore.loadServerModelConfig()
       if (!serverConfig?.canUseServerModel) {
         const error = new Error('当前账号没有使用后端模型配置的权限')
@@ -1120,6 +1192,7 @@ export const useReaderStore = defineStore('reader', () => {
       audio.onplay = () => {
         if (!isCurrentTTSSession(sessionId) || currentOpenAIAudio !== audio) return
         isSpeaking.value = true
+        isSpeechTransitioning.value = false
         isPaused.value = false
         logTTS('openai onplay', { sessionId, text: rawText.slice(0, 40) })
         options.onStart?.()
@@ -1130,6 +1203,7 @@ export const useReaderStore = defineStore('reader', () => {
         if (!audio.ended) {
           isPaused.value = true
           isSpeaking.value = false
+    isSpeechTransitioning.value = false
         }
       }
 
@@ -1139,6 +1213,7 @@ export const useReaderStore = defineStore('reader', () => {
         }
         if (!isCurrentTTSSession(sessionId)) return
         isSpeaking.value = false
+    isSpeechTransitioning.value = false
         isPaused.value = false
         logTTS('openai onended', { sessionId, text: rawText.slice(0, 40) })
         if (currentOpenAIAudioUrl) {
@@ -1154,6 +1229,7 @@ export const useReaderStore = defineStore('reader', () => {
         }
         if (!isCurrentTTSSession(sessionId)) return
         isSpeaking.value = false
+    isSpeechTransitioning.value = false
         isPaused.value = false
         const error = new Error('OpenAI Speech 音频播放失败')
         logTTS('openai onerror', { sessionId, text: rawText.slice(0, 40) })
@@ -1164,6 +1240,7 @@ export const useReaderStore = defineStore('reader', () => {
         if (!isCurrentTTSSession(sessionId)) return
         isSpeechLoading.value = false
         isSpeaking.value = false
+    isSpeechTransitioning.value = false
         isPaused.value = false
         currentOpenAIAudio = null
         logTTS('openai play catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
@@ -1189,6 +1266,7 @@ export const useReaderStore = defineStore('reader', () => {
         if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
         isSpeechLoading.value = false
         isSpeaking.value = false
+    isSpeechTransitioning.value = false
         isPaused.value = false
         currentOpenAIAbortController = null
         currentOpenAIAudio = null
@@ -1205,6 +1283,7 @@ export const useReaderStore = defineStore('reader', () => {
       if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
       isSpeechLoading.value = false
       isSpeaking.value = false
+    isSpeechTransitioning.value = false
       isPaused.value = false
       currentOpenAIAbortController = null
       currentOpenAIAudio = null
@@ -1249,7 +1328,7 @@ export const useReaderStore = defineStore('reader', () => {
       }
     }
 
-    if (speechConfig.provider === 'openai') {
+    if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
       void startOpenAITTS(rawText, options, sessionId)
       return
     }
@@ -1258,16 +1337,18 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function pauseTTS() {
-    if (speechConfig.provider === 'openai') {
+    if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
       if (!currentOpenAIAudio) return
       if (currentOpenAIAudio.paused) {
         void currentOpenAIAudio.play()
         isPaused.value = false
         isSpeaking.value = true
+        isSpeechTransitioning.value = false
       } else {
         currentOpenAIAudio.pause()
         isPaused.value = true
         isSpeaking.value = false
+    isSpeechTransitioning.value = false
       }
       return
     }
@@ -1297,6 +1378,7 @@ export const useReaderStore = defineStore('reader', () => {
     stopOpenAIAudioPlayback()
     isSpeechLoading.value = false
     isSpeaking.value = false
+    isSpeechTransitioning.value = false
     isPaused.value = false
     if (resetCallbacks) {
       clearSpeechStopTimer()
@@ -1732,11 +1814,11 @@ export const useReaderStore = defineStore('reader', () => {
     replaceRules, fetchReplaceRules,
     switchSource, preloadNextChapter, preloadAroundChapter,
     refreshChapters,
-    isSpeaking, isSpeechLoading, isPaused, startTTS, pauseTTS, stopTTS,
+    isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS,
     voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
     systemTtsNativeEventsReliable,
     fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
-    setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
+    addHttpTtsEngine, removeHttpTtsEngine, setActiveHttpTtsEngine, setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
     displayContent, processContentForDisplay,
     isAutoScrolling,
   }
