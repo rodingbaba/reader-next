@@ -13,6 +13,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
    - Backend: `cargo test` or a focused `cargo test <name>`
    - Frontend: `cd frontend && npm test` / `npm run build` as relevant
    - Formatting/sanity: `git diff --check`
+4. **Git Operations**: Unless explicitly requested by the user, do NOT automatically commit code (`git commit`) and do NOT automatically push (`git push`). Always ask for permission first.
 
 ## CodeGraph + LeanCTX Routing
 
