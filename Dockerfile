@@ -7,15 +7,17 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM lukemathwalker/cargo-chef:latest-rust-1-bookworm AS chef
-
+FROM rust:1-bookworm AS backend-builder
+WORKDIR /app
+RUN apt-get -o Acquire::Retries=3 update \
     && apt-get install -y -o Acquire::Retries=3 --no-install-recommends pkg-config libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Cache dependencies
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo build --release --locked \
-    && cp target/release/reader-next /app/reader-next
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked \
+    && cp /app/target/release/reader-next /app/reader-next
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get -o Acquire::Retries=3 update \
@@ -24,6 +26,7 @@ RUN apt-get -o Acquire::Retries=3 update \
 
 WORKDIR /app
 RUN groupadd -g 10001 reader && \
+    useradd --system --uid 10001 --gid 10001 --home-dir /app reader
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --from=backend-builder /app/reader-next /app/reader-next
