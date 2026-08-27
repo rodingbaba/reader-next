@@ -670,6 +670,8 @@ export const useReaderStore = defineStore('reader', () => {
   let currentUtterance: SpeechSynthesisUtterance | null = null
   // Web Audio API for TTS
   let audioCtx: AudioContext | null = null
+  
+  let webAudioKeepAlive: { osc: OscillatorNode; gain: GainNode } | null = null
   let currentWebAudioSource: AudioBufferSourceNode | null = null
   
 
@@ -967,6 +969,20 @@ export const useReaderStore = defineStore('reader', () => {
       currentWebAudioSource.disconnect()
       currentWebAudioSource = null
     }
+    if (webAudioKeepAlive) {
+      try {
+        webAudioKeepAlive.osc.stop()
+        webAudioKeepAlive.osc.disconnect()
+        webAudioKeepAlive.gain.disconnect()
+      } catch (e) {}
+      webAudioKeepAlive = null
+    }
+    if (audioCtx) {
+      try {
+        void audioCtx.close()
+      } catch (e) {}
+      audioCtx = null
+    }
     
     if (silentAudio) {
       silentAudio.pause()
@@ -1227,6 +1243,16 @@ export const useReaderStore = defineStore('reader', () => {
       
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        
+        // Start a silent oscillator to keep the AudioContext ACTIVE forever.
+        // This prevents Chrome from suspending the AudioContext during brief gaps between TTS chunks in background tabs.
+        const osc = audioCtx.createOscillator()
+        const gain = audioCtx.createGain()
+        gain.gain.value = 0
+        osc.connect(gain)
+        gain.connect(audioCtx.destination)
+        osc.start()
+        webAudioKeepAlive = { osc, gain }
       }
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume()
