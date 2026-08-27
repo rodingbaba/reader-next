@@ -2,6 +2,8 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## General Rules
+- **Language**: All internal thinking processes (thought blocks), generated plan documents (like `implementation_plan.md` or `task.md`), and chat responses MUST be written in Chinese (中文).
 
 ## Development Workflow
 
@@ -73,6 +75,7 @@ cd frontend && npm run build                 # Builds to frontend/dist/
 
 ## Release Workflow
 
+- **CRITICAL**: When bumping the version in `Cargo.toml` or adding dependencies, you MUST run `cargo fetch` or `cargo update` to sync `Cargo.lock`. Both files MUST be committed together. This prevents the Docker build from failing due to the `cargo build --locked` command.
 - Release by pushing the code, creating/pushing the version tag, and confirming the Docker publish workflow has been triggered.
 - After the Docker publish workflow is queued or running, do not wait for completion by default. Wait only when the user explicitly needs immediate deploy verification or the workflow has recently been unstable.
 - Release notes must summarize the actual service/product changes since the previous release. Inspect the diff, relevant files, and user-facing behavior; do not copy commit messages directly as release details.
