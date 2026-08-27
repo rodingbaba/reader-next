@@ -1807,9 +1807,16 @@ pub async fn set_book_source(
     )))
 }
 
+#[derive(Deserialize, Debug)]
+pub struct DeleteBookQuery {
+    #[serde(default)]
+    pub keep_files: bool,
+}
+
 pub async fn delete_book(
     State(state): State<AppState>,
     auth: AuthContext,
+    Query(query): Query<DeleteBookQuery>,
     Json(book): Json<Book>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = state
@@ -1823,13 +1830,22 @@ pub async fn delete_book(
         return Err(AppError::BadRequest("书架书籍不存在".to_string()));
     }
     cleanup_ai_book_memories(&state, &user_ns, &removed_books).await;
-    cleanup_local_txt_book_files(&state, &user_ns, &removed_books).await;
+    if !query.keep_files {
+        cleanup_local_txt_book_files(&state, &user_ns, &removed_books).await;
+    }
     Ok(Json(ApiResponse::ok(serde_json::json!("删除书籍成功"))))
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DeleteBooksQuery {
+    #[serde(default)]
+    pub keep_files: bool,
 }
 
 pub async fn delete_books(
     State(state): State<AppState>,
     auth: AuthContext,
+    Query(query): Query<DeleteBooksQuery>,
     Json(books): Json<Vec<Book>>,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = state
@@ -1840,7 +1856,9 @@ pub async fn delete_books(
     let removed_books = find_matching_books(&state, &user_ns, &books).await?;
     let count = state.book_service.delete_books(&user_ns, books).await?;
     cleanup_ai_book_memories(&state, &user_ns, &removed_books).await;
-    cleanup_local_txt_book_files(&state, &user_ns, &removed_books).await;
+    if !query.keep_files {
+        cleanup_local_txt_book_files(&state, &user_ns, &removed_books).await;
+    }
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": count}))))
 }
 

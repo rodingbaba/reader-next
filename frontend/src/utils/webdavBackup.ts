@@ -131,15 +131,15 @@ export async function restoreWebdavBackup(payload: WebdavBackupPayload) {
       ? Promise.all(currentGroups.map((group) => deleteBookGroup(group.groupId)))
       : Promise.resolve(),
     currentBooks.length
-      ? deleteBooks(currentBooks.map((book) => ({ bookUrl: book.bookUrl, origin: book.origin })) as Book[])
+      ? deleteBooks(currentBooks.map((book) => ({ bookUrl: book.bookUrl, origin: book.origin })) as Book[], true)
       : Promise.resolve(),
     currentBookmarks.length ? deleteBookmarks(currentBookmarks) : Promise.resolve(),
     currentReplaceRules.length ? deleteReplaceRules(currentReplaceRules) : Promise.resolve(),
     currentRssSources.length
       ? Promise.all(currentRssSources.map((source) => deleteRssSource({
-          sourceUrl: source.sourceUrl,
-          sourceName: source.sourceName,
-        })))
+        sourceUrl: source.sourceUrl,
+        sourceName: source.sourceName,
+      })))
       : Promise.resolve(),
     deleteAllBookSources().catch(() => undefined),
   ])

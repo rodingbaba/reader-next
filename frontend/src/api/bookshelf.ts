@@ -53,12 +53,12 @@ export function uploadMobiBook(file: File) {
   }).then((r) => r.data)
 }
 
-export function deleteBook(book: Partial<Book>) {
-  return http.post<string>('/deleteBook', book).then((r) => r.data)
+export function deleteBook(book: Partial<Book>, keepFiles = false) {
+  return http.post<string>(`/deleteBook${keepFiles ? '?keep_files=true' : ''}`, book).then((r) => r.data)
 }
 
-export function deleteBooks(books: Partial<Book>[]) {
-  return http.post<{ deleted: number }>('/deleteBooks', books).then((r) => r.data)
+export function deleteBooks(books: Partial<Book>[], keepFiles = false) {
+  return http.post<{ deleted: number }>(`/deleteBooks${keepFiles ? '?keep_files=true' : ''}`, books).then((r) => r.data)
 }
 
 export function getBookInfo(url: string, origin?: string) {
