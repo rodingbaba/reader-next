@@ -3895,3 +3895,37 @@ mod tests {
         }
     }
 }
+
+#[derive(serde::Deserialize)]
+pub struct EpubAssetQuery {
+    path: String,
+}
+
+pub async fn get_epub_asset(
+    axum::extract::State(state): axum::extract::State<crate::api::AppState>,
+    auth: crate::api::auth::AuthContext,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<EpubAssetQuery>,
+) -> impl axum::response::IntoResponse {
+    let user_ns = state
+        .user_service
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
+        .await
+        .unwrap_or_default();
+    
+    let book_url = format!("local-epub:{}", hash);
+    match state.local_epub_book_service.get_asset(&user_ns, &book_url, &query.path).await {
+        Ok((buf, content_type)) => (
+            [(axum::http::header::CONTENT_TYPE, content_type)],
+            buf,
+        ).into_response(),
+        Err(e) => {
+            let error_msg = e.to_string();
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                error_msg,
+            ).into_response()
+        }
+    }
+}

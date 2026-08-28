@@ -116,7 +116,7 @@ impl LocalEpubBookService {
         validate_epub_upload(file_name, bytes.len())?;
         let safe_file_name = epub_file_name(file_name);
 
-        let epub_data = parse_epub(bytes).map_err(AppError::BadRequest)?;
+        let epub_data = parse_epub(bytes, None).map_err(AppError::BadRequest)?;
 
         let hash = md5_hex(&format!(
             "{}:{}:{}",
@@ -246,7 +246,7 @@ impl LocalEpubBookService {
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
 
-        let epub_data = parse_epub(&bytes).map_err(AppError::BadRequest)?;
+        let epub_data = parse_epub(&bytes, Some(epub_hash_from_url(&book_url).unwrap_or(""))).map_err(AppError::BadRequest)?;
 
         epub_data
             .chapters
@@ -261,6 +261,35 @@ impl LocalEpubBookService {
         fs::read(&cover_path)
             .await
             .map_err(|e| AppError::Internal(e.into()))
+    }
+
+    pub async fn get_asset(&self, user_ns: &str, book_url: &str, path: &str) -> Result<(Vec<u8>, String), AppError> {
+        let epub_path = self.book_dir(user_ns, book_url)?.join("book.epub");
+        let bytes = fs::read(&epub_path)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        let cursor = Cursor::new(bytes.as_slice());
+        let mut archive = ZipArchive::new(cursor).map_err(|e| AppError::BadRequest(e.to_string()))?;
+        
+        let buf = read_zip_entry_to_bytes(&mut archive, path)
+            .map_err(|e| AppError::BadRequest(format!("资源不存在: {}", e)))?;
+            
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+            
+        let content_type = match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "webp" => "image/webp",
+            _ => "application/octet-stream",
+        }.to_string();
+        
+        Ok((buf, content_type))
     }
 
     pub async fn delete_book_files(&self, user_ns: &str, book_url: &str) -> Result<bool, AppError> {
@@ -344,7 +373,7 @@ fn local_name(name: quick_xml::name::QName) -> String {
     }
 }
 
-fn parse_epub(bytes: &[u8]) -> Result<ParsedEpubData, String> {
+fn parse_epub(bytes: &[u8], hash: Option<&str>) -> Result<ParsedEpubData, String> {
     let cursor = Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor).map_err(|e| format!("EPUB 解析失败: {}", e))?;
 
@@ -491,7 +520,7 @@ fn parse_epub(bytes: &[u8]) -> Result<ParsedEpubData, String> {
     for href in &spine_hrefs {
         let full_path = format!("{}{}", opf_dir, href);
         let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
-        let content = strip_html_tags(&html_str);
+        let content = sanitize_epub_html(&html_str, &full_path, hash);
         let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
             chapters
                 .len()
@@ -569,48 +598,85 @@ fn extract_title_from_html_str(html: &str) -> Option<String> {
     None
 }
 
-fn strip_html_tags(html: &str) -> String {
-    let mut reader = Reader::from_str(html);
-    let mut result = String::new();
-    let mut skip = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) => {
-                let ln = local_name(e.name());
-                if ln == "script" || ln == "style" {
-                    skip = true;
-                }
+fn resolve_relative_path(base: &str, relative: &str) -> String {
+    let mut parts: Vec<&str> = base.split('/').collect();
+    if !parts.is_empty() {
+        parts.pop();
+    }
+    for part in relative.split('/') {
+        if part == "." || part.is_empty() {
+            continue;
+        } else if part == ".." {
+            if !parts.is_empty() {
+                parts.pop();
             }
-            Ok(Event::End(ref e)) => {
-                let ln = local_name(e.name());
-                if ln == "script" || ln == "style" {
-                    skip = false;
-                }
-            }
-            Ok(Event::Text(ref e)) if !skip => {
-                let text = e.unescape().unwrap_or_default().to_string();
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    result.push_str(trimmed);
-                    result.push('\n');
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
+        } else {
+            parts.push(part);
         }
     }
-    result.trim().to_string()
+    parts.join("/")
+}
+
+fn sanitize_epub_html(html: &str, base_path: &str, hash: Option<&str>) -> String {
+    use once_cell::sync::Lazy;
+    static RE_SCRIPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<script[^>]*>.*?</script>").unwrap());
+    static RE_STYLE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<style[^>]*>.*?</style>").unwrap());
+    static RE_HEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<head[^>]*>.*?</head>").unwrap());
+    static RE_IMG: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)<(?:img|image)[^>]*(?:src|href|xlink:href)=['"]([^'"]+)['"][^>]*>"#).unwrap());
+
+    let mut text = RE_SCRIPT.replace_all(html, "").to_string();
+    text = RE_STYLE.replace_all(&text, "").to_string();
+    text = RE_HEAD.replace_all(&text, "").to_string();
+
+    if let Some(h) = hash {
+        text = RE_IMG.replace_all(&text, |caps: &regex::Captures| {
+            let original_match = caps.get(0).unwrap().as_str();
+            let src = caps.get(1).unwrap().as_str();
+            if src.starts_with("data:") || src.starts_with("http") {
+                return original_match.to_string();
+            }
+            let resolved = resolve_relative_path(base_path, src);
+            let encoded = urlencoding::encode(&resolved);
+            let new_src = format!("/api/local-book/epub/asset/{}?path={}", h, encoded);
+            original_match.replace(src, &new_src)
+        }).to_string();
+    }
+    
+    // Quick and dirty fix to keep body content if possible, or just return text
+    // We don't want the full html/head/body structure to confuse the frontend
+    static RE_BODY: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap());
+    if let Some(caps) = RE_BODY.captures(&text) {
+        if let Some(body) = caps.get(1) {
+            return body.as_str().trim().to_string();
+        }
+    }
+    
+    text.trim().to_string()
 }
 
 fn extract_nav_titles(nav: &str) -> Vec<String> {
     let mut titles = Vec::new();
-    let re = Regex::new(r"<a[^>]*>([^<]+)</a>").ok();
-    if let Some(re) = re {
-        for cap in re.captures_iter(nav) {
-            if let Some(title) = cap.get(1) {
-                titles.push(title.as_str().trim().to_string());
+    let mut reader = Reader::from_str(nav);
+    let mut in_a = false;
+    let mut current_title = String::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) if local_name(e.name()) == "a" => {
+                in_a = true;
+                current_title.clear();
             }
+            Ok(Event::End(ref e)) if local_name(e.name()) == "a" => {
+                in_a = false;
+                let trimmed = current_title.trim();
+                if !trimmed.is_empty() {
+                    titles.push(trimmed.to_string());
+                }
+            }
+            Ok(Event::Text(ref e)) if in_a => {
+                current_title.push_str(&e.unescape().unwrap_or_default());
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
         }
     }
     titles
@@ -647,7 +713,7 @@ mod tests {
     #[test]
     fn parse_epub_finds_metadata_and_chapters() {
         let bytes = fixture_epub();
-        let data = parse_epub(&bytes).expect("parse failed");
+        let data = parse_epub(&bytes, None).expect("parse failed");
         assert_eq!(data.title, "Test Book");
         assert_eq!(data.author, "Test Author");
         assert_eq!(data.chapters.len(), 2);
@@ -656,7 +722,7 @@ mod tests {
     #[test]
     fn parse_epub_chapter_content_not_empty() {
         let bytes = fixture_epub();
-        let data = parse_epub(&bytes).unwrap();
+        let data = parse_epub(&bytes, None).unwrap();
         assert!(data.chapters[0].content.contains("Hello World"));
         assert!(data.chapters[1].content.contains("chapter two"));
     }

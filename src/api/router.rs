@@ -140,6 +140,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/uploadTxtBook", post(handlers::upload_txt_book))
         .route("/reader3/uploadEpubBook", post(handlers::upload_epub_book))
+        .route("/api/local-book/epub/asset/:hash", axum::routing::get(handlers::get_epub_asset))
         .route("/reader3/uploadMobiBook", post(handlers::upload_mobi_book))
         .route("/reader3/uploadPdfBook", post(handlers::upload_pdf_book))
         .route("/reader3/saveBook", post(handlers::save_book))
