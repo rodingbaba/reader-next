@@ -59,9 +59,9 @@ export async function requestHttpTtsAudio(
   speechRate: number,
   signal?: AbortSignal
 ): Promise<Blob> {
-  // Convert standard HTML5 playback rate (0.5 - 4.0) to Edge TTS rate percentage (-100 to 100)
-  // so that {{speakSpeed*1}} correctly evaluates to an integer like 10 instead of a float like 1.1
-  const mappedSpeed = Math.max(-100, Math.min(100, Math.round((speechRate - 1) * 100)))
+  // Map standard HTML5 playback rate (0.5 - 4.0) to Legado's standard 0-100 speakSpeed range
+  // Legado default is 50 for 1.0x speed.
+  const mappedSpeed = Math.max(0, Math.min(100, Math.round(speechRate * 50)))
 
   const evaluatedTemplate = evaluateHttpTtsUrl(template, speakText, mappedSpeed)
   if (!evaluatedTemplate) {

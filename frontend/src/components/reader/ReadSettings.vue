@@ -291,7 +291,7 @@
         <div class="setting-hint" v-pre>
           支持类似阅读 3.0 的 URL 写法。<br/>
           可用变量: <code>{{speakText}}</code> (朗读文本), <code>{{speakSpeed}}</code> (朗读语速)<br/>
-          例如: <code>http://192.168.6.107:9888/tts?t={{java.encodeURI(speakText)}}&r={{speakSpeed*1}}</code>
+          例如: <code style="word-break: break-all;">http://192.168.1.1:80/tts?t={{java.encodeURI(speakText)}}&amp;r={{(speakSpeed-50)*2}}</code>
         </div>
       </template>
 
