@@ -291,7 +291,7 @@ function stopWorking() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: calc(16px + var(--safe-area-top, 0px)) calc(20px + var(--safe-area-right, 0px)) 16px calc(20px + var(--safe-area-left, 0px));
   border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
@@ -378,7 +378,7 @@ function stopWorking() {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 16px 20px;
+  padding: calc(16px + var(--safe-area-top, 0px)) calc(20px + var(--safe-area-right, 0px)) 16px calc(20px + var(--safe-area-left, 0px));
   border-radius: 16px;
   border: 1px solid rgba(0,0,0,0.1);
   background: transparent;

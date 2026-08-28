@@ -85,13 +85,11 @@
         <button class="m-btn" @click="$emit('info')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
         </button>
-        <button class="m-btn" @click="$emit('ai')" title="AI资料" aria-label="AI资料">
+        <button class="m-btn" @click="$emit('progress')" title="缓存章节" aria-label="缓存章节">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 3h8l4 4v14H6z" />
-            <path d="M14 3v5h5" />
-            <path d="m8 16 2-5 2 5" />
-            <path d="M8.7 14h2.6" />
-            <path d="M15 11v5" />
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
         </button>
         <button class="m-btn" @click="$emit('pageUp')">
@@ -116,6 +114,15 @@
           <svg v-if="!isSpeaking" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6" /><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" /></svg>
           <svg v-else-if="isPaused" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 3 14 9-14 9V3z" /></svg>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+        </button>
+        <button class="m-btn" @click="$emit('ai')" title="AI资料" aria-label="AI资料">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 3h8l4 4v14H6z" />
+            <path d="M14 3v5h5" />
+            <path d="m8 16 2-5 2 5" />
+            <path d="M8.7 14h2.6" />
+            <path d="M15 11v5" />
+          </svg>
         </button>
         <button class="m-btn" @click="store.toggleNight()">
           <svg v-if="!store.isNight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
