@@ -36,15 +36,29 @@
     <!-- Bottom Bar -->
     <Transition name="slide-up">
       <div v-show="show" class="m-bottom-bar">
-        <div class="progress-row" @click="$emit('progress')">
-          <div class="progress-track">
-            <!-- Mock slider for now -->
-            <div class="progress-fill" :style="{ width: store.readingProgress }"></div>
-            <div class="progress-thumb" :style="{ left: store.readingProgress }"></div>
+        <template v-if="currentPage && totalPages">
+          <div class="progress-row">
+            <input 
+              type="range" 
+              class="progress-track-input"
+              :min="1" 
+              :max="totalPages" 
+              :value="currentPage"
+              @input="(e) => $emit('pageChange', Number((e.target as HTMLInputElement).value) - 1)"
+            />
+            <span class="page-text">第 {{ currentPage }} / {{ totalPages }} 页</span>
           </div>
-          <span class="page-text" v-if="currentPage && totalPages">第 {{ currentPage }} / {{ totalPages }} 页</span>
-          <span class="page-text" v-else>第 1/1 页</span>
-        </div>
+        </template>
+        <template v-else>
+          <div class="progress-row" @click="$emit('progress')">
+            <div class="progress-track">
+              <!-- Mock slider for now -->
+              <div class="progress-fill" :style="{ width: store.readingProgress }"></div>
+              <div class="progress-thumb" :style="{ left: store.readingProgress }"></div>
+            </div>
+            <span class="page-text">第 1/1 页</span>
+          </div>
+        </template>
         <div class="nav-row">
           <div class="nav-btn" :class="{ disabled: !store.hasPrev }" @click="$emit('prev')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6" /></svg>
@@ -151,6 +165,7 @@ defineEmits<{
   ai: []
   tts: []
   progress: []
+  pageChange: [pageIndex: number]
 }>()
 
 
@@ -247,6 +262,31 @@ defineEmits<{
   border-radius: 2px;
 }
 
+.progress-track-input {
+  flex: 1;
+  -webkit-appearance: none;
+  background: transparent;
+  height: 24px;
+  margin: 0;
+}
+.progress-track-input::-webkit-slider-runnable-track {
+  height: 4px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 2px;
+}
+.progress-track-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid var(--color-primary, #c97f3a);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  margin-top: -6px;
+}
+.progress-track-input:focus {
+  outline: none;
+}
 .progress-thumb {
   position: absolute;
   top: 50%;

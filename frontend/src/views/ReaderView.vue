@@ -64,6 +64,7 @@
       :is-paused="store.isPaused"
       :current-page="isHorizontalPageMode ? horizontalPageIndex + 1 : undefined"
       :total-pages="isHorizontalPageMode ? Math.max(1, horizontalPages.length) : undefined"
+      @pageChange="jumpToHorizontalPage"
       @goHome="goHome"
       @scrollTop="scrollToTop"
       @scrollBottom="scrollToBottom"
@@ -1773,6 +1774,14 @@ function syncHorizontalPageState() {
   }
   scheduleSaveReadingPosition()
   serverProgressAutoSaveScheduler.schedule()
+}
+
+function jumpToHorizontalPage(pageIndex: number) {
+  if (isHorizontalPageMode.value) {
+    const maxPage = Math.max(0, horizontalPages.value.length - 1)
+    horizontalPageIndex.value = Math.max(0, Math.min(maxPage, pageIndex))
+    syncHorizontalPageState()
+  }
 }
 
 function pageForward() {
