@@ -242,17 +242,22 @@ impl LocalEpubBookService {
         let _index = self.read_index(user_ns, &book_url).await?;
 
         let epub_path = self.book_dir(user_ns, &book_url)?.join("book.epub");
-        let bytes = fs::read(&epub_path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        let hash = epub_hash_from_url(&book_url).unwrap_or("").to_string();
 
-        let epub_data = parse_epub(&bytes, Some(epub_hash_from_url(&book_url).unwrap_or(""))).map_err(AppError::BadRequest)?;
+        let content = tokio::task::spawn_blocking(move || {
+            let epub_data = parse_epub_from_file(&epub_path, Some(&hash), Some(requested_index as usize))
+                .map_err(AppError::BadRequest)?;
+            
+            epub_data
+                .chapters
+                .get(requested_index as usize)
+                .map(|ch| ch.content.clone())
+                .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))
+        })
+        .await
+        .map_err(|e| AppError::Internal(e.into()))??;
 
-        epub_data
-            .chapters
-            .get(requested_index as usize)
-            .map(|ch| ch.content.clone())
-            .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))
+        Ok(content)
     }
 
     pub async fn get_cover(&self, user_ns: &str, book_url: &str) -> Result<Vec<u8>, AppError> {
@@ -265,14 +270,16 @@ impl LocalEpubBookService {
 
     pub async fn get_asset(&self, user_ns: &str, book_url: &str, path: &str) -> Result<(Vec<u8>, String), AppError> {
         let epub_path = self.book_dir(user_ns, book_url)?.join("book.epub");
-        let bytes = fs::read(&epub_path)
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        let cursor = Cursor::new(bytes.as_slice());
-        let mut archive = ZipArchive::new(cursor).map_err(|e| AppError::BadRequest(e.to_string()))?;
+        let path_owned = path.to_string();
         
-        let buf = read_zip_entry_to_bytes(&mut archive, path)
-            .map_err(|e| AppError::BadRequest(format!("资源不存在: {}", e)))?;
+        let buf = tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&epub_path).map_err(|e| AppError::Internal(e.into()))?;
+            let mut archive = ZipArchive::new(file).map_err(|e| AppError::BadRequest(e.to_string()))?;
+            read_zip_entry_to_bytes(&mut archive, &path_owned)
+                .map_err(|e| AppError::BadRequest(format!("资源不存在: {}", e)))
+        })
+        .await
+        .map_err(|e| AppError::Internal(e.into()))??;
             
         let ext = std::path::Path::new(path)
             .extension()
@@ -334,8 +341,8 @@ struct ParsedEpubData {
     cover: Option<Vec<u8>>,
 }
 
-fn read_zip_entry_to_string(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
+fn read_zip_entry_to_string<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
     path: &str,
 ) -> Result<String, String> {
     let file = archive
@@ -348,8 +355,8 @@ fn read_zip_entry_to_string(
     Ok(buf)
 }
 
-fn read_zip_entry_to_bytes(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
+fn read_zip_entry_to_bytes<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
     path: &str,
 ) -> Result<Vec<u8>, String> {
     let mut file = archive
@@ -374,8 +381,22 @@ fn local_name(name: quick_xml::name::QName) -> String {
 }
 
 fn parse_epub(bytes: &[u8], hash: Option<&str>) -> Result<ParsedEpubData, String> {
-    let cursor = Cursor::new(bytes);
-    let mut archive = ZipArchive::new(cursor).map_err(|e| format!("EPUB 解析失败: {}", e))?;
+    let cursor = std::io::Cursor::new(bytes);
+    let archive = ZipArchive::new(cursor).map_err(|e| format!("EPUB 解析失败: {}", e))?;
+    parse_epub_archive(archive, hash, None)
+}
+
+fn parse_epub_from_file(path: &std::path::Path, hash: Option<&str>, target_index: Option<usize>) -> Result<ParsedEpubData, String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let archive = ZipArchive::new(file).map_err(|e| format!("EPUB 解析失败: {}", e))?;
+    parse_epub_archive(archive, hash, target_index)
+}
+
+fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
+    mut archive: ZipArchive<R>,
+    hash: Option<&str>,
+    target_index: Option<usize>,
+) -> Result<ParsedEpubData, String> {
 
     let mut title = String::new();
     let mut author = String::new();
@@ -517,17 +538,22 @@ fn parse_epub(bytes: &[u8], hash: Option<&str>) -> Result<ParsedEpubData, String
 
     // Extract chapters
     let mut chapters = Vec::new();
-    for href in &spine_hrefs {
+    for (i, href) in spine_hrefs.iter().enumerate() {
         let full_path = format!("{}{}", opf_dir, href);
-        let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
-        let content = sanitize_epub_html(&html_str, &full_path, hash);
-        let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
-            chapters
-                .len()
-                .checked_add(1)
-                .map(|i| format!("第 {} 章", i))
-        });
-        let title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
+        let mut content = String::new();
+        let mut title_str = String::new();
+        
+        if target_index.map_or(true, |idx| idx == i) {
+            let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
+            content = sanitize_epub_html(&html_str, &full_path, hash);
+            let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
+                Some(format!("第 {} 章", i + 1))
+            });
+            title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
+        } else {
+            title_str = format!("第 {} 章", i + 1);
+        }
+
         chapters.push(EpubChapter {
             title: title_str,
             content,
