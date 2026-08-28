@@ -94,10 +94,10 @@
             <path d="M15 11v5" />
           </svg>
         </button>
-        <button class="m-btn" @click="$emit('scrollTop')">
+        <button class="m-btn" @click="$emit('pageUp')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
         </button>
-        <button class="m-btn" @click="$emit('scrollBottom')">
+        <button class="m-btn" @click="$emit('pageDown')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
         </button>
       </div>
@@ -155,8 +155,8 @@ defineProps<{
 
 defineEmits<{
   goHome: []
-  scrollTop: []
-  scrollBottom: []
+  pageUp: []
+  pageDown: []
   prev: []
   next: []
   bookmark: []
