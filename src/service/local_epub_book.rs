@@ -536,37 +536,39 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
         }
     }
 
+    let mut toc_map = HashMap::new();
+    if let Some(nav) = &nav_content {
+        toc_map = extract_toc_map(nav);
+    }
+
     // Extract chapters
     let mut chapters = Vec::new();
     for (i, href) in spine_hrefs.iter().enumerate() {
         let full_path = format!("{}{}", opf_dir, href);
         let mut content = String::new();
-        let mut title_str = String::new();
+        
+        let filename = href.split('#').next().unwrap_or(href).rsplit('/').next().unwrap_or(href);
+        let mut title_str = toc_map.get(filename).cloned().unwrap_or_default();
         
         if target_index.map_or(true, |idx| idx == i) {
             let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
             content = sanitize_epub_html(&html_str, &full_path, hash);
-            let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
-                Some(format!("第 {} 章", i + 1))
-            });
-            title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
+            if title_str.is_empty() {
+                let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
+                    Some(format!("第 {} 章", i + 1))
+                });
+                title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
+            }
         } else {
-            title_str = format!("第 {} 章", i + 1);
+            if title_str.is_empty() {
+                title_str = format!("第 {} 章", i + 1);
+            }
         }
 
         chapters.push(EpubChapter {
             title: title_str,
             content,
         });
-    }
-
-    if let Some(nav) = &nav_content {
-        let nav_titles = extract_nav_titles(nav);
-        for (i, ch) in chapters.iter_mut().enumerate() {
-            if ch.title.starts_with("第 ") && i < nav_titles.len() {
-                ch.title = nav_titles[i].clone();
-            }
-        }
     }
 
     if chapters.is_empty() {
@@ -587,13 +589,12 @@ fn extract_title_from_html_str(html: &str) -> Option<String> {
         match reader.read_event() {
             Ok(Event::Start(ref e)) if local_name(e.name()) == "title" => {
                 let text = reader.read_text(e.name()).ok()?;
-                let text = text.trim().to_string();
+                let text = strip_html_tags(&text);
                 if !text.is_empty() {
                     return Some(text);
                 }
             }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
+            Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
@@ -680,32 +681,39 @@ fn sanitize_epub_html(html: &str, base_path: &str, hash: Option<&str>) -> String
     text.trim().to_string()
 }
 
-fn extract_nav_titles(nav: &str) -> Vec<String> {
-    let mut titles = Vec::new();
-    let mut reader = Reader::from_str(nav);
-    let mut in_a = false;
-    let mut current_title = String::new();
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) if local_name(e.name()) == "a" => {
-                in_a = true;
-                current_title.clear();
-            }
-            Ok(Event::End(ref e)) if local_name(e.name()) == "a" => {
-                in_a = false;
-                let trimmed = current_title.trim();
-                if !trimmed.is_empty() {
-                    titles.push(trimmed.to_string());
-                }
-            }
-            Ok(Event::Text(ref e)) if in_a => {
-                current_title.push_str(&e.unescape().unwrap_or_default());
-            }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
+fn strip_html_tags(html: &str) -> String {
+    static RE_BR: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r"(?si)<br\s*/?>").unwrap());
+    static RE_TAGS: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r"(?s)<.*?>").unwrap());
+    let s = RE_BR.replace_all(html, " ");
+    RE_TAGS.replace_all(&s, "").trim().to_string()
+}
+
+fn extract_toc_map(nav: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    
+    static RE_NCX: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<navLabel>\s*<text>(.*?)</text>\s*</navLabel>.*?<content\s+src=['"]([^'"]+)['"]"#).unwrap());
+    for caps in RE_NCX.captures_iter(nav) {
+        let title = strip_html_tags(caps.get(1).map_or("", |m| m.as_str()));
+        let src = caps.get(2).map_or("", |m| m.as_str());
+        let href = src.split('#').next().unwrap_or(src);
+        let filename = href.rsplit('/').next().unwrap_or(href).to_string();
+        if !map.contains_key(&filename) {
+            map.insert(filename, title);
         }
     }
-    titles
+
+    static RE_NAV: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<a[^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#).unwrap());
+    for caps in RE_NAV.captures_iter(nav) {
+        let src = caps.get(1).map_or("", |m| m.as_str());
+        let title = strip_html_tags(caps.get(2).map_or("", |m| m.as_str()));
+        let href = src.split('#').next().unwrap_or(src);
+        let filename = href.rsplit('/').next().unwrap_or(href).to_string();
+        if !map.contains_key(&filename) && !title.is_empty() {
+            map.insert(filename, title);
+        }
+    }
+    
+    map
 }
 
 fn epub_hash_from_url(book_url: &str) -> Result<&str, AppError> {
