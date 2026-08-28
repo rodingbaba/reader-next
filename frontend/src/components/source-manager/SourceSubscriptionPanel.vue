@@ -234,7 +234,6 @@ function formatTime(ts: number) {
 
 @media (max-width: 640px) {
   .subscription-backdrop {
-    align-items: stretch;
     padding: 12px;
   }
 

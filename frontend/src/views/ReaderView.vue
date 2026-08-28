@@ -1649,6 +1649,13 @@ function formatChapterHtml(rawText: string) {
   if (!rawText) return ''
   let text = rawText
 
+  const isLocalTxt = store.book?.origin === 'local-txt' || store.book?.kind === '本地TXT'
+  if (isLocalTxt) {
+    text = text.replace(/<br\s*\/?>/gi, '\n')
+    text = text.replace(/<[a-z\/][^>]*>/gi, '')
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
   if (showSearch.value && searchQuery.value) {
     try {
       const regex = new RegExp(`(${searchQuery.value})`, 'gi')
