@@ -668,8 +668,11 @@ export const useReaderStore = defineStore('reader', () => {
   let synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null
   let currentUtterance: SpeechSynthesisUtterance | null = null
   // HTMLAudioElement for reliable iOS background TTS playback
-  const ttsAudio = typeof window !== 'undefined' ? new window.Audio() : null
-  let currentObjectURL: string | null = null
+  const ttsAudioA = typeof window !== 'undefined' ? new window.Audio() : null
+  const ttsAudioB = typeof window !== 'undefined' ? new window.Audio() : null
+  let activeTtsAudio = ttsAudioA
+  let currentObjectURL_A: string | null = null
+  let currentObjectURL_B: string | null = null
   let currentOpenAIAbortController: AbortController | null = null
   const preloadedOpenAIAudio = ref<PreloadedOpenAIAudio[]>([])
   let preloadGeneration = 0
@@ -936,13 +939,21 @@ export const useReaderStore = defineStore('reader', () => {
       currentOpenAIAbortController.abort()
       currentOpenAIAbortController = null
     }
-    if (ttsAudio) {
-      ttsAudio.pause()
-      if (currentObjectURL) {
-        URL.revokeObjectURL(currentObjectURL)
-        currentObjectURL = null
+    if (ttsAudioA) {
+      ttsAudioA.pause()
+      if (currentObjectURL_A) {
+        URL.revokeObjectURL(currentObjectURL_A)
+        currentObjectURL_A = null
       }
-      ttsAudio.src = ''
+      ttsAudioA.src = ''
+    }
+    if (ttsAudioB) {
+      ttsAudioB.pause()
+      if (currentObjectURL_B) {
+        URL.revokeObjectURL(currentObjectURL_B)
+        currentObjectURL_B = null
+      }
+      ttsAudioB.src = ''
     }
   }
 
@@ -1198,18 +1209,33 @@ export const useReaderStore = defineStore('reader', () => {
       if (controller.signal.aborted) return
       if (!isCurrentTTSSession(sessionId)) return
 
-      if (!ttsAudio) return
+      const targetAudio = activeTtsAudio
+      if (!targetAudio) return
+
+      const otherAudio = targetAudio === ttsAudioA ? ttsAudioB : ttsAudioA
+      if (otherAudio) {
+        otherAudio.pause()
+      }
 
       isSpeechLoading.value = false
 
-      if (currentObjectURL) {
-        URL.revokeObjectURL(currentObjectURL)
+      if (targetAudio === ttsAudioA) {
+        if (currentObjectURL_A) {
+          URL.revokeObjectURL(currentObjectURL_A)
+        }
+        currentObjectURL_A = URL.createObjectURL(blob)
+        targetAudio.src = currentObjectURL_A
+      } else {
+        if (currentObjectURL_B) {
+          URL.revokeObjectURL(currentObjectURL_B)
+        }
+        currentObjectURL_B = URL.createObjectURL(blob)
+        targetAudio.src = currentObjectURL_B
       }
-      currentObjectURL = URL.createObjectURL(blob)
-      ttsAudio.src = currentObjectURL
-      ttsAudio.playbackRate = speechConfig.speechRate
 
-      ttsAudio.onended = () => {
+      targetAudio.playbackRate = speechConfig.speechRate
+
+      targetAudio.onended = () => {
         if (!isCurrentTTSSession(sessionId)) return
         isSpeaking.value = false
         isSpeechTransitioning.value = false
@@ -1219,7 +1245,7 @@ export const useReaderStore = defineStore('reader', () => {
       }
 
       try {
-        await ttsAudio.play()
+        await targetAudio.play()
 
         isSpeaking.value = true
         isSpeechTransitioning.value = false
@@ -1284,7 +1310,7 @@ export const useReaderStore = defineStore('reader', () => {
 
   function startTTS(text?: string, options: TTSOptions = {}, interruptCurrent = true) {
     const hasActiveSystemSpeech = !!synth && (synth.speaking || synth.pending || !!currentUtterance)
-    const hasActiveOpenAISpeech = (ttsAudio && !ttsAudio.paused) || !!currentOpenAIAbortController
+    const hasActiveOpenAISpeech = (activeTtsAudio && !activeTtsAudio.paused) || !!currentOpenAIAbortController
 
     if (interruptCurrent && (hasActiveSystemSpeech || hasActiveOpenAISpeech || isSpeaking.value || isSpeechLoading.value)) {
       stopTTS(false)
@@ -1319,9 +1345,17 @@ export const useReaderStore = defineStore('reader', () => {
     }
 
     if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
+      // Toggle audio element synchronously to lock in the target for this session
+      const prevAudio = activeTtsAudio
+      activeTtsAudio = activeTtsAudio === ttsAudioA ? ttsAudioB : ttsAudioA
+      
+      if (prevAudio && !interruptCurrent) {
+        prevAudio.pause()
+      }
+
       // Synchronously unlock HTMLAudioElement to satisfy iOS media session requirements
-      if (ttsAudio) {
-        ttsAudio.play().catch(() => { })
+      if (activeTtsAudio) {
+        activeTtsAudio.play().catch(() => { })
       }
 
       void startOpenAITTS(rawText, options, sessionId)
@@ -1333,14 +1367,14 @@ export const useReaderStore = defineStore('reader', () => {
 
   function pauseTTS() {
     if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
-      if (!ttsAudio) return
-      if (ttsAudio.paused) {
-        ttsAudio.play().catch(() => { })
+      if (!activeTtsAudio) return
+      if (activeTtsAudio.paused) {
+        activeTtsAudio.play().catch(() => { })
         isPaused.value = false
         isSpeaking.value = true
         isSpeechTransitioning.value = false
       } else {
-        ttsAudio.pause()
+        activeTtsAudio.pause()
         isPaused.value = true
         isSpeaking.value = false
         isSpeechTransitioning.value = false
