@@ -19,14 +19,14 @@ function getViewportMetrics() {
   const isStandalone = typeof window !== 'undefined' && ('standalone' in window.navigator || window.matchMedia('(display-mode: standalone)').matches)
   const isIOS = typeof window !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)
   const layoutHeightCandidates = [window.innerHeight, document.documentElement.clientHeight]
-  
+
   if (isStandalone && isIOS && window.screen?.height && window.screen?.width) {
     const isPortrait = window.innerHeight >= window.innerWidth
     const screenLong = Math.max(window.screen.height, window.screen.width)
     const screenShort = Math.min(window.screen.height, window.screen.width)
     layoutHeightCandidates.push(isPortrait ? screenLong : screenShort)
   }
-  
+
   const layoutWidthCandidates = [window.innerWidth, document.documentElement.clientWidth]
   if (isStandalone && isIOS && window.screen?.height && window.screen?.width) {
     const isPortrait = window.innerHeight >= window.innerWidth
@@ -63,6 +63,17 @@ function roundViewportValue(value: number) {
 
 function setViewportCssVariables() {
   if (typeof document === 'undefined') return false
+
+  const active = document.activeElement as HTMLInputElement | null
+  if (
+    active &&
+    (active.tagName === 'TEXTAREA' ||
+      active.tagName === 'SELECT' ||
+      (active.tagName === 'INPUT' &&
+        !['checkbox', 'radio', 'button', 'submit', 'color', 'range', 'hidden', 'file'].includes(active.type)))
+  ) {
+    return false
+  }
 
   const root = document.documentElement
   const metrics = getViewportMetrics()
