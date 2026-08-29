@@ -44,10 +44,14 @@ const router = createRouter({
       component: () => import('../views/RssArticleView.vue'),
     },
   ],
+  scrollBehavior() {
+    return { top: 0, left: 0 }
+  }
 })
 
 import { syncViewportSize } from '../utils/viewport'
 router.afterEach(() => {
+  window.scrollTo(0, 0)
   setTimeout(() => {
     syncViewportSize()
   }, 50)
