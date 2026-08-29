@@ -16,6 +16,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 4. **Git Operations**: 
    - Unless explicitly requested by the user, do NOT automatically commit code (`git commit`) and do NOT automatically push (`git push`). Always ask for permission first.
    - When you are authorized to commit, ALWAYS ensure no modified files are left behind. Use `git add .` or run `git status` to meticulously verify that every intended modification (including newly created and heavily refactored files) is properly staged before committing.
+   - ALWAYS clean up any temporary scripts, patch files, or scratch files you created during development before or immediately after committing code.
 
 ## CodeGraph + LeanCTX Routing
 
