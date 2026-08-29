@@ -106,6 +106,7 @@
       @next="speechNext"
       @voice-change="changeVoice"
       @openai-voice-change="changeOpenAIVoice"
+      @http-tts-change="changeHttpTts"
       @rate-change="adjustSpeechRate"
       @pitch-change="adjustSpeechPitch"
       @timer-change="setSpeechTimer"
@@ -2713,6 +2714,15 @@ function changeVoice(name: string) {
 function changeOpenAIVoice(voiceId: string) {
   if (store.speechConfig.openaiSource === 'server') return
   store.setOpenAISpeechVoice(voiceId)
+  ttsPanelDismissed.value = false
+  showTTSPanel.value = true
+  if (store.isSpeaking && !store.isPaused) {
+    restartSpeechFromCurrentParagraph()
+  }
+}
+
+function changeHttpTts(id: string) {
+  store.setActiveHttpTtsEngine(id)
   ttsPanelDismissed.value = false
   showTTSPanel.value = true
   if (store.isSpeaking && !store.isPaused) {
