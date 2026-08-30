@@ -13,9 +13,12 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
    - Backend: `cargo test` or a focused `cargo test <name>`
    - Frontend: `cd frontend && npm test` / `npm run build` as relevant
    - Formatting/sanity: `git diff --check`
-4. **Git Operations**: 
-   - Unless explicitly requested by the user, do NOT automatically commit code (`git commit`) and do NOT automatically push (`git push`). Always ask for permission first.
-   - When you are authorized to commit, ALWAYS ensure no modified files are left behind. Use `git add .` or run `git status` to meticulously verify that every intended modification (including newly created and heavily refactored files) is properly staged before committing.
+4. **Git Operations (🚨 CRITICAL ZERO-TOLERANCE RULE 🚨)**: 
+   - **DO NOT** ever automatically commit code (`git commit`).
+   - **DO NOT** ever automatically push code (`git push`).
+   - **DO NOT** ever automatically create tags or push tags (`git tag`).
+   - **ALWAYS STOP AND ASK FOR EXPLICIT PERMISSION FROM THE USER BEFORE ANY GIT MODIFICATION COMMANDS.** This is a zero-tolerance boundary. If the user just says "approved" to a plan, that ONLY approves writing the code, NOT committing it. You MUST ask: "Code is ready, should I commit and push?" and wait for the user to say "yes".
+   - When you ARE explicitly authorized to commit, ALWAYS ensure no modified files are left behind. Use `git add .` or run `git status` to meticulously verify that every intended modification (including newly created and heavily refactored files) is properly staged before committing.
    - ALWAYS clean up any temporary scripts, patch files, or scratch files you created during development before or immediately after committing code.
 
 ## CodeGraph + LeanCTX Routing
