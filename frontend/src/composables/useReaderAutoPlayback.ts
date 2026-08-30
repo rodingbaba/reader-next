@@ -32,7 +32,7 @@ export function useReaderAutoPlayback(
   let autoReadingParagraphIndex = -1
   let autoReadingProcessing = false
   let speechRestartTimer: number | null = null
-  
+
   let currentSpeechParagraph: HTMLElement | null = null
   let currentSpeechSegments: { text: string; nextParagraph: HTMLElement | null }[] = []
   let currentSpeechSegmentIndex = 0
@@ -50,6 +50,11 @@ export function useReaderAutoPlayback(
   function logSpeech(message: string, payload?: unknown) {
     void message
     void payload
+  }
+
+  /** Returns true when the text contains only punctuation, symbols, and whitespace (not speakable) */
+  function isPureSymbolText(text: string) {
+    return /^[\s\p{P}\p{S}]+$/u.test(text)
   }
 
   function getAllParagraphs() {
@@ -81,7 +86,7 @@ export function useReaderAutoPlayback(
     } else if (chapterTextRef.value) {
       roots = [chapterTextRef.value]
     }
-    
+
     if (!roots.length) return [] as HTMLElement[]
     const allElements = roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
     const list: HTMLElement[] = []
@@ -464,10 +469,10 @@ export function useReaderAutoPlayback(
       : 150
     speechRestartTimer = window.setTimeout(() => {
       if (store.isPaused) {
-        
+
         return
       }
-      
+
       startSpeech(paragraph, interruptCurrent)
     }, restartDelay)
   }
@@ -531,7 +536,7 @@ export function useReaderAutoPlayback(
         }
       })
       .catch(() => {
-        
+
       })
   }
 
@@ -542,11 +547,12 @@ export function useReaderAutoPlayback(
       paragraph: paragraphPreview(current),
       currentIndex: store.currentIndex,
     })
-    if (!current?.innerText.trim()) {
+    const currentText = current?.innerText.trim() || ''
+    if (!current || !currentText || isPureSymbolText(currentText)) {
       if (interruptCurrent) {
         speechNext()
       } else {
-        continueSpeechTarget(getNextParagraph())
+        continueSpeechTarget(getNextParagraphFrom(current ?? null))
       }
       return
     }
@@ -554,7 +560,7 @@ export function useReaderAutoPlayback(
     markReadingParagraph(current)
     showParagraph(current)
     const chunk = ensureSpeechChunkState(current)
-    if (!chunk.text.trim()) {
+    if (!chunk.text.trim() || isPureSymbolText(chunk.text.trim())) {
       if (interruptCurrent) {
         speechNext(chunk.nextParagraph)
       } else {
@@ -668,10 +674,10 @@ export function useReaderAutoPlayback(
     }
     speechRestartTimer = window.setTimeout(() => {
       if (store.isPaused) {
-        
+
         return
       }
-      
+
       startSpeech()
     }, 150)
   }
@@ -680,9 +686,9 @@ export function useReaderAutoPlayback(
     if (speechRestartTimer) {
       clearTimeout(speechRestartTimer)
       speechRestartTimer = null
-    store.isSpeechTransitioning = false
+      store.isSpeechTransitioning = false
     }
-    
+
   }
 
   function resetAutoParagraphIndex() {
