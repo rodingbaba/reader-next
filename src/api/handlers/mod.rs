@@ -11,10 +11,12 @@ mod rss;
 mod update;
 mod user;
 mod webdav;
+mod speech_config;
 
 pub use ai_book::*;
 pub use ai_model::*;
 pub use ai_proxy::*;
+pub use speech_config::*;
 pub use book::*;
 pub use book_group::*;
 pub use book_source::login_book_source;

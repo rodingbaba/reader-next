@@ -313,6 +313,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/logout", post(handlers::logout))
         .route("/reader3/getUserInfo", get(handlers::get_user_info))
         .route(
+            "/reader3/getSpeechConfig",
+            get(handlers::get_speech_config),
+        )
+        .route(
+            "/reader3/saveSpeechConfig",
+            post(handlers::save_speech_config),
+        )
+        .route(
             "/reader3/getVersionUpdate",
             get(handlers::get_version_update),
         )

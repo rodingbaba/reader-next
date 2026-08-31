@@ -17,6 +17,7 @@ import {
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getReplaceRules } from '../api/replaceRule'
+import { getSpeechConfig, saveSpeechConfig as apiSaveSpeechConfig } from '../api/speechConfig'
 import type { Book, BookChapter, Bookmark, ReplaceRule } from '../types'
 import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
 import { isLocalTxtBook } from '../utils/localBook'
@@ -721,9 +722,32 @@ export const useReaderStore = defineStore('reader', () => {
     return sessionId === currentTTSSessionId
   }
 
+  let saveSpeechConfigTimeout: ReturnType<typeof setTimeout> | null = null
   function saveSpeechConfig() {
     localStorage.setItem('reader-speechConfig', JSON.stringify(speechConfig))
+    if (saveSpeechConfigTimeout) clearTimeout(saveSpeechConfigTimeout)
+    saveSpeechConfigTimeout = setTimeout(() => {
+      apiSaveSpeechConfig(speechConfig).catch(e => console.warn('Sync speech config failed:', e))
+    }, 1000)
   }
+
+  async function initSpeechConfig() {
+    try {
+      const serverConfig = await getSpeechConfig()
+      if (serverConfig && Object.keys(serverConfig).length > 0) {
+        Object.assign(speechConfig, migrateSpeechConfig(serverConfig))
+        localStorage.setItem('reader-speechConfig', JSON.stringify(speechConfig))
+      } else {
+        // If server config is empty, sync local config up
+        apiSaveSpeechConfig(speechConfig).catch(e => console.warn('Sync up speech config failed:', e))
+      }
+    } catch (e) {
+      console.warn('Init speech config failed:', e)
+    }
+  }
+
+  // Auto init
+  initSpeechConfig()
 
   function fetchVoices() {
     if (!synth) return
