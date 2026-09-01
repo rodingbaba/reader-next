@@ -153,7 +153,7 @@ struct HybridWebView: UIViewRepresentable {
         }
         
         private func handleTTSControl(action: String, payload: [String: Any]?) {
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async {
                 switch action {
                 case "play":
                     if let text = payload?["text"] as? String,

@@ -2881,20 +2881,6 @@ onBeforeRouteLeave(() => {
 onMounted(async () => {
   (window as any).__nativeBridgeTTSProgress = (index: number) => { syncNativeTTSProgress(index) }
   (window as any).__nativeBridgeTTSStateChange = (state: string) => {
-    if (state === 'playing') {
-      store.isSpeaking = true
-      store.isPaused = false
-    } else if (state === 'paused') {
-      store.isPaused = true
-    } else if (state === 'stopped') {
-      store.isSpeaking = false
-      store.isPaused = false
-    }
-  }
-  (window as any).__nativeBridgeTTSChapterChange = (index: number) => {
-    jumpFromCatalog(index)
-  }
-  syncViewportSize()
   void loadChapterSummaryConfigForSider()
   if (aiPanelActiveTab.value === 'settings') {
     void loadAiModelConfig()

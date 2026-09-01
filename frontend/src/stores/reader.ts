@@ -869,476 +869,455 @@ export const useReaderStore = defineStore('reader', () => {
     if (speakerId) {
       const cfg = (speechConfig.speakerConfigs || {})[speakerId] || { preloadCount: 3, gapReduction: 0, speechRate: speechConfig.speechRate }
       invokeTTS('setConfig', { speakerId, ...cfg })
-    }
-  }
 
-  function setPreloadCount(count: number) {
-    const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
-    if (speakerId) {
-          if (!speechConfig.speakerConfigs) speechConfig.speakerConfigs = {}
-          if (!speechConfig.speakerConfigs[speakerId]) {
-            speechConfig.speakerConfigs[speakerId] = { preloadCount: count, gapReduction: 0, speechRate: speechConfig.speechRate }
-          }
-          speechConfig.speakerConfigs[speakerId].preloadCount = count
-          saveSpeechConfig()
-          syncTTSConfigToNative()
-        }
-      }
-
-      function setGapReduction(gap: number) {
+      function setPreloadCount(count: number) {
         const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
         if (speakerId) {
-          if (!speechConfig.speakerConfigs) speechConfig.speakerConfigs = {}
-          if (!speechConfig.speakerConfigs[speakerId]) {
-            speechConfig.speakerConfigs[speakerId] = { preloadCount: 3, gapReduction: gap, speechRate: speechConfig.speechRate }
-          }
-          speechConfig.speakerConfigs[speakerId].gapReduction = gap
-          saveSpeechConfig()
-          syncTTSConfigToNative()
         }
-      }
-
-      function setSpeechPitch(pitch: number) {
-        speechConfig.speechPitch = pitch
+        speechConfig.speakerConfigs[speakerId].preloadCount = count
         saveSpeechConfig()
+        syncTTSConfigToNative()
       }
+    }
 
-      function buildOpenAIAudioCacheKey(rawText: string) {
-        if (speechConfig.provider === 'http') {
-          const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
-          return [
-            'http',
-            active?.url?.trim() || '',
-            speechConfig.speechRate.toFixed(1),
-            rawText,
-          ].join('::')
+    function setGapReduction(gap: number) {
+      const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
+      if (speakerId) {
+        if (!speechConfig.speakerConfigs) speechConfig.speakerConfigs = {}
+        if (!speechConfig.speakerConfigs[speakerId]) {
+          speechConfig.speakerConfigs[speakerId] = { preloadCount: 3, gapReduction: gap, speechRate: speechConfig.speechRate }
         }
+        speechConfig.speakerConfigs[speakerId].gapReduction = gap
+        saveSpeechConfig()
+        syncTTSConfigToNative()
+      }
+    }
+
+    function setSpeechPitch(pitch: number) {
+      speechConfig.speechPitch = pitch
+      saveSpeechConfig()
+    }
+
+    function buildOpenAIAudioCacheKey(rawText: string) {
+      if (speechConfig.provider === 'http') {
+        const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
         return [
-          speechConfig.openaiSource,
-          speechConfig.openaiBaseUrl.trim(),
-          speechConfig.openaiApiKey.trim(),
-          speechConfig.openaiModel,
-          speechConfig.openaiVoice,
-          speechConfig.openaiFormat,
+          'http',
+          active?.url?.trim() || '',
           speechConfig.speechRate.toFixed(1),
           rawText,
         ].join('::')
       }
+      return [
+        speechConfig.openaiSource,
+        speechConfig.openaiBaseUrl.trim(),
+        speechConfig.openaiApiKey.trim(),
+        speechConfig.openaiModel,
+        speechConfig.openaiVoice,
+        speechConfig.openaiFormat,
+        speechConfig.speechRate.toFixed(1),
+        rawText,
+      ].join('::')
+    }
 
-      async function fetchOpenAIAudioBlob(rawText: string, signal?: AbortSignal) {
-        if (speechConfig.provider === 'http') {
-          const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
-          return requestHttpTtsAudio(
-            active?.url || '',
-            rawText,
-            speechConfig.speechRate,
-            signal
-          )
-        }
-        return requestOpenAISpeechAudio({
-          source: speechConfig.openaiSource,
-          baseUrl: speechConfig.openaiBaseUrl,
-          apiKey: speechConfig.openaiApiKey || undefined,
-          input: rawText.slice(0, 4096),
-          model: speechConfig.openaiModel,
-          voice: speechConfig.openaiVoice,
-          format: speechConfig.openaiFormat,
-          speed: speechConfig.speechRate,
-          signal,
-        })
+    async function fetchOpenAIAudioBlob(rawText: string, signal?: AbortSignal) {
+      if (speechConfig.provider === 'http') {
+        const active = speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
+        return requestHttpTtsAudio(
+          active?.url || '',
+          rawText,
+          speechConfig.speechRate,
+          signal
+        )
+      }
+      return requestOpenAISpeechAudio({
+        source: speechConfig.openaiSource,
+        baseUrl: speechConfig.openaiBaseUrl,
+        apiKey: speechConfig.openaiApiKey || undefined,
+        input: rawText.slice(0, 4096),
+        model: speechConfig.openaiModel,
+        voice: speechConfig.openaiVoice,
+        format: speechConfig.openaiFormat,
+        speed: speechConfig.speechRate,
+        signal,
+      })
+    }
+
+    function getOrStartOpenAIAudioRequest(rawText: string, signal?: AbortSignal) {
+      const key = buildOpenAIAudioCacheKey(rawText)
+      const existing = inFlightOpenAIAudioRequests.get(key)
+      if (existing) {
+        return { key, promise: existing }
       }
 
-      function getOrStartOpenAIAudioRequest(rawText: string, signal?: AbortSignal) {
-        const key = buildOpenAIAudioCacheKey(rawText)
-        const existing = inFlightOpenAIAudioRequests.get(key)
-        if (existing) {
-          return { key, promise: existing }
+      const promise = fetchOpenAIAudioBlob(rawText, signal).finally(() => {
+        if (inFlightOpenAIAudioRequests.get(key) === promise) {
+          inFlightOpenAIAudioRequests.delete(key)
         }
+      })
+      inFlightOpenAIAudioRequests.set(key, promise)
+      return { key, promise }
+    }
 
-        const promise = fetchOpenAIAudioBlob(rawText, signal).finally(() => {
-          if (inFlightOpenAIAudioRequests.get(key) === promise) {
-            inFlightOpenAIAudioRequests.delete(key)
-          }
-        })
-        inFlightOpenAIAudioRequests.set(key, promise)
-        return { key, promise }
+    function clearPreloadedOpenAIAudio() {
+      preloadGeneration += 1
+      inFlightPreloadKeys.clear()
+      inFlightOpenAIAudioRequests.clear()
+      preloadedOpenAIAudio.value = []
+    }
+
+    async function preloadOpenAITTS(rawText?: string | string[] | null) {
+      if ((speechConfig.provider !== 'openai' && speechConfig.provider !== 'http') || !openAISpeechConfigured.value) return
+      const texts = Array.isArray(rawText) ? rawText : [rawText || '']
+      const normalizedTexts = texts.map((item) => item.trim()).filter(Boolean)
+      if (!normalizedTexts.length) return
+      const pendingTexts = normalizedTexts.filter((item) => {
+        const key = buildOpenAIAudioCacheKey(item)
+        return !preloadedOpenAIAudio.value.some((entry) => entry.key === key) && !inFlightPreloadKeys.has(key)
+      })
+      if (!pendingTexts.length) return
+
+      const generation = preloadGeneration
+      for (const text of pendingTexts.slice(0, OPENAI_AUDIO_PRELOAD_LIMIT)) {
+        const key = buildOpenAIAudioCacheKey(text)
+        inFlightPreloadKeys.add(key)
+        const { promise } = getOrStartOpenAIAudioRequest(text)
+        void promise
+          .then((blob) => {
+            if (generation !== preloadGeneration) return
+
+            const nextQueue = preloadedOpenAIAudio.value.filter((entry) => entry.key !== key)
+            nextQueue.push({ key, blob, generation })
+            preloadedOpenAIAudio.value = nextQueue
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            inFlightPreloadKeys.delete(key)
+          })
       }
+    }
 
-      function clearPreloadedOpenAIAudio() {
-        preloadGeneration += 1
-        inFlightPreloadKeys.clear()
-        inFlightOpenAIAudioRequests.clear()
-        preloadedOpenAIAudio.value = []
+    function stopOpenAIAudioPlayback() {
+      if (currentOpenAIAbortController) {
+        currentOpenAIAbortController.abort()
+        currentOpenAIAbortController = null
       }
-
-      async function preloadOpenAITTS(rawText?: string | string[] | null) {
-        if ((speechConfig.provider !== 'openai' && speechConfig.provider !== 'http') || !openAISpeechConfigured.value) return
-        const texts = Array.isArray(rawText) ? rawText : [rawText || '']
-        const normalizedTexts = texts.map((item) => item.trim()).filter(Boolean)
-        if (!normalizedTexts.length) return
-        const pendingTexts = normalizedTexts.filter((item) => {
-          const key = buildOpenAIAudioCacheKey(item)
-          return !preloadedOpenAIAudio.value.some((entry) => entry.key === key) && !inFlightPreloadKeys.has(key)
-        })
-        if (!pendingTexts.length) return
-
-        const generation = preloadGeneration
-        for (const text of pendingTexts.slice(0, OPENAI_AUDIO_PRELOAD_LIMIT)) {
-          const key = buildOpenAIAudioCacheKey(text)
-          inFlightPreloadKeys.add(key)
-          const { promise } = getOrStartOpenAIAudioRequest(text)
-          void promise
-            .then((blob) => {
-              if (generation !== preloadGeneration) return
-
-              const nextQueue = preloadedOpenAIAudio.value.filter((entry) => entry.key !== key)
-              nextQueue.push({ key, blob, generation })
-              preloadedOpenAIAudio.value = nextQueue
-            })
-            .catch(() => undefined)
-            .finally(() => {
-              inFlightPreloadKeys.delete(key)
-            })
+      if (ttsAudio) {
+        ttsAudio.pause()
+        if (currentObjectURL) {
+          URL.revokeObjectURL(currentObjectURL)
+          currentObjectURL = null
         }
+        ttsAudio.src = ''
       }
+    }
 
-      function stopOpenAIAudioPlayback() {
-        if (currentOpenAIAbortController) {
-          currentOpenAIAbortController.abort()
-          currentOpenAIAbortController = null
-        }
-        if (ttsAudio) {
-          ttsAudio.pause()
-          if (currentObjectURL) {
-            URL.revokeObjectURL(currentObjectURL)
-            currentObjectURL = null
-          }
-          ttsAudio.src = ''
-        }
+    function clearSpeechStopTimer(resetConfig = true) {
+      if (speechStopTimer) {
+        clearTimeout(speechStopTimer)
+        speechStopTimer = null
       }
-
-      function clearSpeechStopTimer(resetConfig = true) {
-        if (speechStopTimer) {
-          clearTimeout(speechStopTimer)
-          speechStopTimer = null
-        }
-        speechStopAt.value = 0
-        if (resetConfig) {
-          speechConfig.stopAfterMinutes = 0
-          saveSpeechConfig()
-        }
-      }
-
-      function setSpeechStopTimer(minutes: number) {
-        clearSpeechStopTimer(false)
-        const normalized = Math.max(0, Math.min(180, Math.round(minutes)))
-        speechConfig.stopAfterMinutes = normalized
+      speechStopAt.value = 0
+      if (resetConfig) {
+        speechConfig.stopAfterMinutes = 0
         saveSpeechConfig()
-        if (!normalized) {
-          speechStopAt.value = 0
+      }
+    }
+
+    function setSpeechStopTimer(minutes: number) {
+      clearSpeechStopTimer(false)
+      const normalized = Math.max(0, Math.min(180, Math.round(minutes)))
+      speechConfig.stopAfterMinutes = normalized
+      saveSpeechConfig()
+      if (!normalized) {
+        speechStopAt.value = 0
+        return
+      }
+      speechStopAt.value = Date.now() + normalized * 60 * 1000
+      speechStopTimer = window.setTimeout(() => {
+        stopTTS()
+        clearSpeechStopTimer(false)
+        speechConfig.stopAfterMinutes = 0
+        saveSpeechConfig()
+        appStore.showToast('朗读已按定时设置停止', 'success')
+      }, normalized * 60 * 1000)
+    }
+
+    function startSystemTTS(rawText: string, options: TTSOptions, sessionId: number) {
+      if (!synth) return
+      isSpeechLoading.value = false
+      if (!voiceList.value.length) {
+        fetchVoices()
+      }
+
+      const utterance = new SpeechSynthesisUtterance(rawText)
+      currentUtterance = utterance
+      const safariSpeechFallback = isSafariSpeechFallbackMode() && !systemTtsNativeEventsReliable.value
+
+      const selectedVoice = voiceList.value.find((voice) => voice.name === speechConfig.voiceName)
+      utterance.lang = selectedVoice?.lang || 'zh-CN'
+      utterance.voice = selectedVoice || null
+      utterance.rate = speechConfig.speechRate
+      utterance.pitch = speechConfig.speechPitch
+      logTTS('system speak queued', {
+        sessionId,
+        voice: utterance.voice?.name || utterance.lang,
+        rate: utterance.rate,
+        pitch: utterance.pitch,
+        text: rawText.slice(0, 80),
+      })
+
+      let completed = false
+      let finishWatchdog: number | null = null
+      const startedAt = Date.now()
+      let lastProgressAt = startedAt
+      let sawStart = false
+      let sawBoundary = false
+      let pausedStartedAt: number | null = null
+      let pausedAccumulatedMs = 0
+
+      const clearFinishWatchdog = () => {
+        if (finishWatchdog) {
+          clearTimeout(finishWatchdog)
+          finishWatchdog = null
+        }
+      }
+
+      const effectiveElapsed = () => {
+        const now = Date.now()
+        const currentPaused = pausedStartedAt ? now - pausedStartedAt : 0
+        return now - startedAt - pausedAccumulatedMs - currentPaused
+      }
+
+      const finalizePlayback = (kind: 'end' | 'error' | 'interrupted', event?: SpeechSynthesisErrorEvent) => {
+        if (completed) return
+        completed = true
+        clearFinishWatchdog()
+        if (currentUtterance === utterance) {
+          currentUtterance = null
+        }
+        if (!isCurrentTTSSession(sessionId)) return
+        isSpeaking.value = false
+        isSpeechTransitioning.value = false
+        isPaused.value = false
+        logTTS('system finalize', {
+          sessionId,
+          kind,
+          error: event?.error,
+          speaking: synth?.speaking,
+          pending: synth?.pending,
+        })
+        if (kind === 'end') {
+          options.onEnd?.()
           return
         }
-        speechStopAt.value = Date.now() + normalized * 60 * 1000
-        speechStopTimer = window.setTimeout(() => {
-          stopTTS()
-          clearSpeechStopTimer(false)
-          speechConfig.stopAfterMinutes = 0
-          saveSpeechConfig()
-          appStore.showToast('朗读已按定时设置停止', 'success')
-        }, normalized * 60 * 1000)
+        if (kind === 'error') {
+          options.onError?.(event)
+        }
       }
 
-      function startSystemTTS(rawText: string, options: TTSOptions, sessionId: number) {
-        if (!synth) return
-        isSpeechLoading.value = false
-        if (!voiceList.value.length) {
-          fetchVoices()
-        }
-
-        const utterance = new SpeechSynthesisUtterance(rawText)
-        currentUtterance = utterance
-        const safariSpeechFallback = isSafariSpeechFallbackMode() && !systemTtsNativeEventsReliable.value
-
-        const selectedVoice = voiceList.value.find((voice) => voice.name === speechConfig.voiceName)
-        utterance.lang = selectedVoice?.lang || 'zh-CN'
-        utterance.voice = selectedVoice || null
-        utterance.rate = speechConfig.speechRate
-        utterance.pitch = speechConfig.speechPitch
-        logTTS('system speak queued', {
+      const forceFinalizeEnd = (reason: string) => {
+        logTTS('system watchdog force end', {
           sessionId,
-          voice: utterance.voice?.name || utterance.lang,
-          rate: utterance.rate,
-          pitch: utterance.pitch,
-          text: rawText.slice(0, 80),
-        })
-
-        let completed = false
-        let finishWatchdog: number | null = null
-        const startedAt = Date.now()
-        let lastProgressAt = startedAt
-        let sawStart = false
-        let sawBoundary = false
-        let pausedStartedAt: number | null = null
-        let pausedAccumulatedMs = 0
-
-        const clearFinishWatchdog = () => {
-          if (finishWatchdog) {
-            clearTimeout(finishWatchdog)
-            finishWatchdog = null
-          }
-        }
-
-        const effectiveElapsed = () => {
-          const now = Date.now()
-          const currentPaused = pausedStartedAt ? now - pausedStartedAt : 0
-          return now - startedAt - pausedAccumulatedMs - currentPaused
-        }
-
-        const finalizePlayback = (kind: 'end' | 'error' | 'interrupted', event?: SpeechSynthesisErrorEvent) => {
-          if (completed) return
-          completed = true
-          clearFinishWatchdog()
-          if (currentUtterance === utterance) {
-            currentUtterance = null
-          }
-          if (!isCurrentTTSSession(sessionId)) return
-          isSpeaking.value = false
-          isSpeechTransitioning.value = false
-          isPaused.value = false
-          logTTS('system finalize', {
-            sessionId,
-            kind,
-            error: event?.error,
-            speaking: synth?.speaking,
-            pending: synth?.pending,
-          })
-          if (kind === 'end') {
-            options.onEnd?.()
-            return
-          }
-          if (kind === 'error') {
-            options.onError?.(event)
-          }
-        }
-
-        const forceFinalizeEnd = (reason: string) => {
-          logTTS('system watchdog force end', {
-            sessionId,
-            reason,
-            speaking: synth?.speaking,
-            pending: synth?.pending,
-            elapsed: effectiveElapsed(),
-            text: rawText.slice(0, 40),
-          })
-          finalizePlayback('end')
-          window.setTimeout(() => {
-            if (!isCurrentTTSSession(sessionId)) return
-            try {
-              synth?.cancel()
-            } catch {
-              // ignore platform-specific cancel errors
-            }
-          }, 0)
-        }
-
-        const scheduleFinishWatchdog = () => {
-          clearFinishWatchdog()
-          const estimatedMs = safariSpeechFallback
-            ? Math.max(2400, Math.ceil((rawText.length / Math.max(0.6, speechConfig.speechRate)) * 235))
-            : Math.max(2800, Math.ceil((rawText.length / Math.max(0.6, speechConfig.speechRate)) * 280))
-          const noStartTimeoutMs = safariSpeechFallback
-            ? estimatedMs + Math.max(400, Math.ceil(rawText.length * 22))
-            : 0
-          const hardTimeoutMs = safariSpeechFallback
-            ? estimatedMs + Math.max(1800, Math.ceil(rawText.length * 80))
-            : Math.min(120000, estimatedMs + Math.max(4000, Math.ceil(rawText.length * 120)))
-          logTTS('system watchdog scheduled', {
-            sessionId,
-            estimatedMs,
-            noStartTimeoutMs,
-            hardTimeoutMs,
-            safariSpeechFallback,
-            text: rawText.slice(0, 40),
-          })
-          const checkFinish = () => {
-            if (completed || !isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
-            if (synth?.paused || isPaused.value) {
-              if (pausedStartedAt == null) {
-                pausedStartedAt = Date.now()
-              }
-              lastProgressAt = Date.now()
-              finishWatchdog = window.setTimeout(checkFinish, 600)
-              return
-            }
-            if (pausedStartedAt != null) {
-              pausedAccumulatedMs += Date.now() - pausedStartedAt
-              pausedStartedAt = null
-            }
-            const elapsed = effectiveElapsed()
-            const idleMs = Date.now() - lastProgressAt
-            if (!synth?.speaking && !synth?.pending) {
-              logTTS('system watchdog finalize end', { sessionId })
-              finalizePlayback('end')
-              return
-            }
-            if (sawBoundary && idleMs > 1800 && elapsed > Math.max(2200, estimatedMs * 0.75)) {
-              forceFinalizeEnd('boundary-idle')
-              return
-            }
-            if (safariSpeechFallback && !sawStart && elapsed > noStartTimeoutMs) {
-              forceFinalizeEnd('no-start-timeout')
-              return
-            }
-            if (elapsed > hardTimeoutMs) {
-              forceFinalizeEnd('hard-timeout')
-              return
-            }
-            finishWatchdog = window.setTimeout(checkFinish, 600)
-          }
-          finishWatchdog = window.setTimeout(checkFinish, safariSpeechFallback ? Math.min(estimatedMs, 1200) : estimatedMs)
-        }
-
-        utterance.onstart = () => {
-          if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
-          isSpeaking.value = true
-          isSpeechTransitioning.value = false
-          isPaused.value = false
-          sawStart = true
-          systemTtsNativeEventsReliable.value = true
-          lastProgressAt = Date.now()
-          logTTS('system onstart', { sessionId, text: rawText.slice(0, 40) })
-          options.onStart?.()
-        }
-        utterance.onboundary = () => {
-          if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
-          sawBoundary = true
-          lastProgressAt = Date.now()
-        }
-        utterance.onend = () => {
-          logTTS('system onend', { sessionId, text: rawText.slice(0, 40) })
-          finalizePlayback('end')
-        }
-        utterance.onerror = (event) => {
-          const interrupted = event.error === 'interrupted' || event.error === 'canceled'
-          logTTS('system onerror', { sessionId, error: event.error, interrupted, text: rawText.slice(0, 40) })
-          finalizePlayback(interrupted ? 'interrupted' : 'error', event)
-        }
-
-        synth.speak(utterance)
-        logTTS('system speak invoked', {
-          sessionId,
-          speaking: synth.speaking,
-          pending: synth.pending,
+          reason,
+          speaking: synth?.speaking,
+          pending: synth?.pending,
+          elapsed: effectiveElapsed(),
           text: rawText.slice(0, 40),
         })
-        scheduleFinishWatchdog()
+        finalizePlayback('end')
+        window.setTimeout(() => {
+          if (!isCurrentTTSSession(sessionId)) return
+          try {
+            synth?.cancel()
+          } catch {
+            // ignore platform-specific cancel errors
+          }
+        }, 0)
       }
 
-      async function startOpenAITTS(rawText: string, options: TTSOptions, sessionId: number) {
-        if (!openAISpeechConfigured.value) {
-          const error = new Error(`请先配置 ${speechConfig.provider === 'http' ? 'HTTP TTS' : 'OpenAI Speech'}`)
+      const scheduleFinishWatchdog = () => {
+        clearFinishWatchdog()
+        const estimatedMs = safariSpeechFallback
+          ? Math.max(2400, Math.ceil((rawText.length / Math.max(0.6, speechConfig.speechRate)) * 235))
+          : Math.max(2800, Math.ceil((rawText.length / Math.max(0.6, speechConfig.speechRate)) * 280))
+        const noStartTimeoutMs = safariSpeechFallback
+          ? estimatedMs + Math.max(400, Math.ceil(rawText.length * 22))
+          : 0
+        const hardTimeoutMs = safariSpeechFallback
+          ? estimatedMs + Math.max(1800, Math.ceil(rawText.length * 80))
+          : Math.min(120000, estimatedMs + Math.max(4000, Math.ceil(rawText.length * 120)))
+        logTTS('system watchdog scheduled', {
+          sessionId,
+          estimatedMs,
+          noStartTimeoutMs,
+          hardTimeoutMs,
+          safariSpeechFallback,
+          text: rawText.slice(0, 40),
+        })
+        const checkFinish = () => {
+          if (completed || !isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
+          if (synth?.paused || isPaused.value) {
+            if (pausedStartedAt == null) {
+              pausedStartedAt = Date.now()
+            }
+            lastProgressAt = Date.now()
+            finishWatchdog = window.setTimeout(checkFinish, 600)
+            return
+          }
+          if (pausedStartedAt != null) {
+            pausedAccumulatedMs += Date.now() - pausedStartedAt
+            pausedStartedAt = null
+          }
+          const elapsed = effectiveElapsed()
+          const idleMs = Date.now() - lastProgressAt
+          if (!synth?.speaking && !synth?.pending) {
+            logTTS('system watchdog finalize end', { sessionId })
+            finalizePlayback('end')
+            return
+          }
+          if (sawBoundary && idleMs > 1800 && elapsed > Math.max(2200, estimatedMs * 0.75)) {
+            forceFinalizeEnd('boundary-idle')
+            return
+          }
+          if (safariSpeechFallback && !sawStart && elapsed > noStartTimeoutMs) {
+            forceFinalizeEnd('no-start-timeout')
+            return
+          }
+          if (elapsed > hardTimeoutMs) {
+            forceFinalizeEnd('hard-timeout')
+            return
+          }
+          finishWatchdog = window.setTimeout(checkFinish, 600)
+        }
+        finishWatchdog = window.setTimeout(checkFinish, safariSpeechFallback ? Math.min(estimatedMs, 1200) : estimatedMs)
+      }
+
+      utterance.onstart = () => {
+        if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
+        isSpeaking.value = true
+        isSpeechTransitioning.value = false
+        isPaused.value = false
+        sawStart = true
+        systemTtsNativeEventsReliable.value = true
+        lastProgressAt = Date.now()
+        logTTS('system onstart', { sessionId, text: rawText.slice(0, 40) })
+        options.onStart?.()
+      }
+      utterance.onboundary = () => {
+        if (!isCurrentTTSSession(sessionId) || currentUtterance !== utterance) return
+        sawBoundary = true
+        lastProgressAt = Date.now()
+      }
+      utterance.onend = () => {
+        logTTS('system onend', { sessionId, text: rawText.slice(0, 40) })
+        finalizePlayback('end')
+      }
+      utterance.onerror = (event) => {
+        const interrupted = event.error === 'interrupted' || event.error === 'canceled'
+        logTTS('system onerror', { sessionId, error: event.error, interrupted, text: rawText.slice(0, 40) })
+        finalizePlayback(interrupted ? 'interrupted' : 'error', event)
+      }
+
+      synth.speak(utterance)
+      logTTS('system speak invoked', {
+        sessionId,
+        speaking: synth.speaking,
+        pending: synth.pending,
+        text: rawText.slice(0, 40),
+      })
+      scheduleFinishWatchdog()
+    }
+
+    async function startOpenAITTS(rawText: string, options: TTSOptions, sessionId: number) {
+      if (!openAISpeechConfigured.value) {
+        const error = new Error(`请先配置 ${speechConfig.provider === 'http' ? 'HTTP TTS' : 'OpenAI Speech'}`)
+        appStore.showToast(error.message, 'warning')
+        options.onError?.(error)
+        return
+      }
+      if (speechConfig.provider === 'openai' && speechConfig.openaiSource === 'server') {
+        const serverConfig = await aiBookStore.loadServerModelConfig()
+        if (!serverConfig?.canUseServerModel) {
+          const error = new Error('当前账号没有使用后端模型配置的权限')
           appStore.showToast(error.message, 'warning')
           options.onError?.(error)
           return
         }
-        if (speechConfig.provider === 'openai' && speechConfig.openaiSource === 'server') {
-          const serverConfig = await aiBookStore.loadServerModelConfig()
-          if (!serverConfig?.canUseServerModel) {
-            const error = new Error('当前账号没有使用后端模型配置的权限')
-            appStore.showToast(error.message, 'warning')
-            options.onError?.(error)
-            return
-          }
-          if (!serverConfig.config.speech.enabled) {
-            const error = new Error('后端 OpenAI Speech 未启用')
-            appStore.showToast(error.message, 'warning')
-            options.onError?.(error)
-            return
-          }
+        if (!serverConfig.config.speech.enabled) {
+          const error = new Error('后端 OpenAI Speech 未启用')
+          appStore.showToast(error.message, 'warning')
+          options.onError?.(error)
+          return
+        }
+        if (!isCurrentTTSSession(sessionId)) return
+      }
+
+      isSpeechLoading.value = true
+      logTTS('openai speak queued', {
+        sessionId,
+        model: speechConfig.openaiModel,
+        voice: speechConfig.openaiVoice,
+        text: rawText.slice(0, 80),
+      })
+      const playAudioBuffer = async (blob: Blob, controller: AbortController) => {
+        if (controller.signal.aborted) return
+        if (!isCurrentTTSSession(sessionId)) return
+        if (!ttsAudio) return
+
+        isSpeechLoading.value = false
+
+        if (currentObjectURL) {
+          URL.revokeObjectURL(currentObjectURL)
+        }
+        currentObjectURL = URL.createObjectURL(blob)
+        ttsAudio.src = currentObjectURL
+
+        ttsAudio.playbackRate = speechConfig.speechRate
+
+        ttsAudio.onended = () => {
           if (!isCurrentTTSSession(sessionId)) return
+          isSpeaking.value = false
+          isSpeechTransitioning.value = false
+          isPaused.value = false
+          logTTS('openai onended', { sessionId, text: rawText.slice(0, 40) })
+          options.onEnd?.()
         }
 
-        isSpeechLoading.value = true
-        logTTS('openai speak queued', {
-          sessionId,
-          model: speechConfig.openaiModel,
-          voice: speechConfig.openaiVoice,
-          text: rawText.slice(0, 80),
-        })
-        const playAudioBuffer = async (blob: Blob, controller: AbortController) => {
-          if (controller.signal.aborted) return
-          if (!isCurrentTTSSession(sessionId)) return
-          if (!ttsAudio) return
+        try {
+          await ttsAudio.play()
 
+          isSpeaking.value = true
+          isSpeechTransitioning.value = false
+          isPaused.value = false
+          logTTS('openai onplay', { sessionId, text: rawText.slice(0, 40) })
+          options.onStart?.()
+        } catch (error: any) {
+          if (!isCurrentTTSSession(sessionId)) return
           isSpeechLoading.value = false
+          isSpeaking.value = false
+          isSpeechTransitioning.value = false
+          isPaused.value = false
 
-          if (currentObjectURL) {
-            URL.revokeObjectURL(currentObjectURL)
-          }
-          currentObjectURL = URL.createObjectURL(blob)
-          ttsAudio.src = currentObjectURL
-
-          ttsAudio.playbackRate = speechConfig.speechRate
-
-          ttsAudio.onended = () => {
-            if (!isCurrentTTSSession(sessionId)) return
-            isSpeaking.value = false
-            isSpeechTransitioning.value = false
-            isPaused.value = false
-            logTTS('openai onended', { sessionId, text: rawText.slice(0, 40) })
-            options.onEnd?.()
-          }
-
-          try {
-            await ttsAudio.play()
-
-            isSpeaking.value = true
-            isSpeechTransitioning.value = false
-            isPaused.value = false
-            logTTS('openai onplay', { sessionId, text: rawText.slice(0, 40) })
-            options.onStart?.()
-          } catch (error: any) {
-            if (!isCurrentTTSSession(sessionId)) return
-            isSpeechLoading.value = false
-            isSpeaking.value = false
-            isSpeechTransitioning.value = false
-            isPaused.value = false
-
-            logTTS('openai play catch', { sessionId, message: error.message })
-            options.onError?.(error)
-          }
+          logTTS('openai play catch', { sessionId, message: error.message })
+          options.onError?.(error)
         }
+      }
 
-        const controller = new AbortController()
-        currentOpenAIAbortController = controller
+      const controller = new AbortController()
+      currentOpenAIAbortController = controller
 
-        const key = buildOpenAIAudioCacheKey(rawText)
-        const cached = preloadedOpenAIAudio.value.find((entry) => entry.key === key)
-        if (cached) {
-          // Synchronous execution is critical for mobile background audio continuation
-          void playAudioBuffer(cached.blob, controller)
-          return
-        }
+      const key = buildOpenAIAudioCacheKey(rawText)
+      const cached = preloadedOpenAIAudio.value.find((entry) => entry.key === key)
+      if (cached) {
+        // Synchronous execution is critical for mobile background audio continuation
+        void playAudioBuffer(cached.blob, controller)
+        return
+      }
 
-        const inFlight = inFlightOpenAIAudioRequests.get(key)
-        if (inFlight) {
-          void inFlight.then((blob) => {
-            return playAudioBuffer(blob, controller)
-          }).catch((error: Error) => {
-            if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
-            isSpeechLoading.value = false
-            isSpeaking.value = false
-            isSpeechTransitioning.value = false
-            isPaused.value = false
-            currentOpenAIAbortController = null
-            logTTS('openai inflight catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
-            options.onError?.(error)
-          })
-          return
-        }
-
-        const started = getOrStartOpenAIAudioRequest(rawText, controller.signal)
-        void started.promise.then((blob) => {
+      const inFlight = inFlightOpenAIAudioRequests.get(key)
+      if (inFlight) {
+        void inFlight.then((blob) => {
           return playAudioBuffer(blob, controller)
         }).catch((error: Error) => {
           if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
@@ -1347,567 +1326,583 @@ export const useReaderStore = defineStore('reader', () => {
           isSpeechTransitioning.value = false
           isPaused.value = false
           currentOpenAIAbortController = null
-          logTTS('openai request catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
-          appStore.showToast(error.message || 'OpenAI Speech 请求失败', 'error')
+          logTTS('openai inflight catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
           options.onError?.(error)
         })
+        return
       }
 
-      function startTTS(text?: string, options: TTSOptions = {}, interruptCurrent = true) {
-        const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
-        if (!rawText) return
-
-        if (invokeTTS('play', { text: rawText, bookUrl: book.value?.bookUrl, bookSourceUrl: book.value?.origin, bookTitle: book.value?.name, coverUrl: book.value?.coverUrl, chapters: chapters.value, currentIndex: currentIndex.value })) {
-          isSpeaking.value = true
-          isPaused.value = false
-          return
-        }
-
-        const hasActiveSystemSpeech = !!synth && (synth.speaking || synth.pending || !!currentUtterance)
-        const hasActiveOpenAISpeech = (ttsAudio && !ttsAudio.paused) || !!currentOpenAIAbortController
-
-        if (interruptCurrent && (hasActiveSystemSpeech || hasActiveOpenAISpeech || isSpeaking.value || isSpeechLoading.value)) {
-          stopTTS(false)
-        }
-
-
-        const sessionId = beginTTSSession()
-        setupMediaSession(rawText)
-        logTTS('startTTS', {
-          sessionId,
-          provider: speechConfig.provider,
-          interruptCurrent,
-          text: rawText.slice(0, 80),
-        })
-
-        if (
-          !interruptCurrent &&
-          speechConfig.provider === 'system' &&
-          synth &&
-          !synth.speaking &&
-          isSafariSpeechFallbackMode() &&
-          !systemTtsNativeEventsReliable.value
-        ) {
-          try {
-            logTTS('startTTS cleanup idle system synth', { sessionId })
-            synth.cancel()
-          } catch {
-            // ignore platform-specific cancel errors
-          }
-        }
-
-        if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
-          // Synchronously unlock HTMLAudioElement to satisfy iOS media session requirements
-          if (ttsAudio) {
-            ttsAudio.play().catch(() => { })
-          }
-
-          void startOpenAITTS(rawText, options, sessionId)
-          return
-        }
-
-        startSystemTTS(rawText, options, sessionId)
-      }
-
-      function pauseTTS() {
-        if (invokeTTS(isPaused.value ? 'resume' : 'pause')) {
-          isPaused.value = !isPaused.value
-          isSpeaking.value = !isPaused.value
-          return
-        }
-
-        if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
-          if (!ttsAudio) return
-          if (ttsAudio.paused) {
-            ttsAudio.play().catch(() => { })
-            isPaused.value = false
-            isSpeaking.value = true
-            isSpeechTransitioning.value = false
-          } else {
-            ttsAudio.pause()
-            isPaused.value = true
-            isSpeaking.value = false
-            isSpeechTransitioning.value = false
-          }
-          return
-        }
-
-        if (!synth) return
-        if (synth.speaking && !synth.paused) {
-          synth.pause()
-          isPaused.value = true
-        } else if (synth.paused) {
-          synth.resume()
-          isPaused.value = false
-        }
-      }
-
-      function stopTTS(resetCallbacks = true) {
-        if (invokeTTS('stop')) {
-          isSpeaking.value = false
-          isPaused.value = false
-          // Continue execution to clear frontend state properly
-        }
-
-        const sessionId = beginTTSSession()
-        logTTS('stopTTS', {
-          sessionId,
-          resetCallbacks,
-          provider: speechConfig.provider,
-          caller: captureTTSCaller(),
-        })
-        if (synth) {
-          synth.cancel()
-          currentUtterance = null
-        }
-        stopOpenAIAudioPlayback()
+      const started = getOrStartOpenAIAudioRequest(rawText, controller.signal)
+      void started.promise.then((blob) => {
+        return playAudioBuffer(blob, controller)
+      }).catch((error: Error) => {
+        if (controller.signal.aborted || !isCurrentTTSSession(sessionId)) return
         isSpeechLoading.value = false
         isSpeaking.value = false
         isSpeechTransitioning.value = false
         isPaused.value = false
-        if (resetCallbacks) {
-          clearSpeechStopTimer()
-        }
+        currentOpenAIAbortController = null
+        logTTS('openai request catch', { sessionId, message: error.message, text: rawText.slice(0, 40) })
+        appStore.showToast(error.message || 'OpenAI Speech 请求失败', 'error')
+        options.onError?.(error)
+      })
+    }
+
+    function startTTS(text?: string, options: TTSOptions = {}, interruptCurrent = true) {
+      const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
+      if (!rawText) return
+
+      if (invokeTTS('play', { text: rawText, bookUrl: book.value?.bookUrl, bookSourceUrl: book.value?.origin, bookTitle: book.value?.name, coverUrl: book.value?.coverUrl, chapters: chapters.value, currentIndex: currentIndex.value })) {
+        isSpeaking.value = true
+        isPaused.value = false
+        return
       }
 
-      /* ─── Book / chapter ops ─── */
-      async function loadBook(b: Book) {
-        loading.value = true
-        const latestBook = await resolveLatestShelfBook(b)
-        book.value = latestBook
-        chapters.value = []
-        content.value = ''
-        appStore.markBookOpened(latestBook.bookUrl)
-        currentIndex.value = latestBook.durChapterIndex || 0
-        chapterScrollProgress.value = 0
-        preloadedContent.value.clear()
-        loadReadChapterHistory(latestBook)
-        progressDirty.value = false
-        lastServerProgressKey.value = ''
-        chaptersLoading.value = true
+      const hasActiveSystemSpeech = !!synth && (synth.speaking || synth.pending || !!currentUtterance)
+      const hasActiveOpenAISpeech = (ttsAudio && !ttsAudio.paused) || !!currentOpenAIAbortController
+
+      if (interruptCurrent && (hasActiveSystemSpeech || hasActiveOpenAISpeech || isSpeaking.value || isSpeechLoading.value)) {
+        stopTTS(false)
+      }
+
+
+      const sessionId = beginTTSSession()
+      setupMediaSession(rawText)
+      logTTS('startTTS', {
+        sessionId,
+        provider: speechConfig.provider,
+        interruptCurrent,
+        text: rawText.slice(0, 80),
+      })
+
+      if (
+        !interruptCurrent &&
+        speechConfig.provider === 'system' &&
+        synth &&
+        !synth.speaking &&
+        isSafariSpeechFallbackMode() &&
+        !systemTtsNativeEventsReliable.value
+      ) {
         try {
-          chapters.value = await getChapterList({
-            bookUrl: latestBook.bookUrl,
-            bookSourceUrl: latestBook.origin,
-          })
-          if (chapters.value.length) {
-            currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
-          }
-          saveReaderSession()
-        } catch (error) {
-          loading.value = false
-          throw error
-        } finally {
-          chaptersLoading.value = false
+          logTTS('startTTS cleanup idle system synth', { sessionId })
+          synth.cancel()
+        } catch {
+          // ignore platform-specific cancel errors
         }
       }
 
-      function setActiveChapterState(index: number, chapterContent: string, progress = 0) {
-        currentIndex.value = index
-        content.value = chapterContent
-        chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
-        if (book.value) {
-          book.value.durChapterIndex = index
-          book.value.durChapterTitle = chapters.value[index]?.title || book.value.durChapterTitle
-          book.value.durChapterTime = Date.now()
-          const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
-          if (shelfBook) {
-            shelfBook.durChapterIndex = book.value.durChapterIndex
-            shelfBook.durChapterTitle = book.value.durChapterTitle
-            shelfBook.durChapterTime = book.value.durChapterTime
-          }
+      if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
+        // Synchronously unlock HTMLAudioElement to satisfy iOS media session requirements
+        if (ttsAudio) {
+          ttsAudio.play().catch(() => { })
         }
-        syncLocalBookProgress(chapterScrollProgress.value)
-        if (book.value) {
-          saveRecentReadBook(book.value)
+
+        void startOpenAITTS(rawText, options, sessionId)
+        return
+      }
+
+      startSystemTTS(rawText, options, sessionId)
+    }
+
+    function pauseTTS() {
+      if (invokeTTS(isPaused.value ? 'resume' : 'pause')) {
+        isPaused.value = !isPaused.value
+        isSpeaking.value = !isPaused.value
+        return
+      }
+
+      if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
+        if (!ttsAudio) return
+        if (ttsAudio.paused) {
+          ttsAudio.play().catch(() => { })
+          isPaused.value = false
+          isSpeaking.value = true
+          isSpeechTransitioning.value = false
+        } else {
+          ttsAudio.pause()
+          isPaused.value = true
+          isSpeaking.value = false
+          isSpeechTransitioning.value = false
         }
-        localStorage.setItem('reader-currentIndex', String(index))
+        return
+      }
+
+      if (!synth) return
+      if (synth.speaking && !synth.paused) {
+        synth.pause()
+        isPaused.value = true
+      } else if (synth.paused) {
+        synth.resume()
+        isPaused.value = false
+      }
+    }
+
+    function stopTTS(resetCallbacks = true) {
+      if (invokeTTS('stop')) {
+        isSpeaking.value = false
+        isPaused.value = false
+        // Continue execution to clear frontend state properly
+      }
+
+      const sessionId = beginTTSSession()
+      logTTS('stopTTS', {
+        sessionId,
+        resetCallbacks,
+        provider: speechConfig.provider,
+        caller: captureTTSCaller(),
+      })
+      if (synth) {
+        synth.cancel()
+        currentUtterance = null
+      }
+      stopOpenAIAudioPlayback()
+      isSpeechLoading.value = false
+      isSpeaking.value = false
+      isSpeechTransitioning.value = false
+      isPaused.value = false
+      if (resetCallbacks) {
+        clearSpeechStopTimer()
+      }
+    }
+
+    /* ─── Book / chapter ops ─── */
+    async function loadBook(b: Book) {
+      loading.value = true
+      const latestBook = await resolveLatestShelfBook(b)
+      book.value = latestBook
+      chapters.value = []
+      content.value = ''
+      appStore.markBookOpened(latestBook.bookUrl)
+      currentIndex.value = latestBook.durChapterIndex || 0
+      chapterScrollProgress.value = 0
+      preloadedContent.value.clear()
+      loadReadChapterHistory(latestBook)
+      progressDirty.value = false
+      lastServerProgressKey.value = ''
+      chaptersLoading.value = true
+      try {
+        chapters.value = await getChapterList({
+          bookUrl: latestBook.bookUrl,
+          bookSourceUrl: latestBook.origin,
+        })
+        if (chapters.value.length) {
+          currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
+        }
         saveReaderSession()
-        markProgressDirty()
+      } catch (error) {
+        loading.value = false
+        throw error
+      } finally {
+        chaptersLoading.value = false
       }
+    }
 
-      async function persistProgress(index = currentIndex.value, progress = chapterScrollProgress.value) {
-        const payload = currentServerProgressPayload(index, progress)
-        if (!payload) return
-        await saveBookProgress(payload).then(() => {
-          progressDirty.value = false
-          lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
-        }).catch(() => undefined)
-      }
-
-      async function flushProgressToServer(force = false) {
-        const payload = currentServerProgressPayload()
-        if (!payload) return
-        const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
-        if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
-        await persistProgress(payload.index, chapterScrollProgress.value)
-      }
-
-      function flushProgressToServerKeepalive(force = false) {
-        const payload = currentServerProgressPayload()
-        if (!payload || typeof fetch === 'undefined') return
-        const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
-        if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
-
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
+    function setActiveChapterState(index: number, chapterContent: string, progress = 0) {
+      currentIndex.value = index
+      content.value = chapterContent
+      chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
+      if (book.value) {
+        book.value.durChapterIndex = index
+        book.value.durChapterTitle = chapters.value[index]?.title || book.value.durChapterTitle
+        book.value.durChapterTime = Date.now()
+        const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
+        if (shelfBook) {
+          shelfBook.durChapterIndex = book.value.durChapterIndex
+          shelfBook.durChapterTitle = book.value.durChapterTitle
+          shelfBook.durChapterTime = book.value.durChapterTime
         }
-        const token = localStorage.getItem('accessToken')
-        if (token) {
-          headers.Authorization = token
-        }
+      }
+      syncLocalBookProgress(chapterScrollProgress.value)
+      if (book.value) {
+        saveRecentReadBook(book.value)
+      }
+      localStorage.setItem('reader-currentIndex', String(index))
+      saveReaderSession()
+      markProgressDirty()
+    }
 
-        const baseUrl = (http.defaults.baseURL || '/reader3').replace(/\/+$/, '')
-        void fetch(`${baseUrl}/saveBookProgress`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-          keepalive: true,
-        }).catch(() => undefined)
+    async function persistProgress(index = currentIndex.value, progress = chapterScrollProgress.value) {
+      const payload = currentServerProgressPayload(index, progress)
+      if (!payload) return
+      await saveBookProgress(payload).then(() => {
         progressDirty.value = false
-        lastServerProgressKey.value = nextKey
+        lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
+      }).catch(() => undefined)
+    }
+
+    async function flushProgressToServer(force = false) {
+      const payload = currentServerProgressPayload()
+      if (!payload) return
+      const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+      if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
+      await persistProgress(payload.index, chapterScrollProgress.value)
+    }
+
+    function flushProgressToServerKeepalive(force = false) {
+      const payload = currentServerProgressPayload()
+      if (!payload || typeof fetch === 'undefined') return
+      const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+      if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      const token = localStorage.getItem('accessToken')
+      if (token) {
+        headers.Authorization = token
       }
 
-      async function fetchChapterContent(index: number, forceRefresh = false) {
-        if (!book.value || !chapters.value[index]) return null
+      const baseUrl = (http.defaults.baseURL || '/reader3').replace(/\/+$/, '')
+      void fetch(`${baseUrl}/saveBookProgress`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => undefined)
+      progressDirty.value = false
+      lastServerProgressKey.value = nextKey
+    }
 
-        if (!forceRefresh && preloadedContent.value.has(index)) {
-          return preloadedContent.value.get(index) || null
-        }
+    async function fetchChapterContent(index: number, forceRefresh = false) {
+      if (!book.value || !chapters.value[index]) return null
 
-        const chapter = chapters.value[index]
+      if (!forceRefresh && preloadedContent.value.has(index)) {
+        return preloadedContent.value.get(index) || null
+      }
 
-        const isLocalTxt = isLocalTxtBook(book.value)
-        const useBrowserCache = !isLocalTxt
-        const browserCached = useBrowserCache
-          ? await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
-          : null
+      const chapter = chapters.value[index]
 
-        if (!forceRefresh && browserCached) {
+      const isLocalTxt = isLocalTxtBook(book.value)
+      const useBrowserCache = !isLocalTxt
+      const browserCached = useBrowserCache
+        ? await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
+        : null
+
+      if (!forceRefresh && browserCached) {
+        return browserCached
+      }
+
+      if (!appStore.isOnline && !isLocalTxt) {
+        if (browserCached) {
           return browserCached
         }
-
-        if (!appStore.isOnline && !isLocalTxt) {
-          if (browserCached) {
-            return browserCached
-          }
-          throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
-        }
-
-        let chapterContent = ''
-        try {
-          chapterContent = await getBookContent({
-            chapterUrl: chapter.url,
-            bookSourceUrl: book.value.origin,
-            refresh: forceRefresh ? 1 : 0,
-          })
-        } catch (error) {
-          if (browserCached) {
-            appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
-            return browserCached
-          }
-          throw error
-        }
-
-        if (useBrowserCache) {
-          await setBrowserCachedChapter({
-            bookUrl: book.value.bookUrl,
-            chapterUrl: chapter.url,
-            chapterTitle: chapter.title,
-            content: chapterContent,
-          }).catch(() => undefined)
-        }
-
-        return chapterContent
+        throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
       }
 
-      async function loadChapter(index: number, forceRefresh = false) {
-        if (!book.value || !chapters.value[index]) return
-
-        loading.value = true
-        try {
-          const chapterContent = await fetchChapterContent(index, forceRefresh)
-          if (chapterContent == null) return
-
-          const previousSavedIndex = book.value.durChapterIndex ?? 0
-          const previousSavedProgress = decodeServerProgress(book.value.durChapterPos)
-          const isOpeningSavedChapter = !forceRefresh && index === previousSavedIndex
-          const initialProgress = isOpeningSavedChapter ? previousSavedProgress : 0
-
-          setActiveChapterState(index, chapterContent, initialProgress)
-          markChapterAsRead(index)
-          appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
-
-          if (!isOpeningSavedChapter) {
-            await persistProgress(index, 0)
-          }
-
-          if (config.enablePreload) {
-            setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
-          }
-        } finally {
-          loading.value = false
-        }
-      }
-
-      async function preloadAroundChapter(index: number) {
-        if (!book.value || !config.enablePreload) return
-        const targets = [index + 1, index + 2, index - 1]
-          .filter((target, pos, list) => target >= 0 && target < chapters.value.length && list.indexOf(target) === pos)
-        for (const target of targets) {
-          await preloadNextChapter(target)
-        }
-      }
-
-      async function preloadNextChapter(index: number) {
-        if (!book.value || !config.enablePreload || index >= chapters.value.length || preloadedContent.value.has(index)) return
-
-        // Keep max 3 preloaded chapters
-        if (preloadedContent.value.size > 3) {
-          const firstKey = preloadedContent.value.keys().next().value
-          if (firstKey !== undefined) preloadedContent.value.delete(firstKey)
-        }
-
-        try {
-          const res = await fetchChapterContent(index)
-          if (!res) return
-          preloadedContent.value.set(index, res)
-        } catch { /* ignore */ }
-      }
-
-      function normalizeChapterTitle(title?: string) {
-        return (title || '')
-          .replace(/\s+/g, '')
-          .replace(/[^\p{L}\p{N}]/gu, '')
-          .toLowerCase()
-      }
-
-      function resolveChapterIndexByTitle(list: BookChapter[], targetTitle?: string, fallbackIndex = 0) {
-        if (!list.length) return 0
-        const normalizedTarget = normalizeChapterTitle(targetTitle)
-        if (!normalizedTarget) {
-          return Math.max(0, Math.min(list.length - 1, fallbackIndex))
-        }
-
-        const exactIndex = list.findIndex((chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget)
-        if (exactIndex >= 0) return exactIndex
-
-        const partialIndex = list.findIndex((chapter) => {
-          const title = normalizeChapterTitle(chapter.title)
-          return title.includes(normalizedTarget) || normalizedTarget.includes(title)
+      let chapterContent = ''
+      try {
+        chapterContent = await getBookContent({
+          chapterUrl: chapter.url,
+          bookSourceUrl: book.value.origin,
+          refresh: forceRefresh ? 1 : 0,
         })
-        if (partialIndex >= 0) return partialIndex
+      } catch (error) {
+        if (browserCached) {
+          appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
+          return browserCached
+        }
+        throw error
+      }
 
+      if (useBrowserCache) {
+        await setBrowserCachedChapter({
+          bookUrl: book.value.bookUrl,
+          chapterUrl: chapter.url,
+          chapterTitle: chapter.title,
+          content: chapterContent,
+        }).catch(() => undefined)
+      }
+
+      return chapterContent
+    }
+
+    async function loadChapter(index: number, forceRefresh = false) {
+      if (!book.value || !chapters.value[index]) return
+
+      loading.value = true
+      try {
+        const chapterContent = await fetchChapterContent(index, forceRefresh)
+        if (chapterContent == null) return
+
+        const previousSavedIndex = book.value.durChapterIndex ?? 0
+        const previousSavedProgress = decodeServerProgress(book.value.durChapterPos)
+        const isOpeningSavedChapter = !forceRefresh && index === previousSavedIndex
+        const initialProgress = isOpeningSavedChapter ? previousSavedProgress : 0
+
+        setActiveChapterState(index, chapterContent, initialProgress)
+        markChapterAsRead(index)
+        appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
+
+        if (!isOpeningSavedChapter) {
+          await persistProgress(index, 0)
+        }
+
+        if (config.enablePreload) {
+          setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
+        }
+      } finally {
+        loading.value = false
+      }
+    }
+
+    async function preloadAroundChapter(index: number) {
+      if (!book.value || !config.enablePreload) return
+      const targets = [index + 1, index + 2, index - 1]
+        .filter((target, pos, list) => target >= 0 && target < chapters.value.length && list.indexOf(target) === pos)
+      for (const target of targets) {
+        await preloadNextChapter(target)
+      }
+    }
+
+    async function preloadNextChapter(index: number) {
+      if (!book.value || !config.enablePreload || index >= chapters.value.length || preloadedContent.value.has(index)) return
+
+      // Keep max 3 preloaded chapters
+      if (preloadedContent.value.size > 3) {
+        const firstKey = preloadedContent.value.keys().next().value
+        if (firstKey !== undefined) preloadedContent.value.delete(firstKey)
+      }
+
+      try {
+        const res = await fetchChapterContent(index)
+        if (!res) return
+        preloadedContent.value.set(index, res)
+      } catch { /* ignore */ }
+    }
+
+    function normalizeChapterTitle(title?: string) {
+      return (title || '')
+        .replace(/\s+/g, '')
+        .replace(/[^\p{L}\p{N}]/gu, '')
+        .toLowerCase()
+    }
+
+    function resolveChapterIndexByTitle(list: BookChapter[], targetTitle?: string, fallbackIndex = 0) {
+      if (!list.length) return 0
+      const normalizedTarget = normalizeChapterTitle(targetTitle)
+      if (!normalizedTarget) {
         return Math.max(0, Math.min(list.length - 1, fallbackIndex))
       }
 
-      /* ─── Switch Source ─── */
-      async function switchSource(newUrl: string, sourceUrl: string) {
-        if (!book.value) return
-        const previousChapterTitle = currentChapter.value?.title || book.value.durChapterTitle
-        const previousIndex = currentIndex.value
-        const previousProgress = chapterScrollProgress.value
-        loading.value = true
-        try {
-          const updatedBook = await apiSetBookSource({
-            bookUrl: book.value.bookUrl,
-            newUrl,
-            bookSourceUrl: sourceUrl,
-          })
-          if (!updatedBook) return null
+      const exactIndex = list.findIndex((chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget)
+      if (exactIndex >= 0) return exactIndex
 
-          await loadBook(updatedBook)
-          const targetIndex = resolveChapterIndexByTitle(
-            chapters.value,
-            previousChapterTitle,
-            typeof updatedBook.durChapterIndex === 'number' ? updatedBook.durChapterIndex : previousIndex,
-          )
-          await loadChapter(targetIndex)
-          setChapterScrollProgress(previousProgress)
-          await shelfStore.fetchBooks().catch(() => undefined)
-          return updatedBook
-        } finally {
-          loading.value = false
+      const partialIndex = list.findIndex((chapter) => {
+        const title = normalizeChapterTitle(chapter.title)
+        return title.includes(normalizedTarget) || normalizedTarget.includes(title)
+      })
+      if (partialIndex >= 0) return partialIndex
+
+      return Math.max(0, Math.min(list.length - 1, fallbackIndex))
+    }
+
+    /* ─── Switch Source ─── */
+    async function switchSource(newUrl: string, sourceUrl: string) {
+      if (!book.value) return
+      const previousChapterTitle = currentChapter.value?.title || book.value.durChapterTitle
+      const previousIndex = currentIndex.value
+      const previousProgress = chapterScrollProgress.value
+      loading.value = true
+      try {
+        const updatedBook = await apiSetBookSource({
+          bookUrl: book.value.bookUrl,
+          newUrl,
+          bookSourceUrl: sourceUrl,
+        })
+        if (!updatedBook) return null
+
+        await loadBook(updatedBook)
+        const targetIndex = resolveChapterIndexByTitle(
+          chapters.value,
+          previousChapterTitle,
+          typeof updatedBook.durChapterIndex === 'number' ? updatedBook.durChapterIndex : previousIndex,
+        )
+        await loadChapter(targetIndex)
+        setChapterScrollProgress(previousProgress)
+        await shelfStore.fetchBooks().catch(() => undefined)
+        return updatedBook
+      } finally {
+        loading.value = false
+      }
+    }
+
+    async function refreshContent() {
+      if (!book.value || !chapters.value[currentIndex.value]) return
+      loading.value = true
+      try {
+        const chapterContent = await fetchChapterContent(currentIndex.value, true)
+        if (chapterContent == null) return
+        setActiveChapterState(currentIndex.value, chapterContent, chapterScrollProgress.value)
+        void preloadAroundChapter(currentIndex.value)
+      } finally {
+        loading.value = false
+      }
+    }
+
+    async function refreshChapters() {
+      if (!book.value) return
+      chaptersLoading.value = true
+      try {
+        preloadedContent.value.clear()
+        chapters.value = await getChapterList({
+          bookUrl: book.value.bookUrl,
+          bookSourceUrl: book.value.origin,
+          refresh: 1,
+        })
+        const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
+        if (chapters.value[targetIndex]) {
+          await loadChapter(targetIndex, true)
+        }
+      } finally {
+        chaptersLoading.value = false
+      }
+    }
+
+    function setChapterScrollProgress(value: number) {
+      chapterScrollProgress.value = Math.max(0, Math.min(1, value))
+      syncLocalBookProgress(chapterScrollProgress.value)
+      saveReaderSession()
+      markProgressDirty()
+    }
+
+    async function nextChapter() {
+      if (hasNext.value) {
+        const completedBook = book.value ? { ...book.value } : null
+        const completedChapter = currentChapter.value ? { ...currentChapter.value } : null
+        const completedContent = content.value
+        await loadChapter(currentIndex.value + 1)
+        if (completedBook && completedChapter && completedContent) {
+          void (async () => {
+            const loadedMemory = (await aiBookStore.load(completedBook).catch(() => null)) as { enabled?: boolean } | null
+            if (!loadedMemory || !loadedMemory.enabled) return null
+            return aiBookStore.generateChapterMemory({
+              bookUrl: completedBook.bookUrl,
+              chapterIndex: completedChapter.index,
+              mode: 'auto',
+            })
+          })().catch(() => null)
         }
       }
+    }
 
-      async function refreshContent() {
-        if (!book.value || !chapters.value[currentIndex.value]) return
-        loading.value = true
-        try {
-          const chapterContent = await fetchChapterContent(currentIndex.value, true)
-          if (chapterContent == null) return
-          setActiveChapterState(currentIndex.value, chapterContent, chapterScrollProgress.value)
-          void preloadAroundChapter(currentIndex.value)
-        } finally {
-          loading.value = false
+    async function prevChapter() {
+      if (hasPrev.value) {
+        await loadChapter(currentIndex.value - 1)
+      }
+    }
+
+    /* ─── Replace Rules ─── */
+    async function fetchReplaceRules() {
+      try {
+        replaceRules.value = await getReplaceRules()
+      } catch { /* ignore */ }
+    }
+
+    /* ─── Bookmarks ─── */
+    async function fetchBookmarks() {
+      try {
+        const all = await getBookmarks()
+        // Filter for current book
+        if (book.value) {
+          bookmarks.value = all.filter(b => b.bookName === book.value?.name && b.bookAuthor === book.value?.author)
+        } else {
+          bookmarks.value = all
         }
+      } catch { /* ignore */ }
+    }
+
+    async function addBookmark(pos: number = 0, snippet: string = '') {
+      if (!book.value || !currentChapter.value) return
+      const b: Bookmark = {
+        bookName: book.value.name,
+        bookAuthor: book.value.author,
+        chapterIndex: currentIndex.value,
+        chapterName: currentChapter.value.title,
+        chapterPos: pos,
+        bookText: snippet || content.value.slice(0, 50).replace(/<[^>]+>/g, ''),
+        time: Date.now(),
+        content: '',
       }
+      await saveBookmark(b)
+      await fetchBookmarks()
+    }
 
-      async function refreshChapters() {
-        if (!book.value) return
-        chaptersLoading.value = true
-        try {
-          preloadedContent.value.clear()
-          chapters.value = await getChapterList({
-            bookUrl: book.value.bookUrl,
-            bookSourceUrl: book.value.origin,
-            refresh: 1,
-          })
-          const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
-          if (chapters.value[targetIndex]) {
-            await loadChapter(targetIndex, true)
-          }
-        } finally {
-          chaptersLoading.value = false
-        }
+    async function removeBookmark(b: Bookmark) {
+      await apiDeleteBookmark(b)
+      await fetchBookmarks()
+    }
+
+    async function removeBookmarks(items: Bookmark[]) {
+      if (!items.length) return
+      await apiDeleteBookmarks(items)
+      await fetchBookmarks()
+    }
+
+    function clear() {
+      book.value = null
+      chapters.value = []
+      content.value = ''
+      currentIndex.value = 0
+      chapterScrollProgress.value = 0
+      readChapterKeys.value = new Set()
+      stopAutoReading()
+    }
+
+    /* ─── Panel visibility ─── */
+    const activePanel = ref<ReaderPanel>(null)
+    const panelParent = ref<ReaderPanel>(null)
+
+    function openPanel(panel: ReaderPanel, parent: ReaderPanel = null) {
+      activePanel.value = panel
+      panelParent.value = parent
+    }
+
+    function togglePanel(panel: ReaderPanel, parent: ReaderPanel = null) {
+      if (activePanel.value === panel) {
+        closePanel()
+        return
       }
+      openPanel(panel, parent)
+    }
 
-      function setChapterScrollProgress(value: number) {
-        chapterScrollProgress.value = Math.max(0, Math.min(1, value))
-        syncLocalBookProgress(chapterScrollProgress.value)
-        saveReaderSession()
-        markProgressDirty()
-      }
-
-      async function nextChapter() {
-        if (hasNext.value) {
-          const completedBook = book.value ? { ...book.value } : null
-          const completedChapter = currentChapter.value ? { ...currentChapter.value } : null
-          const completedContent = content.value
-          await loadChapter(currentIndex.value + 1)
-          if (completedBook && completedChapter && completedContent) {
-            void (async () => {
-              const loadedMemory = (await aiBookStore.load(completedBook).catch(() => null)) as { enabled?: boolean } | null
-              if (!loadedMemory || !loadedMemory.enabled) return null
-              return aiBookStore.generateChapterMemory({
-                bookUrl: completedBook.bookUrl,
-                chapterIndex: completedChapter.index,
-                mode: 'auto',
-              })
-            })().catch(() => null)
-          }
-        }
-      }
-
-      async function prevChapter() {
-        if (hasPrev.value) {
-          await loadChapter(currentIndex.value - 1)
-        }
-      }
-
-      /* ─── Replace Rules ─── */
-      async function fetchReplaceRules() {
-        try {
-          replaceRules.value = await getReplaceRules()
-        } catch { /* ignore */ }
-      }
-
-      /* ─── Bookmarks ─── */
-      async function fetchBookmarks() {
-        try {
-          const all = await getBookmarks()
-          // Filter for current book
-          if (book.value) {
-            bookmarks.value = all.filter(b => b.bookName === book.value?.name && b.bookAuthor === book.value?.author)
-          } else {
-            bookmarks.value = all
-          }
-        } catch { /* ignore */ }
-      }
-
-      async function addBookmark(pos: number = 0, snippet: string = '') {
-        if (!book.value || !currentChapter.value) return
-        const b: Bookmark = {
-          bookName: book.value.name,
-          bookAuthor: book.value.author,
-          chapterIndex: currentIndex.value,
-          chapterName: currentChapter.value.title,
-          chapterPos: pos,
-          bookText: snippet || content.value.slice(0, 50).replace(/<[^>]+>/g, ''),
-          time: Date.now(),
-          content: '',
-        }
-        await saveBookmark(b)
-        await fetchBookmarks()
-      }
-
-      async function removeBookmark(b: Bookmark) {
-        await apiDeleteBookmark(b)
-        await fetchBookmarks()
-      }
-
-      async function removeBookmarks(items: Bookmark[]) {
-        if (!items.length) return
-        await apiDeleteBookmarks(items)
-        await fetchBookmarks()
-      }
-
-      function clear() {
-        book.value = null
-        chapters.value = []
-        content.value = ''
-        currentIndex.value = 0
-        chapterScrollProgress.value = 0
-        readChapterKeys.value = new Set()
-        stopAutoReading()
-      }
-
-      /* ─── Panel visibility ─── */
-      const activePanel = ref<ReaderPanel>(null)
-      const panelParent = ref<ReaderPanel>(null)
-
-      function openPanel(panel: ReaderPanel, parent: ReaderPanel = null) {
-        activePanel.value = panel
-        panelParent.value = parent
-      }
-
-      function togglePanel(panel: ReaderPanel, parent: ReaderPanel = null) {
-        if (activePanel.value === panel) {
-          closePanel()
-          return
-        }
-        openPanel(panel, parent)
-      }
-
-      function backPanel() {
-        if (panelParent.value) {
-          activePanel.value = panelParent.value
-          panelParent.value = null
-          return
-        }
-        activePanel.value = null
-      }
-
-      function closePanel() {
-        activePanel.value = null
+    function backPanel() {
+      if (panelParent.value) {
+        activePanel.value = panelParent.value
         panelParent.value = null
+        return
       }
+      activePanel.value = null
+    }
 
-      return {
-        book, chapters, currentIndex, content, loading, chaptersLoading,
-        currentChapter, hasNext, hasPrev, readingProgress,
-        loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
-        chapterScrollProgress, setChapterScrollProgress,
-        getPersistedReaderSession, restorePersistedSession,
-        persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
-        config, updateConfig, resetConfig, saveConfig,
-        themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
-        autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
-        activePanel, openPanel, togglePanel, backPanel, closePanel,
-        bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
-        readChapterKeys, isChapterRead, markChapterAsRead,
-        replaceRules, fetchReplaceRules,
-        switchSource, preloadNextChapter, preloadAroundChapter,
-        refreshChapters,
-        isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS,
-        voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
-        systemTtsNativeEventsReliable,
-        fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
-        addHttpTtsEngine, removeHttpTtsEngine, setActiveHttpTtsEngine, setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
-        setPreloadCount, setGapReduction, syncTTSConfigToNative,
-        displayContent, processContentForDisplay,
-        isAutoScrolling,
-        initSpeechConfig,
-      }
-    })
+    function closePanel() {
+      activePanel.value = null
+      panelParent.value = null
+    }
+
+    return {
+      book, chapters, currentIndex, content, loading, chaptersLoading,
+      currentChapter, hasNext, hasPrev, readingProgress,
+      loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
+      chapterScrollProgress, setChapterScrollProgress,
+      getPersistedReaderSession, restorePersistedSession,
+      persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
+      config, updateConfig, resetConfig, saveConfig,
+      themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
+      autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
+      activePanel, openPanel, togglePanel, backPanel, closePanel,
+      bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
+      readChapterKeys, isChapterRead, markChapterAsRead,
+      replaceRules, fetchReplaceRules,
+      switchSource, preloadNextChapter, preloadAroundChapter,
+      refreshChapters,
+      isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS,
+      voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
+      systemTtsNativeEventsReliable,
+      fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
+      addHttpTtsEngine, removeHttpTtsEngine, setActiveHttpTtsEngine, setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
+      setPreloadCount, setGapReduction, syncTTSConfigToNative,
+      displayContent, processContentForDisplay,
+      isAutoScrolling,
+      initSpeechConfig,
+    }
+  })
