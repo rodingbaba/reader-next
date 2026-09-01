@@ -44,9 +44,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee xcodebuild.log
 
-          # Package the .app into a .ipa format (suitable for TrollStore / AltStore / Jailbreak / signing services)
+          # Package the .app into a .ipa format
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/ReadApp.app Payload/
+          
+          # IMPORTANT: Ad-hoc sign the app so iOS kernel can map the executable (fixes Bad file descriptor)
+          codesign --force --deep --sign - Payload/ReadApp.app
+          
           zip -r ReadApp.ipa Payload
           
       - name: Upload Build Logs
