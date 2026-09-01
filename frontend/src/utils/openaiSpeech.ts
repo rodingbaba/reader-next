@@ -1,4 +1,5 @@
 import { summarizeHttpErrorBody } from './httpError'
+import http from '../api/http'
 
 export const DEFAULT_OPENAI_BASE_URL = 'http://localhost:8825'
 
@@ -68,8 +69,9 @@ export async function requestOpenAISpeechAudio({
     response_format: format || 'mp3',
     speed,
   }
+  const proxyBaseUrl = (http.defaults.baseURL || '/reader3').replace(/\/+$/, '')
   const response = source === 'server'
-    ? await fetch('/reader3/ai/proxy', {
+    ? await fetch(`${proxyBaseUrl}/ai/proxy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

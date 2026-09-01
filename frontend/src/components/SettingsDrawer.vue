@@ -33,7 +33,8 @@
                     <span class="user-name">{{ appStore.userInfo?.username }}</span>
                     <span class="user-role">{{ appStore.userInfo?.isAdmin ? '\u7ba1\u7406\u5458' : '\u666e\u901a\u7528\u6237' }}</span>
                   </div>
-                  <button v-if="appStore.isSecureMode" class="action-btn danger" @click="handleLogout">&#27880;&#38144;</button>
+                  <button v-if="appStore.isSecureMode && !isNative" class="action-btn danger" @click="handleLogout">注销</button>
+                  <button v-if="isNative" class="action-btn danger" @click="handleAppLogout">退出登录</button>
                 </div>
                 <button v-if="appStore.isSecureMode" class="action-btn inline-link" @click="togglePasswordPanel">
                   {{ showPasswordPanel ? '\u6536\u8d77\u4fee\u6539\u5bc6\u7801' : '\u4fee\u6539\u5bc6\u7801' }}
@@ -308,6 +309,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { changePassword, logout as apiLogout } from '../api/user'
+import { isNativeApp } from '../utils/nativeBridge'
 
 const props = defineProps<{
   modelValue: boolean
@@ -399,6 +401,14 @@ async function handleLogout() {
   await appStore.fetchUserInfo()
   close()
   shelfStore.fetchBooks()
+}
+
+const isNative = isNativeApp()
+
+function handleAppLogout() {
+  localStorage.removeItem('server_base_url')
+  localStorage.removeItem('accessToken')
+  window.location.reload()
 }
 
 async function handleSaveSecureKey() {

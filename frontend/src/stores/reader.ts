@@ -1,5 +1,6 @@
 import { invokeTTS } from '../utils/nativeBridge'
 import { defineStore } from 'pinia'
+import http from '../api/http'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
@@ -1511,7 +1512,8 @@ export const useReaderStore = defineStore('reader', () => {
       headers.Authorization = token
     }
 
-    void fetch('/reader3/saveBookProgress', {
+    const baseUrl = (http.defaults.baseURL || '/reader3').replace(/\/+$/, '')
+    void fetch(`${baseUrl}/saveBookProgress`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -1860,5 +1862,6 @@ export const useReaderStore = defineStore('reader', () => {
     addHttpTtsEngine, removeHttpTtsEngine, setActiveHttpTtsEngine, setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
     displayContent, processContentForDisplay,
     isAutoScrolling,
+    initSpeechConfig,
   }
 })

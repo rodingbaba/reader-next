@@ -86,6 +86,7 @@ struct HybridWebView: UIViewRepresentable {
         webView.scrollView.bounces = false
         webView.isOpaque = false
         webView.backgroundColor = UIColor.clear
+        webView.uiDelegate = context.coordinator
         
         // Load using our custom scheme
         if let url = URL(string: "readapp://localhost/index.html") {
@@ -101,7 +102,7 @@ struct HybridWebView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    class Coordinator: NSObject, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate {
         var parent: HybridWebView
         
         init(_ parent: HybridWebView) {
@@ -158,6 +159,39 @@ struct HybridWebView: UIViewRepresentable {
         
         private func handleSyncControl(action: String, payload: [String: Any]?) {
             // sync placeholder
+        }
+        
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: { _ in completionHandler(false) }))
+            alert.addAction(UIAlertAction(title: "确定", style: .default, handler: { _ in completionHandler(true) }))
+            
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootViewController = windowScene.windows.first?.rootViewController {
+                var topController = rootViewController
+                while let presented = topController.presentedViewController {
+                    topController = presented
+                }
+                topController.present(alert, animated: true, completion: nil)
+            } else {
+                completionHandler(false)
+            }
+        }
+        
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "确定", style: .default, handler: { _ in completionHandler() }))
+            
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootViewController = windowScene.windows.first?.rootViewController {
+                var topController = rootViewController
+                while let presented = topController.presentedViewController {
+                    topController = presented
+                }
+                topController.present(alert, animated: true, completion: nil)
+            } else {
+                completionHandler()
+            }
         }
     }
 }

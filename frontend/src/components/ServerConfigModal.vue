@@ -23,7 +23,7 @@
                 id="server-url"
                 v-model="form.serverUrl"
                 type="url"
-                placeholder="例如: http://192.168.1.100:18080 (无需加 /reader3)"
+                placeholder="例如: http://192.168.1.100:18080"
                 required
               />
             </div>
@@ -63,6 +63,7 @@
 import { reactive, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
+import { useReaderStore } from '../stores/reader'
 import { login } from '../api/user'
 import http from '../api/http'
 
@@ -76,6 +77,7 @@ const emit = defineEmits<{
 
 const appStore = useAppStore()
 const shelfStore = useBookshelfStore()
+const readerStore = useReaderStore()
 
 const submitting = ref(false)
 
@@ -128,6 +130,7 @@ async function handleSubmit() {
     
     shelfStore.fetchBooks()
     shelfStore.fetchGroups()
+    readerStore.initSpeechConfig()
   } catch (e: unknown) {
     appStore.showToast('服务器连接失败或账号错误：' + ((e as Error).message || '未知错误'), 'error')
     // 如果登录失败，回退到只保存地址并关闭，唤起正常登录框
