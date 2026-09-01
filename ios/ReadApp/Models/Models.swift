@@ -1,0 +1,364 @@
+import Foundation
+
+// MARK: - API Response
+struct APIResponse<T: Codable>: Codable {
+    let isSuccess: Bool
+    let errorMsg: String?
+    let data: T?
+}
+
+// MARK: - Book Model
+struct Book: Codable, Identifiable {
+    var id: String { bookUrl ?? UUID().uuidString }
+    let name: String?
+    let author: String?
+    let bookUrl: String?
+    let origin: String?
+    let originName: String?
+    let coverUrl: String?
+    let intro: String?
+    let durChapterTitle: String?
+    let durChapterIndex: Int?
+    let durChapterPos: Double?
+    let totalChapterNum: Int?
+    let latestChapterTitle: String?
+    let kind: String?
+    let type: Int?
+    let durChapterTime: Int64?  // 最后阅读时间（时间戳）
+    
+    var displayCoverUrl: String? {
+        if let url = coverUrl, !url.isEmpty {
+            // 如果是相对路径，拼接完整URL
+            if url.hasPrefix("baseurl/") {
+                return APIService.shared.baseURL.replacingOccurrences(of: "/reader3", with: "") + "/" + url
+            }
+            return url
+        }
+        return nil
+    }
+}
+
+// MARK: - Chapter Model
+struct BookChapter: Codable, Identifiable {
+    var id: String { url }
+    let title: String
+    let url: String
+    let index: Int
+    let isVolume: Bool?
+    let isPay: Bool?
+}
+
+// MARK: - Chapter Content Response
+struct ChapterContentResponse: Codable {
+    let rules: [ReplaceRule]?
+    let text: String
+}
+
+struct ReplaceRule: Codable {
+    let id: String?
+    let name: String?
+}
+
+// MARK: - HttpTTS Model
+struct HttpTTS: Codable, Identifiable {
+    let id: String
+    let userid: String?
+    let name: String
+    let url: String
+    let contentType: String?
+    let concurrentRate: String?
+    let loginUrl: String?
+    let loginUi: String?
+    let header: String?
+    let enabledCookieJar: Bool?
+    let loginCheckJs: String?
+    let lastUpdateTime: Int64?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, userid, name, url, contentType, concurrentRate, loginUrl, loginUi, header, enabledCookieJar, loginCheckJs, lastUpdateTime
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Handle id as Int or String
+        if let idInt = try? container.decode(Int64.self, forKey: .id) {
+            id = String(idInt)
+        } else if let idStr = try? container.decode(String.self, forKey: .id) {
+            id = idStr
+        } else {
+            id = UUID().uuidString
+        }
+        
+        userid = try? container.decodeIfPresent(String.self, forKey: .userid)
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? "Unknown TTS"
+        url = (try? container.decodeIfPresent(String.self, forKey: .url)) ?? ""
+        contentType = try? container.decodeIfPresent(String.self, forKey: .contentType)
+        
+        // Handle concurrentRate as Int or String
+        if let crInt = try? container.decode(Int.self, forKey: .concurrentRate) {
+            concurrentRate = String(crInt)
+        } else {
+            concurrentRate = try? container.decodeIfPresent(String.self, forKey: .concurrentRate)
+        }
+        
+        loginUrl = try? container.decodeIfPresent(String.self, forKey: .loginUrl)
+        loginUi = try? container.decodeIfPresent(String.self, forKey: .loginUi)
+        header = try? container.decodeIfPresent(String.self, forKey: .header)
+        enabledCookieJar = try? container.decodeIfPresent(Bool.self, forKey: .enabledCookieJar)
+        loginCheckJs = try? container.decodeIfPresent(String.self, forKey: .loginCheckJs)
+        lastUpdateTime = try? container.decodeIfPresent(Int64.self, forKey: .lastUpdateTime)
+    }
+}
+
+// MARK: - Login Response Model
+struct LoginResponse: Codable {
+    let accessToken: String
+}
+
+// MARK: - User Info Model
+struct UserInfo: Codable {
+    let username: String?
+    let phone: String?
+    let email: String?
+}
+
+// MARK: - User Preferences
+class UserPreferences: ObservableObject {
+    static let shared = UserPreferences()
+    
+    @Published var serverURL: String {
+        didSet {
+            UserDefaults.standard.set(serverURL, forKey: "serverURL")
+        }
+    }
+    
+    @Published var accessToken: String {
+        didSet {
+            UserDefaults.standard.set(accessToken, forKey: "accessToken")
+        }
+    }
+    
+    @Published var username: String {
+        didSet {
+            UserDefaults.standard.set(username, forKey: "username")
+        }
+    }
+    
+    @Published var isLoggedIn: Bool {
+        didSet {
+            UserDefaults.standard.set(isLoggedIn, forKey: "isLoggedIn")
+        }
+    }
+    
+    @Published var fontSize: CGFloat {
+        didSet {
+            UserDefaults.standard.set(fontSize, forKey: "fontSize")
+        }
+    }
+    
+    @Published var lineSpacing: CGFloat {
+        didSet {
+            UserDefaults.standard.set(lineSpacing, forKey: "lineSpacing")
+        }
+    }
+    
+    @Published var selectedTTSId: String {
+        didSet {
+            UserDefaults.standard.set(selectedTTSId, forKey: "selectedTTSId")
+        }
+    }
+    
+    @Published var bookshelfSortByRecent: Bool {
+        didSet {
+            UserDefaults.standard.set(bookshelfSortByRecent, forKey: "bookshelfSortByRecent")
+        }
+    }
+    
+    // 语速设置：ttsId -> 语速
+    private var speechRates: [String: Double] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsSpeechRates"),
+               let dict = try? JSONDecoder().decode([String: Double].self, from: data) {
+                return dict
+            }
+            return [:]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsSpeechRates")
+            }
+            objectWillChange.send()
+        }
+    }
+    
+    func getSpeechRate(for ttsId: String) -> Double {
+        return speechRates[ttsId] ?? 1.0
+    }
+    
+    func setSpeechRate(_ rate: Double, for ttsId: String) {
+        var rates = speechRates
+        rates[ttsId] = rate
+        speechRates = rates
+    }
+    
+    // 预载段数：ttsId -> 预载段数
+    private var preloadCounts: [String: Int] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsPreloadCounts"),
+               let dict = try? JSONDecoder().decode([String: Int].self, from: data) {
+                return dict
+            }
+            return [:]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsPreloadCounts")
+            }
+            objectWillChange.send()
+        }
+    }
+    
+    func getPreloadCount(for ttsId: String) -> Int {
+        return preloadCounts[ttsId] ?? 3
+    }
+    
+    func setPreloadCount(_ count: Int, for ttsId: String) {
+        var counts = preloadCounts
+        counts[ttsId] = count
+        preloadCounts = counts
+    }
+    
+    @Published var useReplaceRuleSanitization: Bool {
+        didSet {
+            UserDefaults.standard.set(useReplaceRuleSanitization, forKey: "useReplaceRuleSanitization")
+        }
+    }
+
+    @Published var infiniteScrollReadingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(infiniteScrollReadingEnabled, forKey: "infiniteScrollReadingEnabled")
+        }
+    }
+
+    // 减少段落间隔：ttsId -> 缩减时间(秒)
+    private var gapReductions: [String: Double] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsGapReductions"),
+               let dict = try? JSONDecoder().decode([String: Double].self, from: data) {
+                return dict
+            }
+            return [:]
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "ttsGapReductions")
+            }
+            objectWillChange.send()
+        }
+    }
+    
+    func getGapReduction(for ttsId: String) -> Double {
+        return gapReductions[ttsId] ?? 0.0
+    }
+    
+    func setGapReduction(_ reduction: Double, for ttsId: String) {
+        var reductions = gapReductions
+        reductions[ttsId] = reduction
+        gapReductions = reductions
+    }
+    
+    // TTS进度记录：bookUrl -> (chapterIndex, sentenceIndex)
+    private var ttsProgress: [String: (Int, Int)] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "ttsProgress"),
+               let dict = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+                return dict.compactMapValues { values in
+                    guard values.count >= 2 else { return nil }
+                    return (values[0], values[1])
+                }
+            }
+            return [:]
+        }
+        set {
+            let dict = newValue.mapValues { [$0.0, $0.1] }
+            if let data = try? JSONEncoder().encode(dict) {
+                UserDefaults.standard.set(data, forKey: "ttsProgress")
+            }
+        }
+    }
+    
+    func saveTTSProgress(bookUrl: String, chapterIndex: Int, sentenceIndex: Int) {
+        var progress = ttsProgress
+        progress[bookUrl] = (chapterIndex, sentenceIndex)
+        ttsProgress = progress
+    }
+    
+    func getTTSProgress(bookUrl: String) -> (chapterIndex: Int, sentenceIndex: Int)? {
+        return ttsProgress[bookUrl]
+    }
+
+    // 阅读锚点记录：bookUrl -> (chapterIndex, paragraphIndex)
+    private var readingProgress: [String: (Int, Int)] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "readingProgress"),
+               let dict = try? JSONDecoder().decode([String: [Int]].self, from: data) {
+                return dict.compactMapValues { values in
+                    guard values.count >= 2 else { return nil }
+                    return (values[0], values[1])
+                }
+            }
+            return [:]
+        }
+        set {
+            let dict = newValue.mapValues { [$0.0, $0.1] }
+            if let data = try? JSONEncoder().encode(dict) {
+                UserDefaults.standard.set(data, forKey: "readingProgress")
+            }
+        }
+    }
+
+    func saveReadingProgress(bookUrl: String, chapterIndex: Int, paragraphIndex: Int) {
+        var progress = readingProgress
+        progress[bookUrl] = (chapterIndex, paragraphIndex)
+        readingProgress = progress
+    }
+
+    func getReadingProgress(bookUrl: String) -> (chapterIndex: Int, paragraphIndex: Int)? {
+        return readingProgress[bookUrl]
+    }
+    
+    private init() {
+        // 初始化所有属性
+        let savedFontSize = CGFloat(UserDefaults.standard.float(forKey: "fontSize"))
+        self.fontSize = savedFontSize == 0 ? 18 : savedFontSize
+        
+        let savedLineSpacing = CGFloat(UserDefaults.standard.float(forKey: "lineSpacing"))
+        self.lineSpacing = savedLineSpacing == 0 ? 8 : savedLineSpacing
+        
+        self.serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+        self.accessToken = UserDefaults.standard.string(forKey: "accessToken") ?? ""
+        self.username = UserDefaults.standard.string(forKey: "username") ?? ""
+        self.isLoggedIn = UserDefaults.standard.bool(forKey: "isLoggedIn")
+        self.selectedTTSId = UserDefaults.standard.string(forKey: "selectedTTSId") ?? ""
+        self.bookshelfSortByRecent = UserDefaults.standard.bool(forKey: "bookshelfSortByRecent")
+        
+        if UserDefaults.standard.object(forKey: "useReplaceRuleSanitization") == nil {
+            self.useReplaceRuleSanitization = true
+        } else {
+            self.useReplaceRuleSanitization = UserDefaults.standard.bool(forKey: "useReplaceRuleSanitization")
+        }
+
+        if UserDefaults.standard.object(forKey: "infiniteScrollReadingEnabled") == nil {
+            self.infiniteScrollReadingEnabled = false
+        } else {
+            self.infiniteScrollReadingEnabled = UserDefaults.standard.bool(forKey: "infiniteScrollReadingEnabled")
+        }
+    }
+    
+    func logout() {
+        accessToken = ""
+        username = ""
+        isLoggedIn = false
+    }
+}
