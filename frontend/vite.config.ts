@@ -4,6 +4,7 @@ import { resolve } from 'path'
 import pkg from './package.json'
 
 export default defineConfig({
+  base: './',
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(`v${pkg.version}`),

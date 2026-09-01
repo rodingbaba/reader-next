@@ -1,3 +1,4 @@
+import { invokeTTS } from '../utils/nativeBridge'
 import { defineStore } from 'pinia'
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
@@ -1307,6 +1308,15 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function startTTS(text?: string, options: TTSOptions = {}, interruptCurrent = true) {
+    const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
+    if (!rawText) return
+
+    if (invokeTTS('play', { text: rawText })) {
+      isSpeaking.value = true
+      isPaused.value = false
+      return
+    }
+
     const hasActiveSystemSpeech = !!synth && (synth.speaking || synth.pending || !!currentUtterance)
     const hasActiveOpenAISpeech = (ttsAudio && !ttsAudio.paused) || !!currentOpenAIAbortController
 
@@ -1314,8 +1324,6 @@ export const useReaderStore = defineStore('reader', () => {
       stopTTS(false)
     }
 
-    const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
-    if (!rawText) return
 
     const sessionId = beginTTSSession()
     setupMediaSession(rawText)
@@ -1356,6 +1364,12 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function pauseTTS() {
+    if (invokeTTS(isPaused.value ? 'resume' : 'pause')) {
+      isPaused.value = !isPaused.value
+      isSpeaking.value = !isPaused.value
+      return
+    }
+
     if (speechConfig.provider === 'openai' || speechConfig.provider === 'http') {
       if (!ttsAudio) return
       if (ttsAudio.paused) {
@@ -1383,6 +1397,12 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function stopTTS(resetCallbacks = true) {
+    if (invokeTTS('stop')) {
+      isSpeaking.value = false
+      isPaused.value = false
+      // Continue execution to clear frontend state properly
+    }
+
     const sessionId = beginTTSSession()
     logTTS('stopTTS', {
       sessionId,

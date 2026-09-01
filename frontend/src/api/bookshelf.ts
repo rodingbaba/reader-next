@@ -1,3 +1,4 @@
+import { invokeData, invokeSync, isNativeApp } from '../utils/nativeBridge'
 import http from './http'
 import type { Book, BookChapter, BookGroup } from '../types'
 
@@ -74,20 +75,34 @@ export function getChapterList(params: {
   return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
 }
 
-export function getBookContent(params: {
+export async function getBookContent(params: {
   chapterUrl?: string
   bookSourceUrl?: string
   index?: number
   refresh?: number
 }) {
+  if (isNativeApp()) {
+    try {
+      const cached = await invokeData('getCache', params)
+      if (cached) return cached
+    } catch (e) {
+      console.error('Native getCache error', e)
+    }
+  }
   return http.post<string>('/getBookContent', params).then((r) => r.data)
 }
 
-export function saveBookProgress(params: {
+export async function saveBookProgress(params: {
   bookUrl: string
   index: number
   position?: number
+  ts?: number
 }) {
+  if (isNativeApp()) {
+    params.ts = params.ts || Date.now()
+    invokeSync('saveProgress', params)
+    return ""
+  }
   return http.post<string>('/saveBookProgress', params).then((r) => r.data)
 }
 

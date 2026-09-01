@@ -1,3 +1,4 @@
+import { invokeData, isNativeApp } from './nativeBridge'
 const DB_NAME = 'reader-browser-cache'
 const DB_VERSION = 1
 const STORE_NAME = 'chapters'
@@ -96,6 +97,15 @@ export async function setBrowserCachedChapter(params: {
   chapterTitle?: string
   content: string
 }) {
+  if (isNativeApp()) {
+    try {
+      await invokeData('saveCache', params)
+      return
+    } catch (e) {
+      console.error('Native saveCache error', e)
+    }
+  }
+
   return withStore('readwrite', async (store) => {
     const record: BrowserChapterCacheRecord = {
       key: cacheKey(params.bookUrl, params.chapterUrl),
@@ -136,18 +146,18 @@ export async function listBrowserCacheSummary(): Promise<BrowserBookCacheSummary
     const records = await requestToPromise(store.getAll())
     const summaryMap = new Map<string, BrowserBookCacheSummary>()
 
-    ;(records as BrowserChapterCacheRecord[]).forEach((record) => {
-      const current = summaryMap.get(record.bookUrl) || {
-        bookUrl: record.bookUrl,
-        cachedChapterCount: 0,
-        bytes: 0,
-        updatedAt: 0,
-      }
-      current.cachedChapterCount += 1
-      current.bytes += record.size || 0
-      current.updatedAt = Math.max(current.updatedAt, record.updatedAt || 0)
-      summaryMap.set(record.bookUrl, current)
-    })
+      ; (records as BrowserChapterCacheRecord[]).forEach((record) => {
+        const current = summaryMap.get(record.bookUrl) || {
+          bookUrl: record.bookUrl,
+          cachedChapterCount: 0,
+          bytes: 0,
+          updatedAt: 0,
+        }
+        current.cachedChapterCount += 1
+        current.bytes += record.size || 0
+        current.updatedAt = Math.max(current.updatedAt, record.updatedAt || 0)
+        summaryMap.set(record.bookUrl, current)
+      })
 
     return Array.from(summaryMap.values()).sort((a, b) => b.updatedAt - a.updatedAt)
   })
