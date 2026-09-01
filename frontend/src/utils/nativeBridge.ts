@@ -42,14 +42,12 @@ function createCallbackPromise(): { callbackId: string; promise: Promise<any> } 
 }
 
 export const isNativeApp = () => {
-  return !!(window.webkit?.messageHandlers?.ttsControl);
+  return !!(window.webkit?.messageHandlers?.dataControl);
 };
 
-export const invokeTTS = (action: string, payload?: any) => {
-  if (isNativeApp()) {
-    window.webkit!.messageHandlers!.ttsControl!.postMessage({ action, payload });
-    return true;
-  }
+export const invokeTTS = (_action: string, _payload?: any) => {
+  // 禁用 Native TTS 桥接，让 Web 端全权负责 TTS 播放。
+  // Web 端的实现可以完美支持文字高亮、自动翻段、以及 iOS MediaSession 锁屏播放控件。
   return false;
 };
 
