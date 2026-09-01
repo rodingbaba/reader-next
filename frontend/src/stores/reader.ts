@@ -869,10 +869,12 @@ export const useReaderStore = defineStore('reader', () => {
     if (speakerId) {
       const cfg = (speechConfig.speakerConfigs || {})[speakerId] || { preloadCount: 3, gapReduction: 0, speechRate: speechConfig.speechRate }
       invokeTTS('setConfig', { speakerId, ...cfg })
+    }
+  }
 
-      function setPreloadCount(count: number) {
-        const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
-        if (speakerId) {
+  function setPreloadCount(count: number) {
+    const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
+    if (speakerId) {
           if (!speechConfig.speakerConfigs) speechConfig.speakerConfigs = {}
           if (!speechConfig.speakerConfigs[speakerId]) {
             speechConfig.speakerConfigs[speakerId] = { preloadCount: count, gapReduction: 0, speechRate: speechConfig.speechRate }
