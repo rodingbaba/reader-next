@@ -1311,7 +1311,7 @@ export const useReaderStore = defineStore('reader', () => {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
 
-    if (invokeTTS('play', { text: rawText })) {
+    if (invokeTTS('play', { text: rawText, bookUrl: book.value?.bookUrl, bookSourceUrl: book.value?.origin, bookTitle: book.value?.name, coverUrl: book.value?.coverUrl, chapters: chapters.value, currentIndex: currentIndex.value })) {
       isSpeaking.value = true
       isPaused.value = false
       return
