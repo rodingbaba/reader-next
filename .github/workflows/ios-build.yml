@@ -1,0 +1,72 @@
+name: iOS Build & Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build Frontend PWA
+        run: |
+          cd frontend
+          npm install
+          npm run build
+          cd ..
+          ./build-hybrid.sh
+
+      - name: Build iOS App (Unsigned IPA)
+        run: |
+          cd ios
+          # Execute xcodebuild without code signing so it can run via GitHub Actions
+          xcodebuild clean build \
+            -project ReadApp.xcodeproj \
+            -scheme ReadApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee xcodebuild.log
+
+          # Package the .app into a .ipa format (suitable for TrollStore / AltStore / Jailbreak / signing services)
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/ReadApp.app Payload/
+          zip -r ReadApp.ipa Payload
+          
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: ios/xcodebuild.log
+          
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReadApp-IPA
+          path: ios/ReadApp.ipa
+
+      - name: Publish Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "nightly"
+          name: "Nightly Build"
+          body: "Auto-generated nightly build from main branch."
+          prerelease: true
+          files: ios/ReadApp.ipa
