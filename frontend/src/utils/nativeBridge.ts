@@ -45,6 +45,15 @@ export const isNativeApp = () => {
   return !!(window.webkit?.messageHandlers?.dataControl);
 };
 
+export const invokeData = (action: string, payload?: any) => {
+  if (isNativeApp()) {
+    const { callbackId, promise } = createCallbackPromise();
+    window.webkit!.messageHandlers!.dataControl!.postMessage({ action, payload, callbackId });
+    return promise;
+  }
+  return Promise.reject(new Error('Not in native app environment'));
+};
+
 export const invokeTTS = (action: string, payload?: any) => {
   if (isNativeApp() && window.webkit?.messageHandlers?.ttsControl) {
     window.webkit.messageHandlers.ttsControl.postMessage({ action, payload });
