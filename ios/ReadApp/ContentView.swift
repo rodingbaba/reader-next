@@ -166,7 +166,7 @@ struct HybridWebView: UIViewRepresentable {
                                 if let name = c["name"] as? String,
                                    let url = c["url"] as? String,
                                    let idx = c["index"] as? Int {
-                                    parsedChapters.append(BookChapter(name: name, url: url, index: idx, cacheStatus: c["cacheStatus"] as? Int))
+                                    parsedChapters.append(BookChapter(title: name, url: url, index: idx, isVolume: nil, isPay: nil))
                                 }
                             }
                         }
