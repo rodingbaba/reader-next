@@ -86,7 +86,7 @@ struct HybridWebView: UIViewRepresentable {
                 case "resume":
                     TTSManager.shared.resume()
                 case "stop":
-                    TTSManager.shared.stop(clearQueue: true)
+                    TTSManager.shared.stop()
                 default:
                     break
                 }
