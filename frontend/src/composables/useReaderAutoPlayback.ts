@@ -718,6 +718,13 @@ export function useReaderAutoPlayback(
   return {
     getCurrentParagraph,
     clearReadingClass,
+    syncNativeTTSProgress(index: number) {
+      const list = getAllParagraphs()
+      if (index >= 0 && index < list.length) {
+        markReadingParagraph(list[index])
+        showParagraph(list[index])
+      }
+    },
     startAutoScroll,
     stopAutoScroll,
     startSpeech,

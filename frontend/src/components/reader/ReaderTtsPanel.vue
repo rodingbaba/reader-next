@@ -61,6 +61,18 @@
           <span>{{ pitch.toFixed(1) }}</span>
           <button @click="$emit('pitch-change', 0.1)">+</button>
         </div>
+        <div class="tts-stepper">
+          <span class="tts-label">预加载段数</span>
+          <button @click="$emit('preload-change', -1)">-</button>
+          <span>{{ preloadCount }}</span>
+          <button @click="$emit('preload-change', 1)">+</button>
+        </div>
+        <div class="tts-stepper">
+          <span class="tts-label">减少段落间隔</span>
+          <button @click="$emit('gap-change', -0.1)">-</button>
+          <span>{{ gapReduction.toFixed(1) }}s</span>
+          <button @click="$emit('gap-change', 0.1)">+</button>
+        </div>
       </div>
       <div class="tts-timer-row">
         <span class="tts-label">定时停止</span>
@@ -94,6 +106,8 @@ defineProps<{
   rate: number
   pitch: number
   supportsPitch: boolean
+  preloadCount: number
+  gapReduction: number
   openaiModel: string
   openaiVoice: string
   openaiSource: 'browser' | 'server'
@@ -114,6 +128,8 @@ defineEmits<{
   'http-tts-change': [value: string]
   'rate-change': [delta: number]
   'pitch-change': [delta: number]
+  'preload-change': [delta: number]
+  'gap-change': [delta: number]
   'timer-change': [minutes: number]
 }>()
 

@@ -97,6 +97,8 @@
       :openai-source="store.speechConfig.openaiSource"
       :http-tts-engines="store.speechConfig.httpTtsEngines"
       :http-tts-active-id="store.speechConfig.httpTtsActiveId"
+      :preload-count="currentSpeakerConfig.preloadCount"
+      :gap-reduction="currentSpeakerConfig.gapReduction"
       :stop-after-minutes="store.speechConfig.stopAfterMinutes"
       :timer-text="speechTimerText"
       @close="closeTTSPanel"
@@ -109,6 +111,8 @@
       @http-tts-change="changeHttpTts"
       @rate-change="adjustSpeechRate"
       @pitch-change="adjustSpeechPitch"
+      @preload-change="adjustPreloadCount"
+      @gap-change="adjustGapReduction"
       @timer-change="setSpeechTimer"
     />
 
@@ -2270,6 +2274,7 @@ function scheduleRestoreReadingPosition() {
 
 const {
   clearReadingClass,
+  syncNativeTTSProgress,
   startAutoScroll,
   stopAutoScroll,
   startSpeech,
@@ -2750,6 +2755,22 @@ function adjustSpeechPitch(delta: number) {
   }
 }
 
+const currentSpeakerConfig = computed(() => {
+  const speakerId = store.speechConfig.provider === 'http' ? store.speechConfig.httpTtsActiveId : store.speechConfig.openaiVoice
+  const conf = (store.speechConfig.speakerConfigs || {})[speakerId] || { preloadCount: 3, gapReduction: 0, speechRate: store.speechConfig.speechRate }
+  return conf
+})
+
+function adjustPreloadCount(delta: number) {
+  const newCount = Math.max(1, Math.min(10, currentSpeakerConfig.value.preloadCount + delta))
+  store.setPreloadCount(newCount)
+}
+
+function adjustGapReduction(delta: number) {
+  const newGap = Math.max(0, Math.min(5, Number((currentSpeakerConfig.value.gapReduction + delta).toFixed(1))))
+  store.setGapReduction(newGap)
+}
+
 function setSpeechTimer(minutes: number) {
   store.setSpeechStopTimer(minutes)
   ttsPanelDismissed.value = false
@@ -2858,7 +2879,8 @@ onBeforeRouteLeave(() => {
 })
 
 onMounted(async () => {
-  syncViewportSize()
+  (window as any).__nativeBridgeTTSProgress = (index: number) => { syncNativeTTSProgress(index) }
+  (window as any).__nativeBridgeTTSStateChange = (state: string) => {
   void loadChapterSummaryConfigForSider()
   if (aiPanelActiveTab.value === 'settings') {
     void loadAiModelConfig()
@@ -2910,7 +2932,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-    clearChapterSummaryTimer()
+  delete (window as any).__nativeBridgeTTSProgress
+  delete (window as any).__nativeBridgeTTSStateChange
+  delete (window as any).__nativeBridgeTTSChapterChange
     stopAiPanelSiderResize()
     persistReadingProgressKeepalive()
     appStore.stopReadingSession()

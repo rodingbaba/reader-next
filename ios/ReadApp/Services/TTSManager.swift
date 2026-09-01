@@ -9,7 +9,11 @@ class TTSManager: NSObject, ObservableObject {
     
     @Published var isPlaying = false
     @Published var isPaused = false
-    @Published var currentSentenceIndex = 0
+    @Published var currentSentenceIndex = 0 {
+        didSet {
+            NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: ["index": currentSentenceIndex])
+        }
+    }
     @Published var totalSentences = 0
     @Published var isLoading = false
     @Published var preloadedIndices: Set<Int> = []  // 已预载成功的段落索引

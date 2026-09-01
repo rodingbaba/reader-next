@@ -132,9 +132,32 @@ struct HybridWebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 switch action {
                 case "play":
-                    if payload?["text"] is String {
-                        LogManager.shared.log("JS Bridge Play TTS", category: "Hybrid")
-                        TTSManager.shared.resume() 
+                    if let text = payload?["text"] as? String,
+                       let currentIndex = payload?["currentIndex"] as? Int,
+                       let bookUrl = payload?["bookUrl"] as? String,
+                       let bookTitle = payload?["bookTitle"] as? String {
+                       
+                       var parsedChapters = [BookChapter]()
+                       if let chaptersData = payload?["chapters"] as? [[String: Any]] {
+                           for c in chaptersData {
+                               if let name = c["name"] as? String,
+                                  let url = c["url"] as? String,
+                                  let idx = c["index"] as? Int {
+                                  parsedChapters.append(BookChapter(name: name, url: url, index: idx, cacheStatus: c["cacheStatus"] as? Int))
+                               }
+                           }
+                       }
+                       
+                       TTSManager.shared.startReading(
+                           text: text,
+                           chapters: parsedChapters,
+                           currentIndex: currentIndex,
+                           bookUrl: bookUrl,
+                           bookSourceUrl: payload?["bookSourceUrl"] as? String,
+                           bookTitle: bookTitle,
+                           coverUrl: payload?["coverUrl"] as? String,
+                           onChapterChange: { [weak self] newChapterIndex in
+                       LogManager.shared.log("JS Bridge Play TTS Started", category: "Hybrid")
                     }
                 case "pause":
                     TTSManager.shared.pause()
@@ -142,6 +165,19 @@ struct HybridWebView: UIViewRepresentable {
                     TTSManager.shared.resume()
                 case "stop":
                     TTSManager.shared.stop()
+                case "setConfig":
+                    if let config = payload, let speakerId = config["speakerId"] as? String {
+                        UserPreferences.shared.selectedTTSId = speakerId
+                        if let preload = config["preloadCount"] as? Int {
+                            UserPreferences.shared.setPreloadCount(preload, for: speakerId)
+                        }
+                        if let gap = config["gapReduction"] as? Double {
+                            UserPreferences.shared.setGapReduction(gap, for: speakerId)
+                        }
+                        if let rate = config["speechRate"] as? Double {
+                            UserPreferences.shared.setSpeechRate(rate, for: speakerId)
+                        }
+                    }
                 default:
                     break
                 }
