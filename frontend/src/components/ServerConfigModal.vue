@@ -18,12 +18,12 @@
 
           <form class="login-form" @submit.prevent="handleSubmit">
             <div class="form-field">
-              <label for="server-url">服务器地址 (API Base URL)</label>
+              <label for="server-url">服务器地址</label>
               <input
                 id="server-url"
                 v-model="form.serverUrl"
                 type="url"
-                placeholder="例如: http://192.168.1.100:18080/reader3"
+                placeholder="例如: http://192.168.1.100:18080 (无需加 /reader3)"
                 required
               />
             </div>
@@ -79,9 +79,15 @@ const shelfStore = useBookshelfStore()
 
 const submitting = ref(false)
 
+// 如果之前存了包含 /reader3 的路径，回显时去掉它
+let initialUrl = localStorage.getItem('server_base_url') || ''
+if (initialUrl.endsWith('/reader3')) {
+  initialUrl = initialUrl.slice(0, -8)
+}
+
 // 针对单用户默认部署预填 admin/123456
 const form = reactive({
-  serverUrl: localStorage.getItem('server_base_url') || '',
+  serverUrl: initialUrl,
   username: 'admin',
   password: '123456',
 })
@@ -99,10 +105,13 @@ async function handleSubmit() {
   if (!form.serverUrl) return
   submitting.value = true
   
-  // 处理结尾的反斜杠
+  // 处理结尾的反斜杠并自动补全 /reader3
   let url = form.serverUrl.trim()
   if (url.endsWith('/')) {
     url = url.slice(0, -1)
+  }
+  if (!url.endsWith('/reader3')) {
+    url += '/reader3'
   }
   
   try {

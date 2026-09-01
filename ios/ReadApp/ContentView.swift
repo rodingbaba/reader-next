@@ -77,7 +77,7 @@ struct HybridWebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 switch action {
                 case "play":
-                    if let text = payload?["text"] as? String {
+                    if payload?["text"] is String {
                         LogManager.shared.log("JS Bridge Play TTS", category: "Hybrid")
                         // In a full implementation, we'd pass chapters and trigger startReading.
                         // Here we just resume or restart.
@@ -89,6 +89,7 @@ struct HybridWebView: UIViewRepresentable {
                     TTSManager.shared.resume()
                 case "stop":
                     TTSManager.shared.stop()
+                default:
                     break
                 }
             }
