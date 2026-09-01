@@ -9,16 +9,72 @@ struct ContentView: View {
     }
 }
 
+class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(NSError(domain: "LocalScheme", code: -1, userInfo: nil))
+            return
+        }
+        
+        var path = url.path
+        if path.isEmpty || path == "/" {
+            path = "/index.html"
+        }
+        if path.hasPrefix("/") {
+            path.removeFirst()
+        }
+        
+        guard let bundlePath = Bundle.main.path(forResource: "www", ofType: nil) else {
+            urlSchemeTask.didFailWithError(NSError(domain: "LocalScheme", code: -1, userInfo: nil))
+            return
+        }
+        
+        let fileUrl = URL(fileURLWithPath: bundlePath).appendingPathComponent(path)
+        
+        do {
+            let data = try Data(contentsOf: fileUrl)
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": getMimeType(for: path), "Access-Control-Allow-Origin": "*"])!
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(data)
+            urlSchemeTask.didFinish()
+        } catch {
+            // Fallback to index.html for SPA router
+            let indexUrl = URL(fileURLWithPath: bundlePath).appendingPathComponent("index.html")
+            if let indexData = try? Data(contentsOf: indexUrl) {
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/html", "Access-Control-Allow-Origin": "*"])!
+                urlSchemeTask.didReceive(response)
+                urlSchemeTask.didReceive(indexData)
+                urlSchemeTask.didFinish()
+            } else {
+                urlSchemeTask.didFailWithError(error)
+            }
+        }
+    }
+    
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        // Task cancelled, no-op
+    }
+    
+    private func getMimeType(for path: String) -> String {
+        if path.hasSuffix(".html") { return "text/html" }
+        if path.hasSuffix(".css") { return "text/css" }
+        if path.hasSuffix(".js") { return "application/javascript" }
+        if path.hasSuffix(".svg") { return "image/svg+xml" }
+        if path.hasSuffix(".png") { return "image/png" }
+        if path.hasSuffix(".ico") { return "image/x-icon" }
+        if path.hasSuffix(".json") { return "application/json" }
+        return "application/octet-stream"
+    }
+}
+
 struct HybridWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
-        let preferences = WKPreferences()
-        preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        preferences.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
-        
         let webConfiguration = WKWebViewConfiguration()
-        webConfiguration.preferences = preferences
         webConfiguration.allowsInlineMediaPlayback = true
         webConfiguration.mediaTypesRequiringUserActionForPlayback = []
+        
+        // Use custom URL scheme to bypass file:// CORS and ES module restrictions
+        webConfiguration.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "readapp")
         
         let userContentController = WKUserContentController()
         userContentController.add(context.coordinator, name: "ttsControl")
@@ -31,11 +87,9 @@ struct HybridWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = UIColor.clear
         
-        if let bundlePath = Bundle.main.path(forResource: "www", ofType: nil),
-           let htmlPath = Bundle.main.path(forResource: "index", ofType: "html", inDirectory: "www") {
-            let url = URL(fileURLWithPath: htmlPath)
-            let readAccessUrl = URL(fileURLWithPath: bundlePath)
-            webView.loadFileURL(url, allowingReadAccessTo: readAccessUrl)
+        // Load using our custom scheme
+        if let url = URL(string: "readapp://localhost/index.html") {
+            webView.load(URLRequest(url: url))
         }
         
         return webView
@@ -79,8 +133,6 @@ struct HybridWebView: UIViewRepresentable {
                 case "play":
                     if payload?["text"] is String {
                         LogManager.shared.log("JS Bridge Play TTS", category: "Hybrid")
-                        // In a full implementation, we'd pass chapters and trigger startReading.
-                        // Here we just resume or restart.
                         TTSManager.shared.resume() 
                     }
                 case "pause":
