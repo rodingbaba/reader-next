@@ -138,6 +138,7 @@ pub struct DeleteCacheRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct SaveBookProgressRequest {
+    pub ts: Option<i64>,
     url: Option<String>,
     #[serde(rename = "bookUrl")]
     book_url: Option<String>,
@@ -1956,7 +1957,13 @@ pub async fn save_book_progress(
         }
     }
     updated.dur_chapter_index = Some(index);
-    updated.dur_chapter_time = Some(crate::util::time::now_ts());
+    let req_ts = req.ts.unwrap_or_else(|| crate::util::time::now_ts());
+    if let Some(existing_ts) = shelf_book.dur_chapter_time {
+        if req_ts < existing_ts {
+            return Ok(Json(ApiResponse::ok(serde_json::json!(""))));
+        }
+    }
+    updated.dur_chapter_time = Some(req_ts);
     if let Some(title) = chapter_title {
         updated.dur_chapter_title = Some(title);
     }
@@ -3928,4 +3935,36 @@ pub async fn get_epub_asset(
             ).into_response()
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchBookContentRequest {
+    pub requests: Vec<BookContentRequest>,
+}
+
+pub async fn get_batch_book_content(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(req): Json<BatchBookContentRequest>,
+) -> Result<Json<ApiResponse<std::collections::HashMap<String, serde_json::Value>>>, AppError> {
+    let mut results = std::collections::HashMap::new();
+    for r in req.requests {
+        let chapter_url = r.chapter_url.clone().unwrap_or_default();
+        let res = get_book_content(
+            State(state.clone()),
+            auth.clone(),
+            Query(r),
+            axum::body::Bytes::new(),
+        ).await;
+
+        match res {
+            Ok(json_res) => {
+                results.insert(chapter_url, json_res.0.data.unwrap_or(serde_json::Value::Null));
+            }
+            Err(e) => {
+                tracing::error!("Batch fetch error for {}: {:?}", chapter_url, e);
+            }
+        }
+    }
+    Ok(Json(ApiResponse::ok(results)))
 }

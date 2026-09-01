@@ -165,6 +165,11 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_book_content).post(handlers::get_book_content),
         )
         .route(
+            "/reader3/getBatchBookContent",
+            post(handlers::get_batch_book_content),
+
+        )
+        .route(
             "/reader3/deleteBookCache",
             post(handlers::delete_book_cache),
         )
