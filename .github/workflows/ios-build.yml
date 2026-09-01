@@ -2,6 +2,8 @@ name: iOS Build & Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -48,7 +50,7 @@ jobs:
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/ReadApp.app Payload/
           
-          # IMPORTANT: Ad-hoc sign the app so iOS kernel can map the executable (fixes Bad file descriptor)
+          # IMPORTANT: Ad-hoc sign the app so iOS kernel can map the executable
           codesign --force --deep --sign - Payload/ReadApp.app
           
           zip -r ReadApp.ipa Payload
@@ -66,7 +68,17 @@ jobs:
           name: ReadApp-IPA
           path: ios/ReadApp.ipa
 
-      - name: Publish Release IPA
+      - name: Publish Nightly Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "nightly"
+          name: "Nightly Build"
+          body: "Auto-generated nightly build from main branch."
+          prerelease: true
+          files: ios/ReadApp.ipa
+
+      - name: Publish Tagged Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
