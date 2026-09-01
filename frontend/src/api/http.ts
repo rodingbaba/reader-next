@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types'
 import { buildAuthHeaderValues } from '../utils/secureAccess'
+import { isNativeApp } from '../utils/nativeBridge'
 
 let lastNeedLoginDispatchAt = 0
 
@@ -11,14 +12,25 @@ function dispatchNeedLogin() {
   window.dispatchEvent(new CustomEvent('need-login'))
 }
 
+function getBaseURL() {
+  if (isNativeApp()) {
+    return localStorage.getItem('server_base_url') || ''
+  }
+  return '/reader3'
+}
+
 const http = axios.create({
-  baseURL: '/reader3',
+  baseURL: getBaseURL(),
   timeout: 120000,
   headers: { 'Content-Type': 'application/json' },
 })
 
 // ─── Request interceptor: attach token ───
 http.interceptors.request.use((config) => {
+  // Update baseURL dynamically in case it changed
+  if (isNativeApp()) {
+    config.baseURL = localStorage.getItem('server_base_url') || ''
+  }
   const { accessToken, secureKey } = buildAuthHeaderValues(localStorage)
   if (accessToken) {
     config.headers.Authorization = accessToken

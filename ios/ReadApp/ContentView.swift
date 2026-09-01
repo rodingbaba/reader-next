@@ -12,6 +12,8 @@ struct ContentView: View {
 struct HybridWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let preferences = WKPreferences()
+        preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        preferences.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
         
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.preferences = preferences
@@ -87,7 +89,6 @@ struct HybridWebView: UIViewRepresentable {
                     TTSManager.shared.resume()
                 case "stop":
                     TTSManager.shared.stop()
-                default:
                     break
                 }
             }

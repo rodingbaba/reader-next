@@ -5,6 +5,7 @@
       <router-view />
     </main>
     <AppBottomNav v-if="showBottomNav" />
+    <ServerConfigModal v-model="appStore.showServerConfigModal" />
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
     <LoginModal v-model="appStore.showLoginModal" />
     <SourceManager v-model="appStore.showSourceManager" />
@@ -33,11 +34,13 @@ import { useRoute } from 'vue-router'
 import { useAppStore } from './stores/app'
 import AppTopBar from './components/AppTopBar.vue'
 import AppBottomNav from './components/AppBottomNav.vue'
+import ServerConfigModal from './components/ServerConfigModal.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import LoginModal from './components/LoginModal.vue'
 import SourceManager from './components/SourceManager.vue'
 import UserManager from './components/UserManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
+import { isNativeApp } from './utils/nativeBridge'
 
 const route = useRoute()
 const appStore = useAppStore()
@@ -46,10 +49,18 @@ const showHeader = computed(() => route.name !== 'reader')
 const showBottomNav = computed(() => route.name !== 'reader')
 
 onMounted(() => {
-  appStore.fetchUserInfo()
+  if (isNativeApp() && !localStorage.getItem('server_base_url')) {
+    appStore.showServerConfigModal = true
+  } else {
+    appStore.fetchUserInfo()
+  }
 })
 
 async function handleNeedLogin() {
+  if (isNativeApp() && !localStorage.getItem('server_base_url')) {
+    appStore.showServerConfigModal = true
+    return
+  }
   await appStore.fetchUserInfo()
   if (!appStore.isLoggedIn) {
     appStore.showLoginModal = true
