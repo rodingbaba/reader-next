@@ -104,14 +104,16 @@ export function useHorizontalPaging(
     return {
       style: paragraph.getAttribute('style') || '',
       className: paragraph.getAttribute('class') || '',
+      originalIndex: paragraph.getAttribute('data-original-index') || '',
       text: (paragraph.textContent || '').trimEnd(),
     }
   }
 
-  function buildParagraphHtml(style: string, text: string, className = '') {
+  function buildParagraphHtml(style: string, text: string, className = '', originalIndex = '') {
     const stylePart = style ? ` style="${style}"` : ''
     const classPart = className ? ` class="${className}"` : ''
-    return `<p${classPart}${stylePart}>${escapeHtml(text)}</p>`
+    const indexPart = originalIndex ? ` data-original-index="${originalIndex}"` : ''
+    return `<p${classPart}${stylePart}${indexPart}>${escapeHtml(text)}</p>`
   }
 
   function firstVisibleChar(text: string) {
@@ -290,7 +292,7 @@ export function useHorizontalPaging(
       const parsed = parseParagraphHtml(blockHtml)
       if (!parsed || parsed.text.length <= 1) return null
 
-      const { style, text, className } = parsed
+      const { style, text, className, originalIndex } = parsed
       const currentHeight = measureContentHeight(currentParts)
       const remainingHeight = pageHeight - currentHeight
       const minRemainingHeight = (options.minRemainingLines || 0) * config.value.fontSize * config.value.lineHeight
@@ -303,7 +305,7 @@ export function useHorizontalPaging(
       while (left <= right) {
         const mid = Math.floor((left + right) / 2)
         const tryStyle = buildSegmentStyle(style, options.isContinuation, mid < text.length)
-        const tryHtml = buildParagraphHtml(tryStyle, text.slice(0, mid), segmentClassName)
+        const tryHtml = buildParagraphHtml(tryStyle, text.slice(0, mid), segmentClassName, originalIndex)
         if (!overflows([...currentParts, tryHtml])) {
           fitCount = mid
           left = mid + 1
@@ -320,9 +322,9 @@ export function useHorizontalPaging(
       const hasMoreText = fitCount < text.length
       const fitStyle = buildSegmentStyle(style, options.isContinuation, hasMoreText)
       return {
-        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName),
+        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName, originalIndex),
         remainingHtml: hasMoreText
-          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className))
+          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className), originalIndex)
           : '',
       }
     }

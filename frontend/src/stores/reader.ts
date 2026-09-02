@@ -1363,12 +1363,28 @@ export const useReaderStore = defineStore('reader', () => {
     if (!rawText) return
 
     if (invokeTTS('play', {
-      text: Array.from(document.querySelectorAll('.chapter-text p')).map(p => (p as HTMLElement).innerText.replace(/\n/g, ' ').trim()).join('\n'),
+      text: (() => {
+        let lastIndex: string | null = null;
+        let result = '';
+        document.querySelectorAll('.chapter-text p').forEach(p => {
+          const idx = p.getAttribute('data-original-index');
+          const t = (p as HTMLElement).innerText.replace(/\n/g, ' ').trim();
+          if (!t) return;
+          if (idx !== null && idx === lastIndex) {
+            result += ' ' + t;
+          } else {
+            if (result) result += '\n';
+            result += t;
+            lastIndex = idx;
+          }
+        });
+        return result || rawText;
+      })(),
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
       coverUrl: book.value?.coverUrl,
-      chapters: chapters.value.slice(Math.max(0, currentIndex.value), currentIndex.value + 3),
+      chapters: chapters.value,
       currentIndex: currentIndex.value,
       startIndex: options.startIndex
     })) {

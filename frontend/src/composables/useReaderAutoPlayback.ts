@@ -723,10 +723,20 @@ export function useReaderAutoPlayback(
     getCurrentParagraph,
     clearReadingClass,
     syncNativeTTSProgress(index: number) {
-      const list = getAllParagraphs()
-      if (index >= 0 && index < list.length) {
-        markReadingParagraph(list[index])
-        showParagraph(list[index])
+      let roots: HTMLElement[] = []
+      if (isContinuousMode.value) {
+        roots = Array.from(scrollContainerRef.value?.querySelectorAll(`.continuous-chapter[data-chapter-index="${store.currentIndex}"] .chapter-text[data-role="continuous"]`) || []) as HTMLElement[]
+      } else if (chapterTextRef.value) {
+        roots = [chapterTextRef.value]
+      }
+      
+      if (!roots.length) return
+      
+      const els = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+      if (els.length > 0) {
+        clearReadingClass()
+        els.forEach(el => el.classList.add('reading'))
+        showParagraph(els[0])
       }
     },
     startAutoScroll,

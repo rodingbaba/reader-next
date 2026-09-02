@@ -1694,10 +1694,10 @@ function formatChapterHtml(rawText: string) {
   return text
     .split(/\n/)
     .filter((line: string) => line.trim())
-    .map((line: string) => {
+    .map((line: string, index: number) => {
       const shouldIndent = config.value.firstLineIndent
       const content = stripLeadingIndent(line.trimEnd())
-      return `<p${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
+      return `<p data-original-index="${index}"${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
     })
     .join('')
 }
