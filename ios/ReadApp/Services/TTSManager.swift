@@ -100,29 +100,34 @@ class TTSManager: NSObject, ObservableObject {
     private func setupRemoteCommands() {
         let commandCenter = MPRemoteCommandCenter.shared()
         
-        commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { [weak self] _ in
             self?.resume()
             return .success
         }
         
-        commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.addTarget { [weak self] _ in
             self?.pause()
             return .success
         }
         
-        commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
             self?.nextSentence()
             return .success
         }
         
-        commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.addTarget { [weak self] _ in
             self?.previousSentence()
             return .success
         }
+        enableRemoteCommands(true)
+    }
+
+    private func enableRemoteCommands(_ enable: Bool) {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.isEnabled = enable
+        commandCenter.pauseCommand.isEnabled = enable
+        commandCenter.nextTrackCommand.isEnabled = enable
+        commandCenter.previousTrackCommand.isEnabled = enable
     }
     
     // MARK: - 设置通知监听
@@ -356,6 +361,7 @@ class TTSManager: NSObject, ObservableObject {
         
         isPlaying = true
         isPaused = false
+        enableRemoteCommands(true)
         
         // 与 Web 端行为保持一致，不再强制朗读章节大标题，直接开始朗读正文
         speakNextSentence()
@@ -1188,6 +1194,15 @@ class TTSManager: NSObject, ObservableObject {
         preloadedNextChapterIndex = nil
         nextChapterPreloadToken = UUID()
         coverArtwork = nil  // 清理封面缓存
+        // 清理锁屏播放器
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
+        enableRemoteCommands(false)
+        // 停用音频会话以彻底移除锁屏控件
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            logger.log("无法停用 AVAudioSession: \(error.localizedDescription)", category: "TTS错误")
+        }
         // 结束后台任务
         endBackgroundTask()
         logger.log("TTS 停止", category: "TTS")
