@@ -56,8 +56,6 @@ class TTSManager: NSObject, ObservableObject {
     private var preloadedNextChapterIndex: Int?
     private var nextChapterPreloadToken = UUID()
     
-    // 章节名朗读
-    private var isReadingChapterTitle = false  // 是否正在朗读章节名
 
     // 淡出 timer
     private var overlapTimer: Timer?
@@ -329,16 +327,12 @@ class TTSManager: NSObject, ObservableObject {
         sentences = splitTextIntoSentences(text)
         totalSentences = sentences.count
         
-        // 标记是否是从历史进度恢复（非手动点击指定段落）
-        var isResuming = false
-        
         // 尝试恢复进度
         if let explicitStartIndex = startIndex, explicitStartIndex >= 0 && explicitStartIndex < sentences.count {
             currentSentenceIndex = explicitStartIndex
         } else if resumeFromProgress, let progress = UserPreferences.shared.getTTSProgress(bookUrl: bookUrl) {
             if progress.chapterIndex == currentIndex && progress.sentenceIndex < sentences.count {
                 currentSentenceIndex = progress.sentenceIndex
-                isResuming = true
                 logger.log("恢复TTS进度 - 章节: \(currentIndex), 段落: \(currentSentenceIndex)", category: "TTS")
             } else {
                 currentSentenceIndex = 0
@@ -515,11 +509,7 @@ class TTSManager: NSObject, ObservableObject {
                 
                 // 推进进度并提前播放下一段（相当于砍掉了末尾的静音/重叠播放）
                 self.playingIndex = nil
-                if self.isReadingChapterTitle {
-                    self.isReadingChapterTitle = false
-                } else {
-                    self.currentSentenceIndex += 1
-                }
+                self.currentSentenceIndex += 1
                 self.speakNextSentence()
                 
                 // 等它自然播放完静音后停止并清理旧播放器
@@ -935,10 +925,8 @@ class TTSManager: NSObject, ObservableObject {
             audioPlayer = nil
             // 音频数据损坏，清除坏缓存并跳到下一段
             logger.log("⚠️ 音频解码失败，跳过当前段落", category: "TTS")
-            if !isReadingChapterTitle {
-                audioCache.removeValue(forKey: currentSentenceIndex)
-                prewarmedPlayers.removeValue(forKey: currentSentenceIndex)
-            }
+            audioCache.removeValue(forKey: currentSentenceIndex)
+            prewarmedPlayers.removeValue(forKey: currentSentenceIndex)
             currentSentenceIndex += 1
             speakNextSentence()
         }
@@ -952,7 +940,7 @@ class TTSManager: NSObject, ObservableObject {
         let success = audioPlayer?.play() ?? false
             if success {
                 // 记录当前 player 实际播放的索引
-                playingIndex = isReadingChapterTitle ? -1 : currentSentenceIndex
+                playingIndex = currentSentenceIndex
                 logger.log("✅ 音频开始播放 (playingIndex=\(playingIndex ?? -999))", category: "TTS")
                 isLoading = false
                 // 新音频已经起播，再关闭静音保活，避免段落切换间隙掉线
@@ -967,9 +955,7 @@ class TTSManager: NSObject, ObservableObject {
                 audioPlayer?.delegate = nil
                 audioPlayer = nil
                 // 音频数据无法播放，清除坏缓存并跳到下一段
-                if !isReadingChapterTitle {
-                    audioCache.removeValue(forKey: currentSentenceIndex)
-                }
+                audioCache.removeValue(forKey: currentSentenceIndex)
                 currentSentenceIndex += 1
                 speakNextSentence()
             }
@@ -1276,8 +1262,8 @@ class TTSManager: NSObject, ObservableObject {
                 updateNowPlayingInfo(chapterTitle: chapters[currentChapterIndex].title)
             }
             
-            // 先朗读章节名
-            speakChapterTitle()
+            // 以前这里朗读章节名，现在统一直接朗读正文
+            speakNextSentence()
             
             return
         }
@@ -1372,12 +1358,7 @@ extension TTSManager: AVAudioPlayerDelegate {
             logger.log("⚠️ 播放被中断（flag=false），重试当前段落", category: "TTS")
             playingIndex = nil
             if isPlaying && !isPaused {
-                if isReadingChapterTitle {
-                    isReadingChapterTitle = false
-                    speakChapterTitle()
-                } else {
-                    speakNextSentence()
-                }
+                speakNextSentence()
             }
             return
         }
@@ -1386,12 +1367,7 @@ extension TTSManager: AVAudioPlayerDelegate {
         let finished = playingIndex
         playingIndex = nil
 
-        // 如果正在朗读章节名，播放完后开始朗读内容
-        if isReadingChapterTitle {
-            isReadingChapterTitle = false
-            speakNextSentence()
-            return
-        }
+
 
         // 确认完成的是我们期望的那个段落
         guard finished == currentSentenceIndex else {
@@ -1424,9 +1400,7 @@ extension TTSManager: AVAudioPlayerDelegate {
         audioPlayer?.delegate = nil
         audioPlayer = nil
         // 解码错误，清除坏缓存，跳到下一段
-        if !isReadingChapterTitle {
-            audioCache.removeValue(forKey: currentSentenceIndex)
-        }
+        audioCache.removeValue(forKey: currentSentenceIndex)
         currentSentenceIndex += 1
         speakNextSentence()
     }
