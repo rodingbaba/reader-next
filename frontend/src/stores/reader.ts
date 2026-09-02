@@ -1283,7 +1283,8 @@ export const useReaderStore = defineStore('reader', () => {
       currentObjectURL = URL.createObjectURL(blob)
       ttsAudio.src = currentObjectURL
 
-      ttsAudio.playbackRate = speechConfig.speechRate
+      // 对于 http 和 openai 提供商，语速已经通过参数传递给服务端处理，这里本地播放器需要保持 1.0，防止双重加速
+      ttsAudio.playbackRate = 1.0
 
       ttsAudio.onended = () => {
         if (!isCurrentTTSSession(sessionId)) return

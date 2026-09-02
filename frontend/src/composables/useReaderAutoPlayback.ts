@@ -699,8 +699,38 @@ export function useReaderAutoPlayback(
     autoReadingParagraphIndex = -1
   }
 
+  let lastNativeTTSIndex = -1
+
+  function syncNativeTTSProgress(index: number) {
+    lastNativeTTSIndex = index
+    let roots: HTMLElement[] = []
+    if (isContinuousMode.value) {
+      roots = Array.from(scrollContainerRef.value?.querySelectorAll(`.continuous-chapter[data-chapter-index="${store.currentIndex}"] .chapter-text[data-role="continuous"]`) || []) as HTMLElement[]
+    } else if (chapterTextRef.value) {
+      roots = [chapterTextRef.value]
+    }
+
+    if (!roots.length) return
+
+    const els = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+    if (els.length > 0) {
+      clearReadingClass()
+      els.forEach(el => el.classList.add('reading'))
+      showParagraph(els[0])
+    }
+  }
+
   function handleContentChanged() {
     autoReadingParagraphIndex = -1
+
+    if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+      window.setTimeout(() => {
+        if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+          syncNativeTTSProgress(lastNativeTTSIndex)
+        }
+      }, 200)
+    }
+
     if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
       if (autoParagraphTimer) {
         clearTimeout(autoParagraphTimer)
@@ -722,23 +752,7 @@ export function useReaderAutoPlayback(
   return {
     getCurrentParagraph,
     clearReadingClass,
-    syncNativeTTSProgress(index: number) {
-      let roots: HTMLElement[] = []
-      if (isContinuousMode.value) {
-        roots = Array.from(scrollContainerRef.value?.querySelectorAll(`.continuous-chapter[data-chapter-index="${store.currentIndex}"] .chapter-text[data-role="continuous"]`) || []) as HTMLElement[]
-      } else if (chapterTextRef.value) {
-        roots = [chapterTextRef.value]
-      }
-
-      if (!roots.length) return
-
-      const els = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
-      if (els.length > 0) {
-        clearReadingClass()
-        els.forEach(el => el.classList.add('reading'))
-        showParagraph(els[0])
-      }
-    },
+    syncNativeTTSProgress,
     startAutoScroll,
     stopAutoScroll,
     startSpeech,
