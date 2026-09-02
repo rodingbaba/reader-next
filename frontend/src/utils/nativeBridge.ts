@@ -48,7 +48,8 @@ export const isNativeApp = () => {
 export const invokeData = (action: string, payload?: any) => {
   if (isNativeApp()) {
     const { callbackId, promise } = createCallbackPromise();
-    window.webkit!.messageHandlers!.dataControl!.postMessage({ action, payload, callbackId });
+    const cleanPayload = payload ? JSON.parse(JSON.stringify(payload)) : payload;
+    window.webkit!.messageHandlers!.dataControl!.postMessage({ action, payload: cleanPayload, callbackId });
     return promise;
   }
   return Promise.reject(new Error('Not in native app environment'));
@@ -56,7 +57,8 @@ export const invokeData = (action: string, payload?: any) => {
 
 export const invokeTTS = (action: string, payload?: any) => {
   if (isNativeApp() && window.webkit?.messageHandlers?.ttsControl) {
-    window.webkit.messageHandlers.ttsControl.postMessage({ action, payload });
+    const cleanPayload = payload ? JSON.parse(JSON.stringify(payload)) : payload;
+    window.webkit.messageHandlers.ttsControl.postMessage({ action, payload: cleanPayload });
     return true;
   }
   return false;
@@ -64,7 +66,8 @@ export const invokeTTS = (action: string, payload?: any) => {
 
 export const invokeSync = (action: string, payload?: any) => {
   if (isNativeApp()) {
-    window.webkit!.messageHandlers!.syncControl!.postMessage({ action, payload });
+    const cleanPayload = payload ? JSON.parse(JSON.stringify(payload)) : payload;
+    window.webkit!.messageHandlers!.syncControl!.postMessage({ action, payload: cleanPayload });
     return true;
   }
   return false;

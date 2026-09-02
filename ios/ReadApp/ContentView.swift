@@ -236,8 +236,8 @@ struct HybridWebView: UIViewRepresentable {
                     LogManager.shared.log("❌ 进度同步失败：缺少 bookUrl", category: "网络")
                     return
                 }
-                guard let index = (p["chapterIndex"] as? Int) ?? (p["chapterIndex"] as? Double).map({ Int($0) }) else {
-                    LogManager.shared.log("❌ 进度同步失败：缺少或无效的 chapterIndex", category: "网络")
+                guard let index = (p["chapterIndex"] as? Int) ?? (p["chapterIndex"] as? Double).map({ Int($0) }) ?? (p["index"] as? Int) ?? (p["index"] as? Double).map({ Int($0) }) else {
+                    LogManager.shared.log("❌ 进度同步失败：缺少或无效的 chapterIndex/index", category: "网络")
                     return
                 }
                 let pos = p["chapterPos"] as? Double ?? p["position"] as? Double ?? 0

@@ -209,10 +209,10 @@
               <button class="action-btn" :disabled="!appStore.deferredInstallPrompt" @click="handleInstallPwa">
                 &#23433;&#35013;&#21040;&#20027;&#23631;&#24149;
               </button>
-              <button class="action-btn primary" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
+              <button class="action-btn" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
                 应用前端更新
               </button>
-              <button class="action-btn primary" v-if="isNativeApp()" @click="handleExportLogs">
+              <button class="action-btn" v-if="isNativeApp()" @click="handleExportLogs">
                 导出 App 日志
               </button>
             </div>
