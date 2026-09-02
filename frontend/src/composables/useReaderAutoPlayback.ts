@@ -577,7 +577,11 @@ export function useReaderAutoPlayback(
       chunkIndex: currentSpeechSegmentIndex,
       chunkCount: currentSpeechSegments.length,
     })
+    const list = getAllParagraphs()
+    const startIndex = current ? list.indexOf(current) : 0
+
     store.startTTS(chunk.text, {
+      startIndex: startIndex >= 0 ? startIndex : 0,
       onEnd: () => {
         logSpeech('chunk onEnd', {
           provider: store.speechConfig.provider,

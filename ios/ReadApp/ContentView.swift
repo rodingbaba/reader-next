@@ -159,6 +159,7 @@ struct HybridWebView: UIViewRepresentable {
                 case "play":
                     let text = payload?["text"] as? String
                     let currentIndex = (payload?["currentIndex"] as? Int) ?? (payload?["currentIndex"] as? Double).map { Int($0) }
+                    let startIndex = (payload?["startIndex"] as? Int) ?? (payload?["startIndex"] as? Double).map { Int($0) }
                     let bookUrl = payload?["bookUrl"] as? String
                     let bookTitle = payload?["bookTitle"] as? String ?? "未知书名"
                     
@@ -184,6 +185,7 @@ struct HybridWebView: UIViewRepresentable {
                         text: validText,
                         chapters: parsedChapters,
                         currentIndex: validIndex,
+                        startIndex: startIndex,
                         bookUrl: validBookUrl,
                         bookSourceUrl: payload?["bookSourceUrl"] as? String,
                         bookTitle: bookTitle,

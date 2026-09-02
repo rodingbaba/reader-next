@@ -66,6 +66,11 @@ class TTSManager: NSObject, ObservableObject {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var keepAlivePlayer: AVAudioPlayer?
     
+    // 获取指定索引的章节（适配前端裁剪后的 chapters 数组）
+    private func getChapter(at index: Int) -> BookChapter? {
+        return chapters.first(where: { $0.index == index })
+    }
+    
     private override init() {
         super.init()
         logger.log("TTSManager 初始化", category: "TTS")
@@ -287,8 +292,8 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     // MARK: - 开始朗读
-    func startReading(text: String, chapters: [BookChapter], currentIndex: Int, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
-        logger.log("开始朗读 - 书名: \(bookTitle), 章节: \(currentIndex)/\(chapters.count)", category: "TTS")
+    func startReading(text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
+        logger.log("开始朗读 - 书名: \(bookTitle), 章节: \(currentIndex)", category: "TTS")
         logger.log("内容长度: \(text.count) 字符", category: "TTS")
         
         self.chapters = chapters
@@ -324,10 +329,16 @@ class TTSManager: NSObject, ObservableObject {
         sentences = splitTextIntoSentences(text)
         totalSentences = sentences.count
         
+        // 标记是否是从历史进度恢复（非手动点击指定段落）
+        var isResuming = false
+        
         // 尝试恢复进度
-        if resumeFromProgress, let progress = UserPreferences.shared.getTTSProgress(bookUrl: bookUrl) {
+        if let explicitStartIndex = startIndex, explicitStartIndex >= 0 && explicitStartIndex < sentences.count {
+            currentSentenceIndex = explicitStartIndex
+        } else if resumeFromProgress, let progress = UserPreferences.shared.getTTSProgress(bookUrl: bookUrl) {
             if progress.chapterIndex == currentIndex && progress.sentenceIndex < sentences.count {
                 currentSentenceIndex = progress.sentenceIndex
+                isResuming = true
                 logger.log("恢复TTS进度 - 章节: \(currentIndex), 段落: \(currentSentenceIndex)", category: "TTS")
             } else {
                 currentSentenceIndex = 0
@@ -340,14 +351,21 @@ class TTSManager: NSObject, ObservableObject {
         
         // 更新锁屏信息
         if currentIndex < chapters.count {
-            updateNowPlayingInfo(chapterTitle: chapters[currentIndex].title)
+            // 注意：由于裁剪了 chapters，这里可能越界，或者 currentIndex 不是直接的数组下标！
+            // 需要在 ContentView 层把真正的 chapter 对象传进来，或者我们查找一下
+            if let chapter = chapters.first(where: { $0.index == currentIndex }) {
+                updateNowPlayingInfo(chapterTitle: chapter.title)
+            } else if let first = chapters.first {
+                updateNowPlayingInfo(chapterTitle: first.title)
+            }
         }
         
         isPlaying = true
         isPaused = false
         
-        // 如果从头开始播放，先朗读章节名
-        if currentSentenceIndex == 0 {
+        // 如果是从第0段开始，且非恢复进度，则朗读章节名
+        // 否则直接朗读正文
+        if currentSentenceIndex == 0 && !isResuming {
             speakChapterTitle()
         } else {
             speakNextSentence()
@@ -607,7 +625,7 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 朗读章节名
     private func speakChapterTitle() {
-        guard currentChapterIndex < chapters.count else {
+        guard let chapter = getChapter(at: currentChapterIndex) else {
             speakNextSentence()
             return
         }
@@ -616,7 +634,7 @@ class TTSManager: NSObject, ObservableObject {
         beginBackgroundTask()
         startKeepAlive()
         
-        let chapterTitle = chapters[currentChapterIndex].title
+        let chapterTitle = chapter.title
         logger.log("开始朗读章节名: \(chapterTitle)", category: "TTS")
         
         isReadingChapterTitle = true
@@ -690,6 +708,18 @@ class TTSManager: NSObject, ObservableObject {
         startKeepAlive()
         
         let sentence = sentences[currentSentenceIndex]
+        
+        // 章节名去重处理：如果是段落0，并且它跟章节名相似，则跳过
+        if currentSentenceIndex == 0, let chapter = getChapter(at: currentChapterIndex) {
+            let sentenceFiltered = sentence.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "")
+            let titleFiltered = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "")
+            if !sentenceFiltered.isEmpty && !titleFiltered.isEmpty && (sentenceFiltered.contains(titleFiltered) || titleFiltered.contains(sentenceFiltered)) {
+                logger.log("⏭️ 首段与章节名高度重合，跳过首段 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
+                currentSentenceIndex += 1
+                speakNextSentence()
+                return
+            }
+        }
         
         // 跳过纯标点或空白
         if isPunctuationOnly(sentence) {
@@ -1278,12 +1308,14 @@ class TTSManager: NSObject, ObservableObject {
         isLoading = false
         // 清理缓存
         audioCache.removeAll()
+        prewarmedPlayers.removeAll()
         preloadQueue.removeAll()
         activePreloadIndices.removeAll()
         isPreloading = false
         preloadWorkerTask?.cancel()
         preloadWorkerTask = nil
         nextChapterCache.removeAll()
+        nextChapterPrewarmedPlayers.removeAll()
         nextChapterSentences.removeAll()
         preloadedNextChapterIndex = nil
         nextChapterPreloadToken = UUID()
