@@ -729,9 +729,9 @@ export function useReaderAutoPlayback(
       } else if (chapterTextRef.value) {
         roots = [chapterTextRef.value]
       }
-      
+
       if (!roots.length) return
-      
+
       const els = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
       if (els.length > 0) {
         clearReadingClass()
