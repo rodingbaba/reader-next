@@ -100,7 +100,12 @@ export async function saveBookProgress(params: {
 }) {
   if (isNativeApp()) {
     params.ts = params.ts || Date.now()
-    invokeSync('saveProgress', params)
+    const payload = {
+      ...params,
+      serverURL: localStorage.getItem('server_base_url') || '',
+      accessToken: localStorage.getItem('accessToken') || ''
+    }
+    invokeSync('saveProgress', payload)
     return ""
   }
   return http.post<string>('/saveBookProgress', params).then((r) => r.data)

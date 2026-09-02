@@ -868,7 +868,12 @@ export const useReaderStore = defineStore('reader', () => {
     const speakerId = speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : speechConfig.openaiVoice
     if (speakerId) {
       const cfg = (speechConfig.speakerConfigs || {})[speakerId] || { preloadCount: 3, gapReduction: 0, speechRate: speechConfig.speechRate }
-      invokeTTS('setConfig', { speakerId, ...cfg })
+      invokeTTS('setConfig', { 
+        speakerId, 
+        ...cfg,
+        serverURL: localStorage.getItem('server_base_url') || '',
+        accessToken: localStorage.getItem('accessToken') || ''
+      })
     }
   }
 

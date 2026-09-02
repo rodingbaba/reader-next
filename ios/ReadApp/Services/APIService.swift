@@ -231,7 +231,7 @@ class APIService: ObservableObject {
         } catch let requestError as NSError {
             // 对可恢复网络错误做一次快速重试
             if shouldRetrySameServer(error: requestError) {
-                LogManager.shared.log("请求失败，重试一次: \(requestError.localizedDescription)", category: "网络")
+                LogManager.shared.log("请求失败，重试一次 (\(requestURL)): \(requestError.localizedDescription)", category: "网络")
                 return try await performRequest(
                     urlString: requestURL,
                     method: method,
@@ -296,13 +296,16 @@ class APIService: ObservableObject {
             }
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "无效的响应类型"])
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "无效的响应格式"])
+            }
+            return (data, httpResponse)
+        } catch let error as NSError {
+            LogManager.shared.log("❌ 网络请求失败 (\(urlString)): \(error.localizedDescription)", category: "网络")
+            throw error
         }
-
-        return (data, httpResponse)
     }
     
     // MARK: - 登录

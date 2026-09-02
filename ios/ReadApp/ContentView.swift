@@ -172,8 +172,7 @@ struct HybridWebView: UIViewRepresentable {
                     var parsedChapters = [BookChapter]()
                     if let chaptersData = payload?["chapters"] as? [[String: Any]] {
                         for c in chaptersData {
-                            if let name = c["name"] as? String,
-                               let url = c["url"] as? String,
+                            if let name = (c["name"] as? String) ?? (c["title"] as? String),
                                let idx = (c["index"] as? Int) ?? (c["index"] as? Double).map({ Int($0) }) {
                                 parsedChapters.append(BookChapter(title: name, url: url, index: idx, isVolume: nil, isPay: nil))
                             }
@@ -202,16 +201,36 @@ struct HybridWebView: UIViewRepresentable {
                 case "stop":
                     TTSManager.shared.stop()
                 case "setConfig":
-                    if let config = payload, let speakerId = config["speakerId"] as? String {
-                        UserPreferences.shared.selectedTTSId = speakerId
-                        if let preload = config["preloadCount"] as? Int {
-                            UserPreferences.shared.setPreloadCount(preload, for: speakerId)
+                    if let config = payload {
+                        let speakerId: String?
+                        if let s = config["speakerId"] as? String {
+                            speakerId = s
+                        } else if let n = config["speakerId"] as? Int {
+                            speakerId = String(n)
+                        } else if let d = config["speakerId"] as? Double {
+                            speakerId = String(Int(d))
+                        } else {
+                            speakerId = nil
                         }
-                        if let gap = config["gapReduction"] as? Double {
-                            UserPreferences.shared.setGapReduction(gap, for: speakerId)
+                        
+                        if let speakerId = speakerId {
+                            UserPreferences.shared.selectedTTSId = speakerId
+                            if let preload = config["preloadCount"] as? Int {
+                                UserPreferences.shared.setPreloadCount(preload, for: speakerId)
+                            }
+                            if let gap = config["gapReduction"] as? Double {
+                                UserPreferences.shared.setGapReduction(gap, for: speakerId)
+                            }
+                            if let rate = config["speechRate"] as? Double {
+                                UserPreferences.shared.setSpeechRate(rate, for: speakerId)
+                            }
                         }
-                        if let rate = config["speechRate"] as? Double {
-                            UserPreferences.shared.setSpeechRate(rate, for: speakerId)
+                        
+                        if let url = config["serverURL"] as? String, !url.isEmpty {
+                            UserPreferences.shared.serverURL = url
+                        }
+                        if let token = config["accessToken"] as? String, !token.isEmpty {
+                            UserPreferences.shared.accessToken = token
                         }
                     }
                 default:
@@ -239,6 +258,12 @@ struct HybridWebView: UIViewRepresentable {
                 guard let index = (p["chapterIndex"] as? Int) ?? (p["chapterIndex"] as? Double).map({ Int($0) }) ?? (p["index"] as? Int) ?? (p["index"] as? Double).map({ Int($0) }) else {
                     LogManager.shared.log("❌ 进度同步失败：缺少或无效的 chapterIndex/index", category: "网络")
                     return
+                }
+                if let url = p["serverURL"] as? String, !url.isEmpty {
+                    UserPreferences.shared.serverURL = url
+                }
+                if let token = p["accessToken"] as? String, !token.isEmpty {
+                    UserPreferences.shared.accessToken = token
                 }
                 let pos = p["chapterPos"] as? Double ?? p["position"] as? Double ?? 0
                 Task {
