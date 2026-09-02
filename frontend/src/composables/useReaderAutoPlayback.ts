@@ -577,8 +577,16 @@ export function useReaderAutoPlayback(
       chunkIndex: currentSpeechSegmentIndex,
       chunkCount: currentSpeechSegments.length,
     })
-    const list = getAllParagraphs()
-    const startIndex = current ? list.indexOf(current) : 0
+    let startIndex = 0
+    if (current) {
+      const idxAttr = current.getAttribute('data-original-index')
+      if (idxAttr !== null && idxAttr !== '') {
+        startIndex = parseInt(idxAttr, 10)
+      } else {
+        const list = getAllParagraphs()
+        startIndex = Math.max(0, list.indexOf(current))
+      }
+    }
 
     store.startTTS(chunk.text, {
       startIndex: startIndex >= 0 ? startIndex : 0,
