@@ -2767,7 +2767,7 @@ function adjustPreloadCount(delta: number) {
 }
 
 function adjustGapReduction(delta: number) {
-  const newGap = Math.max(0, Math.min(5, Number((currentSpeakerConfig.value.gapReduction + delta).toFixed(1))))
+  const newGap = Math.max(-1.0, Math.min(1.0, Number((currentSpeakerConfig.value.gapReduction + delta).toFixed(1))))
   store.setGapReduction(newGap)
 }
 

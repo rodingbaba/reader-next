@@ -220,7 +220,35 @@ struct HybridWebView: UIViewRepresentable {
             }
         }
         
-        private func handleSyncControl(action: String, payload: [String: Any]?) {}
+        private func handleSyncControl(action: String, payload: [String: Any]?) {
+            if action == "saveProgress", let p = payload, let url = p["bookUrl"] as? String, let index = p["chapterIndex"] as? Int {
+                let pos = p["chapterPos"] as? Double ?? p["position"] as? Double ?? 0
+                Task {
+                    do {
+                        try await APIService.shared.saveBookProgress(bookUrl: url, index: index, pos: pos, title: nil)
+                    } catch {
+                        LogManager.shared.log("❌ 进度同步失败: \(error.localizedDescription)", category: "网络")
+                    }
+                }
+            } else if action == "exportLogs" {
+                DispatchQueue.main.async {
+                    if let url = LogManager.shared.exportLogs() {
+                        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                           let rootViewController = windowScene.windows.first?.rootViewController {
+                            var topController = rootViewController
+                            while let presented = topController.presentedViewController { topController = presented }
+                            if let popover = activityVC.popoverPresentationController {
+                                popover.sourceView = topController.view
+                                popover.sourceRect = CGRect(x: topController.view.bounds.midX, y: topController.view.bounds.midY, width: 0, height: 0)
+                                popover.permittedArrowDirections = []
+                            }
+                            topController.present(activityVC, animated: true, completion: nil)
+                        }
+                    }
+                }
+            }
+        }
         
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
             let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)

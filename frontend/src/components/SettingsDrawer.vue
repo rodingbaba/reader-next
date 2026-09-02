@@ -213,6 +213,11 @@
                 应用前端更新
               </button>
             </div>
+            <div class="btn-group" v-if="isNativeApp()">
+              <button class="action-btn primary" @click="handleExportLogs">
+                导出 App 诊断日志
+              </button>
+            </div>
           </section>
 
           <section class="drawer-section">
@@ -309,7 +314,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { changePassword, logout as apiLogout } from '../api/user'
-import { isNativeApp } from '../utils/nativeBridge'
+import { isNativeApp, invokeSync } from '../utils/nativeBridge'
 
 const props = defineProps<{
   modelValue: boolean
@@ -498,6 +503,10 @@ function handleApplyUpdate() {
   if (!ok) {
     appStore.showToast('当前没有可应用的前端缓存更新', 'warning')
   }
+}
+
+function handleExportLogs() {
+  invokeSync('exportLogs')
 }
 
 function handleOpenRelease() {

@@ -68,7 +68,7 @@
           <button @click="$emit('preload-change', 1)">+</button>
         </div>
         <div class="tts-stepper">
-          <span class="tts-label">减少段落间隔</span>
+          <span class="tts-label">段落间隔</span>
           <button @click="$emit('gap-change', -0.1)">-</button>
           <span>{{ gapReduction.toFixed(1) }}s</span>
           <button @click="$emit('gap-change', 0.1)">+</button>

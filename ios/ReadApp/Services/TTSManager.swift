@@ -477,12 +477,16 @@ class TTSManager: NSObject, ObservableObject {
         cancelOverlap()
         let ttsId = UserPreferences.shared.selectedTTSId
         let gapReduction = UserPreferences.shared.getGapReduction(for: ttsId)
-        guard gapReduction > 0,
+        
+        // gapReduction < 0 表示需要提前交接（重叠播放）
+        let overlapTime = -gapReduction
+        
+        guard overlapTime > 0,
               let player = audioPlayer,
-              player.duration > gapReduction * 2 else { return }
+              player.duration > overlapTime * 2 else { return }
 
-        // 在音频结束前 gapReduction 秒触发下一段的播放
-        let fireDelay = player.duration - gapReduction
+        // 在音频结束前 overlapTime 秒触发下一段的播放
+        let fireDelay = player.duration - overlapTime
         logger.log("⏱️ 段落无缝交接将在 \(String(format: "%.2f", fireDelay))s 后触发（时长: \(String(format: "%.2f", player.duration))s）", category: "TTS")
         
         DispatchQueue.main.async { [weak self] in
@@ -506,7 +510,7 @@ class TTSManager: NSObject, ObservableObject {
                 self.speakNextSentence()
                 
                 // 等它自然播放完静音后停止并清理旧播放器
-                DispatchQueue.main.asyncAfter(deadline: .now() + gapReduction + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + overlapTime + 0.1) {
                     p.stop()
                     self.overlappingPlayers.removeAll { $0 === p }
                 }
@@ -1483,7 +1487,18 @@ extension TTSManager: AVAudioPlayerDelegate {
 
         // 播放下一句
         currentSentenceIndex += 1
-        speakNextSentence()
+        
+        let ttsId = UserPreferences.shared.selectedTTSId
+        let gapReduction = UserPreferences.shared.getGapReduction(for: ttsId)
+        
+        if gapReduction > 0 {
+            logger.log("⏱️ 延迟 \(gapReduction)s 后播放下一句", category: "TTS")
+            DispatchQueue.main.asyncAfter(deadline: .now() + gapReduction) { [weak self] in
+                self?.speakNextSentence()
+            }
+        } else {
+            speakNextSentence()
+        }
     }
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
