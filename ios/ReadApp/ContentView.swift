@@ -173,6 +173,7 @@ struct HybridWebView: UIViewRepresentable {
                     if let chaptersData = payload?["chapters"] as? [[String: Any]] {
                         for c in chaptersData {
                             if let name = (c["name"] as? String) ?? (c["title"] as? String),
+                               let url = c["url"] as? String,
                                let idx = (c["index"] as? Int) ?? (c["index"] as? Double).map({ Int($0) }) {
                                 parsedChapters.append(BookChapter(title: name, url: url, index: idx, isVolume: nil, isPay: nil))
                             }
