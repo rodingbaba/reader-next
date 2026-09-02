@@ -1363,7 +1363,7 @@ export const useReaderStore = defineStore('reader', () => {
     if (!rawText) return
 
     if (invokeTTS('play', {
-      text: Array.from(document.querySelectorAll('.reader-content p')).map(p => (p as HTMLElement).innerText.replace(/\n/g, ' ').trim()).join('\n'),
+      text: Array.from(document.querySelectorAll('.chapter-text p')).map(p => (p as HTMLElement).innerText.replace(/\n/g, ' ').trim()).join('\n'),
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
