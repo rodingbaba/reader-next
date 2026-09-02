@@ -1676,6 +1676,7 @@ function formatChapterHtml(rawText: string) {
     wrapper.innerHTML = text
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
+      let logicalIndex = 0
       paragraphs.forEach((paragraph) => {
         const plainText = (paragraph.textContent || '').replace(/^[\u3000\u00A0 \t]+/, '').trim()
         if (!plainText) {
@@ -1686,6 +1687,7 @@ function formatChapterHtml(rawText: string) {
         paragraph.style.marginTop = '0'
         paragraph.style.marginBottom = `${config.value.paragraphSpacing}em`
         paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
+        paragraph.setAttribute('data-original-index', String(logicalIndex++))
       })
       return wrapper.innerHTML
     }
