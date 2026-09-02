@@ -615,10 +615,9 @@ class TTSManager: NSObject, ObservableObject {
         // 先过滤SVG和HTML标签
         let filtered = removeSVGTags(text)
         
-        // 按换行符分割，保持原文分段
+        // 按换行符分割，保持原文分段，并且不随意丢弃空段落，以保证和前端的 DOM 索引强对齐
         let paragraphs = filtered.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }  // 移除每段的前后空白
-            .filter { !$0.isEmpty }  // 过滤空段落
         
         return paragraphs
     }
@@ -1303,7 +1302,6 @@ class TTSManager: NSObject, ObservableObject {
         currentPlayToken = UUID()  // 作废任何正在进行的下载 Task
         isPlaying = false
         isPaused = false
-        currentSentenceIndex = 0
         sentences = []
         isLoading = false
         // 清理缓存
