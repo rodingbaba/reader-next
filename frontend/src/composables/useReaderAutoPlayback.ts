@@ -753,7 +753,20 @@ export function useReaderAutoPlayback(
     if (els.length > 0) {
       clearReadingClass()
       els.forEach(el => el.classList.add('reading'))
-      showParagraph(els[0])
+      
+      let targetEl = els[0]
+      if (isHorizontalPageMode.value && chapterTextRef.value) {
+        const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page'))
+        const currentPageEl = pages[horizontalPageIndex.value]
+        if (currentPageEl) {
+          const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
+          if (elOnCurrentPage) {
+            targetEl = elOnCurrentPage
+          }
+        }
+      }
+      
+      showParagraph(targetEl)
     }
   }
 
