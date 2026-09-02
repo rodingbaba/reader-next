@@ -154,38 +154,47 @@ struct HybridWebView: UIViewRepresentable {
         
         private func handleTTSControl(action: String, payload: [String: Any]?) {
             DispatchQueue.main.async {
+                LogManager.shared.log("接收到 TTS 控制指令: action=\(action), payload=\(String(describing: payload))", category: "Hybrid")
                 switch action {
                 case "play":
-                    if let text = payload?["text"] as? String,
-                       let currentIndex = payload?["currentIndex"] as? Int,
-                       let bookUrl = payload?["bookUrl"] as? String,
-                       let bookTitle = payload?["bookTitle"] as? String {
-                        var parsedChapters = [BookChapter]()
-                        if let chaptersData = payload?["chapters"] as? [[String: Any]] {
-                            for c in chaptersData {
-                                if let name = c["name"] as? String,
-                                   let url = c["url"] as? String,
-                                   let idx = c["index"] as? Int {
-                                    parsedChapters.append(BookChapter(title: name, url: url, index: idx, isVolume: nil, isPay: nil))
-                                }
+                    let text = payload?["text"] as? String
+                    let currentIndex = (payload?["currentIndex"] as? Int) ?? (payload?["currentIndex"] as? Double).map { Int($0) }
+                    let bookUrl = payload?["bookUrl"] as? String
+                    let bookTitle = payload?["bookTitle"] as? String ?? "未知书名"
+                    
+                    guard let validText = text,
+                          let validIndex = currentIndex,
+                          let validBookUrl = bookUrl else {
+                        LogManager.shared.log("❌ 朗读功能启动失败：缺少必要参数。text=\(text != nil), index=\(currentIndex != nil), bookUrl=\(bookUrl != nil)", category: "TTS错误")
+                        return
+                    }
+                    
+                    var parsedChapters = [BookChapter]()
+                    if let chaptersData = payload?["chapters"] as? [[String: Any]] {
+                        for c in chaptersData {
+                            if let name = c["name"] as? String,
+                               let url = c["url"] as? String,
+                               let idx = (c["index"] as? Int) ?? (c["index"] as? Double).map({ Int($0) }) {
+                                parsedChapters.append(BookChapter(title: name, url: url, index: idx, isVolume: nil, isPay: nil))
                             }
                         }
-                        TTSManager.shared.startReading(
-                            text: text,
-                            chapters: parsedChapters,
-                            currentIndex: currentIndex,
-                            bookUrl: bookUrl,
-                            bookSourceUrl: payload?["bookSourceUrl"] as? String,
-                            bookTitle: bookTitle,
-                            coverUrl: payload?["coverUrl"] as? String,
-                            onChapterChange: { [weak self] newChapterIndex in
-                                DispatchQueue.main.async {
-                                    self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSChapterChange && window.__nativeBridgeTTSChapterChange(\(newChapterIndex))")
-                                }
-                            }
-                        )
-                        LogManager.shared.log("JS Bridge Play TTS Started", category: "Hybrid")
                     }
+                    
+                    TTSManager.shared.startReading(
+                        text: validText,
+                        chapters: parsedChapters,
+                        currentIndex: validIndex,
+                        bookUrl: validBookUrl,
+                        bookSourceUrl: payload?["bookSourceUrl"] as? String,
+                        bookTitle: bookTitle,
+                        coverUrl: payload?["coverUrl"] as? String,
+                        onChapterChange: { [weak self] newChapterIndex in
+                            DispatchQueue.main.async {
+                                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSChapterChange && window.__nativeBridgeTTSChapterChange(\(newChapterIndex))")
+                            }
+                        }
+                    )
+                    LogManager.shared.log("✅ JS Bridge Play TTS Started", category: "Hybrid")
                 case "pause":
                     TTSManager.shared.pause()
                 case "resume":
@@ -221,11 +230,21 @@ struct HybridWebView: UIViewRepresentable {
         }
         
         private func handleSyncControl(action: String, payload: [String: Any]?) {
-            if action == "saveProgress", let p = payload, let url = p["bookUrl"] as? String, let index = p["chapterIndex"] as? Int {
+            LogManager.shared.log("接收到 Sync 控制指令: action=\(action), payload=\(String(describing: payload))", category: "Hybrid")
+            if action == "saveProgress" {
+                guard let p = payload, let url = p["bookUrl"] as? String else {
+                    LogManager.shared.log("❌ 进度同步失败：缺少 bookUrl", category: "网络")
+                    return
+                }
+                guard let index = (p["chapterIndex"] as? Int) ?? (p["chapterIndex"] as? Double).map({ Int($0) }) else {
+                    LogManager.shared.log("❌ 进度同步失败：缺少或无效的 chapterIndex", category: "网络")
+                    return
+                }
                 let pos = p["chapterPos"] as? Double ?? p["position"] as? Double ?? 0
                 Task {
                     do {
                         try await APIService.shared.saveBookProgress(bookUrl: url, index: index, pos: pos, title: nil)
+                        LogManager.shared.log("✅ 进度同步成功", category: "网络")
                     } catch {
                         LogManager.shared.log("❌ 进度同步失败: \(error.localizedDescription)", category: "网络")
                     }

@@ -212,10 +212,8 @@
               <button class="action-btn primary" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
                 应用前端更新
               </button>
-            </div>
-            <div class="btn-group" v-if="isNativeApp()">
-              <button class="action-btn primary" @click="handleExportLogs">
-                导出 App 诊断日志
+              <button class="action-btn primary" v-if="isNativeApp()" @click="handleExportLogs">
+                导出 App 日志
               </button>
             </div>
           </section>

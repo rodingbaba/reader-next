@@ -737,11 +737,13 @@ class APIService: ObservableObject {
             }
         }
         
+        LogManager.shared.log("发起 TTS 请求: \(request.httpMethod ?? "GET") \(url.absoluteString)", category: "网络")
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "APIService", code: 500, userInfo: [NSLocalizedDescriptionKey: "无效的TTS响应"])
         }
+        LogManager.shared.log("TTS 请求响应，状态码: \(httpResponse.statusCode)", category: "网络")
         
         if !(200...299).contains(httpResponse.statusCode) {
             let errorText = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
