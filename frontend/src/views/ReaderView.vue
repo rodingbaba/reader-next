@@ -1165,6 +1165,8 @@ interface SavedReadingPosition {
   progress: number
   paragraphIndex?: number
   paragraphProgress?: number
+  originalIndex?: number
+  sliceIndex?: number
   updatedAt: number
 }
 
@@ -2012,7 +2014,7 @@ function loadSavedReadingPosition() {
   }
 }
 
-function saveReadingPosition(options: { force?: boolean } = {}) {
+function saveReadingPosition(options: { force?: boolean, oldMode?: string } = {}): SavedReadingPosition | null {
   const key = getPositionStorageKey()
   const container = scrollContainerRef.value
   const suppressed = !options.force && Date.now() < suppressPositionSaveUntil
@@ -2025,7 +2027,7 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
       suppressed,
       currentIndex: store.currentIndex,
     })
-    return
+    return null
   }
 
   const basePosition: SavedReadingPosition = {
@@ -2034,9 +2036,12 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
     updatedAt: Date.now(),
   }
 
-  const anchorRatio = isContinuousMode.value ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3
+  const isContinuous = options.oldMode ? options.oldMode === '连续滚动' : isContinuousMode.value
+  const isHorizontal = options.oldMode ? options.oldMode === '左右翻页' : isHorizontalPageMode.value
+
+  const anchorRatio = isContinuous ? CONTINUOUS_POSITION_ANCHOR_RATIO : 0.3
   const anchorViewportY = container.getBoundingClientRect().top + container.clientHeight * anchorRatio
-  if (isContinuousMode.value && continuousChapters.value.length) {
+  if (isContinuous && continuousChapters.value.length) {
     const section = container.querySelector(`.continuous-chapter[data-chapter-index="${store.currentIndex}"]`) as HTMLElement | null
     const paragraphs = Array.from(section?.querySelectorAll('.chapter-text p') || []) as HTMLElement[]
     if (paragraphs.length) {
@@ -2052,8 +2057,10 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
       const paragraphProgress = rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
       basePosition.paragraphIndex = paragraphIndex
       basePosition.paragraphProgress = paragraphProgress
+      const originalIndex = activeParagraph.getAttribute('data-original-index')
+      if (originalIndex !== null) basePosition.originalIndex = parseInt(originalIndex, 10)
     }
-  } else if (!isHorizontalPageMode.value) {
+  } else if (!isHorizontal) {
     const paragraphs = Array.from(chapterTextRef.value?.querySelectorAll('p') || []) as HTMLElement[]
     if (paragraphs.length) {
       let activeParagraph = paragraphs[0]
@@ -2068,11 +2075,35 @@ function saveReadingPosition(options: { force?: boolean } = {}) {
       const paragraphProgress = rect.height > 0 ? Math.max(0, Math.min(1, (anchorViewportY - rect.top) / rect.height)) : 0
       basePosition.paragraphIndex = paragraphIndex
       basePosition.paragraphProgress = paragraphProgress
+      const originalIndex = activeParagraph.getAttribute('data-original-index')
+      if (originalIndex !== null) basePosition.originalIndex = parseInt(originalIndex, 10)
+    }
+  } else {
+    const pages = Array.from(chapterTextRef.value?.querySelectorAll('.horizontal-page') || []) as HTMLElement[]
+    const currentPage = pages[horizontalPageIndex.value]
+    if (currentPage) {
+      const paragraphs = Array.from(currentPage.querySelectorAll('p')) as HTMLElement[]
+      if (paragraphs.length) {
+        const activeParagraph = paragraphs[0]
+        const originalIndex = activeParagraph.getAttribute('data-original-index')
+        if (originalIndex !== null) {
+          basePosition.originalIndex = parseInt(originalIndex, 10)
+          const allSlices = Array.from(chapterTextRef.value?.querySelectorAll(`p[data-original-index="${originalIndex}"]`) || [])
+          const sliceIndex = allSlices.indexOf(activeParagraph)
+          if (sliceIndex !== -1) {
+             basePosition.sliceIndex = sliceIndex
+             if (allSlices.length > 0) {
+               basePosition.paragraphProgress = sliceIndex / Math.max(1, allSlices.length - 1)
+             }
+          }
+        }
+      }
     }
   }
 
   localStorage.setItem(key, JSON.stringify(basePosition))
   debugPositionLog('saved position', { key, position: basePosition })
+  return basePosition
 }
 
 function scheduleSaveReadingPosition() {
@@ -2129,7 +2160,33 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       return false
     }
     const maxPage = Math.max(0, horizontalPages.value.length - 1)
-    horizontalPageIndex.value = Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0)))
+    let targetPageIndex = -1
+    if (saved.originalIndex !== undefined && chapterTextRef.value) {
+      const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page')) as HTMLElement[]
+      const matchingPages: number[] = []
+      pages.forEach((page, index) => {
+        if (page.querySelector(`p[data-original-index="${saved.originalIndex}"]`)) {
+          matchingPages.push(index)
+        }
+      })
+      if (matchingPages.length > 0) {
+        if (saved.sliceIndex !== undefined && saved.sliceIndex < matchingPages.length) {
+          targetPageIndex = matchingPages[saved.sliceIndex]
+        } else {
+          // If coming from vertical mode, map paragraphProgress to slice index
+          const progress = saved.paragraphProgress || 0
+          let sliceIdx = Math.round(progress * (matchingPages.length - 1))
+          // Clamp
+          sliceIdx = Math.max(0, Math.min(sliceIdx, matchingPages.length - 1))
+          targetPageIndex = matchingPages[sliceIdx]
+        }
+      }
+    }
+    if (targetPageIndex >= 0) {
+      horizontalPageIndex.value = targetPageIndex
+    } else {
+      horizontalPageIndex.value = Math.round(maxPage * Math.max(0, Math.min(1, saved.progress || 0)))
+    }
     updateHorizontalEndState()
     if (finalize) {
       pendingRestorePosition.value = null
@@ -2167,11 +2224,17 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       })
       return false
     }
-    if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top = paragraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    let targetParagraph: HTMLElement | null = null
+    if (saved.originalIndex !== undefined) {
+      targetParagraph = section.querySelector(`p[data-original-index="${saved.originalIndex}"]`) as HTMLElement | null
+    }
+    if (!targetParagraph && paragraphs.length && typeof saved.paragraphIndex === 'number') {
+      targetParagraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
+    }
+    if (targetParagraph) {
+      const top = targetParagraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
       const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
-      targetTop = Math.max(section.offsetTop, top + paragraph.offsetHeight * paragraphProgress - anchorOffset)
+      targetTop = Math.max(section.offsetTop, top + targetParagraph.offsetHeight * paragraphProgress - anchorOffset)
     } else {
       const nextSection = section.nextElementSibling as HTMLElement | null
       const sectionHeight = Math.max(1, (nextSection ? nextSection.offsetTop : container.scrollHeight) - section.offsetTop)
@@ -2204,11 +2267,17 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
       })
       return false
     }
-    if (paragraphs.length && typeof saved.paragraphIndex === 'number') {
-      const paragraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
-      const top = paragraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    let targetParagraph: HTMLElement | null = null
+    if (saved.originalIndex !== undefined && chapterTextRef.value) {
+      targetParagraph = chapterTextRef.value.querySelector(`p[data-original-index="${saved.originalIndex}"]`) as HTMLElement | null
+    }
+    if (!targetParagraph && paragraphs.length && typeof saved.paragraphIndex === 'number') {
+      targetParagraph = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, saved.paragraphIndex))]
+    }
+    if (targetParagraph) {
+      const top = targetParagraph.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
       const paragraphProgress = Math.max(0, Math.min(1, saved.paragraphProgress || 0))
-      targetTop = top + paragraph.offsetHeight * paragraphProgress - anchorOffset
+      targetTop = top + targetParagraph.offsetHeight * paragraphProgress - anchorOffset
     } else {
       const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight)
       if ((saved.progress || 0) > 0 && maxScroll <= 4) {
@@ -2691,11 +2760,17 @@ function toggleSpeechFromPanel() {
     return
   }
   cancelSpeechTransition()
+  if (typeof (window as any).saveTTSCursor === 'function') {
+    (window as any).saveTTSCursor()
+  }
   store.pauseTTS()
 }
 
 function handleStopTTS() {
   cancelSpeechTransition()
+  if (typeof (window as any).saveTTSCursor === 'function') {
+    (window as any).saveTTSCursor()
+  }
   store.stopTTS()
 }
 
@@ -2986,19 +3061,31 @@ watch(() => config.value.autoPageMode, () => {
   startAutoScroll()
 })
 
-watch(() => config.value.readMethod, async () => {
+watch(() => config.value.readMethod, async (_, oldVal) => {
+  // 必须在排版模式改变、DOM被销毁前，使用旧模式(oldVal)的逻辑保存当前的originalIndex
+  const savedPos = saveReadingPosition({ force: true, oldMode: oldVal })
+  if (savedPos) {
+    pendingRestorePosition.value = savedPos
+    pendingRestoreAttempts = 0
+  } else {
+    loadSavedReadingPosition()
+  }
+  
   clearSelectionState()
+  
+  // 平滑过渡：如果在听书，固化游标并暂停，而不是清空
+  if (store.isSpeaking || store.isSpeechTransitioning) {
+    if (typeof (window as any).saveTTSCursor === 'function') {
+      (window as any).saveTTSCursor()
+    }
+    store.pauseTTS()
+  }
+
   if (isContinuousMode.value) {
     await initializeContinuousChapters(store.currentIndex, false)
   } else {
     clearContinuousChapters()
     await nextTick()
-    if (scrollContainerRef.value) {
-      scrollContainerRef.value.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-    }
-  }
-  if (isHorizontalPageMode.value && scrollContainerRef.value) {
-    resetHorizontalPagePosition()
   }
   await rebuildHorizontalPages()
   updateHorizontalEndState()

@@ -101,7 +101,43 @@ export function useReaderAutoPlayback(
     return list
   }
 
-  function getCurrentParagraph() {
+  
+  interface TTSCursor {
+    bookUrl: string
+    chapterIndex: number
+    originalIndex: number
+    sliceIndex: number
+    timestamp: number
+  }
+
+  function getStoredTTSCursor(): TTSCursor | null {
+    if (!store.book) return null
+    try {
+      const raw = localStorage.getItem(`tts_cursor_${store.book.bookUrl}`)
+      if (raw) return JSON.parse(raw) as TTSCursor
+    } catch {}
+    return null
+  }
+
+  function saveTTSCursor(paragraph?: HTMLElement | null) {
+    if (!store.book) return
+    const current = paragraph || chapterTextRef.value?.querySelector('.reading') as HTMLElement || resolvePlaybackTarget()
+    if (!current) return
+    const originalIndex = current.getAttribute('data-original-index')
+    if (originalIndex === null) return
+    const cursor: TTSCursor = {
+      bookUrl: store.book.bookUrl,
+      chapterIndex: store.currentIndex,
+      originalIndex: parseInt(originalIndex, 10),
+      sliceIndex: parseInt(current.getAttribute('data-slice-index') || '0', 10),
+      timestamp: Date.now()
+    }
+    localStorage.setItem(`tts_cursor_${store.book.bookUrl}`, JSON.stringify(cursor))
+  }
+  
+  ;(window as any).saveTTSCursor = () => saveTTSCursor()
+
+  function resolvePlaybackTarget(): HTMLElement | null {
     const reading = chapterTextRef.value?.querySelector('.reading') as HTMLElement | null
     if (reading) return reading
 
@@ -109,6 +145,28 @@ export function useReaderAutoPlayback(
     if (!container) return null
 
     const list = isHorizontalPageMode.value ? getFilteredParagraphs() : getAllParagraphs()
+
+    const cursor = getStoredTTSCursor()
+    if (cursor && cursor.chapterIndex === store.currentIndex) {
+      const targetInCursor = list.find(el => {
+        const oIdx = el.getAttribute('data-original-index')
+        const sIdx = el.getAttribute('data-slice-index') || '0'
+        return oIdx === String(cursor.originalIndex) && sIdx === String(cursor.sliceIndex)
+      }) || list.find(el => el.getAttribute('data-original-index') === String(cursor.originalIndex))
+      
+      if (targetInCursor) {
+        if (isHorizontalPageMode.value) {
+          return targetInCursor
+        } else {
+          const top = targetInCursor.offsetTop - container.scrollTop
+          const bottom = top + targetInCursor.offsetHeight
+          if (bottom > -container.clientHeight && top < container.clientHeight * 2) {
+            return targetInCursor
+          }
+        }
+      }
+    }
+
     for (const paragraph of list) {
       const top = paragraph.offsetTop - container.scrollTop
       const bottom = top + paragraph.offsetHeight
@@ -162,7 +220,7 @@ export function useReaderAutoPlayback(
   }
 
   function getNextParagraph() {
-    const current = getCurrentParagraph()
+    const current = resolvePlaybackTarget()
     return getNextParagraphFrom(current)
   }
 
@@ -411,7 +469,7 @@ export function useReaderAutoPlayback(
     autoReadingProcessing = true
 
     if (autoReadingParagraphIndex < 0) {
-      const current = getCurrentParagraph()
+      const current = resolvePlaybackTarget()
       autoReadingParagraphIndex = current ? Math.max(0, list.indexOf(current)) : 0
     }
 
@@ -570,7 +628,7 @@ export function useReaderAutoPlayback(
   }
 
   function startSpeech(paragraph?: HTMLElement | null, interruptCurrent = true) {
-    const current = paragraph || getCurrentParagraph()
+    const current = paragraph || resolvePlaybackTarget()
     logSpeech('startSpeech', {
       interruptCurrent,
       paragraph: paragraphPreview(current),
@@ -651,11 +709,11 @@ export function useReaderAutoPlayback(
 
   function speechPrev() {
     logSpeech('speechPrev', {
-      currentParagraph: paragraphPreview(getCurrentParagraph()),
+      currentParagraph: paragraphPreview(resolvePlaybackTarget()),
       hasPrevChapter: store.hasPrev,
     })
     resetSpeechChunkState()
-    const prev = getPrevLogicalParagraphFrom(getCurrentParagraph())
+    const prev = getPrevLogicalParagraphFrom(resolvePlaybackTarget())
     if (prev) {
       restartSpeechTarget(prev)
       return
@@ -677,11 +735,11 @@ export function useReaderAutoPlayback(
     logSpeech('speechNext', {
       interruptCurrent,
       forcedNext: paragraphPreview(forcedNext || null),
-      currentParagraph: paragraphPreview(getCurrentParagraph()),
+      currentParagraph: paragraphPreview(resolvePlaybackTarget()),
       hasNextChapter: store.hasNext,
     })
     resetSpeechChunkState()
-    const next = forcedNext ?? getNextLogicalParagraphFrom(getCurrentParagraph())
+    const next = forcedNext ?? getNextLogicalParagraphFrom(resolvePlaybackTarget())
     if (next) {
       restartSpeechTarget(next, interruptCurrent)
       return
@@ -702,8 +760,9 @@ export function useReaderAutoPlayback(
   }
 
   function restartSpeechFromCurrentParagraph() {
+    const lockedTarget = currentSpeechParagraph || resolvePlaybackTarget()
     logSpeech('restartSpeechFromCurrentParagraph', {
-      currentParagraph: paragraphPreview(getCurrentParagraph()),
+      currentParagraph: paragraphPreview(lockedTarget),
       isSpeechTransitioning: store.isSpeechTransitioning,
     })
     if (store.isSpeechTransitioning) return
@@ -719,7 +778,7 @@ export function useReaderAutoPlayback(
         return
       }
 
-      startSpeech()
+      startSpeech(lockedTarget)
     }, 150)
   }
 
@@ -800,7 +859,9 @@ export function useReaderAutoPlayback(
   }
 
   return {
-    getCurrentParagraph,
+    resolvePlaybackTarget,
+    getStoredTTSCursor,
+    saveTTSCursor,
     clearReadingClass,
     syncNativeTTSProgress,
     startAutoScroll,
