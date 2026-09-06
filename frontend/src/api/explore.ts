@@ -13,7 +13,7 @@ export interface ExploreBookParams {
  * 对应后端 /reader3/exploreBook 接口
  */
 export function exploreBook(params: ExploreBookParams) {
-  return http.post<SearchBook[]>('/exploreBook', params).then((r) => r.data)
+  return http.post<SearchBook[]>('exploreBook', params).then((r) => r.data)
 }
 
 export interface ExploreBookGlobalResult {
@@ -30,11 +30,11 @@ export function exploreBookGlobal(params: {
   scanLimit?: number
   concurrentCount?: number
 }) {
-  return http.post<ExploreBookGlobalResult>('/exploreBookGlobal', params).then((r) => r.data)
+  return http.post<ExploreBookGlobalResult>('exploreBookGlobal', params).then((r) => r.data)
 }
 
 export function getExploreKinds(params: { bookSourceUrl: string }) {
-  return http.post<{ title?: unknown; url?: unknown }[]>('/getExploreKinds', params).then((r) =>
+  return http.post<{ title?: unknown; url?: unknown }[]>('getExploreKinds', params).then((r) =>
     r.data
       .map(
         (item): ExploreCategory => ({

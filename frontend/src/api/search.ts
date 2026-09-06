@@ -8,7 +8,7 @@ export function searchBookMulti(params: {
   bookSourceGroup?: string
   bookSourceUrl?: string
 }) {
-  return http.post<SearchBook[]>('/searchBookMulti', params).then((r) => r.data)
+  return http.post<SearchBook[]>('searchBookMulti', params).then((r) => r.data)
 }
 
 /**
@@ -39,7 +39,7 @@ export function exploreBook(params: {
   bookSourceUrl: string
   page?: number
 }) {
-  return http.post<SearchBook[]>('/exploreBook', params).then((r) => r.data)
+  return http.post<SearchBook[]>('exploreBook', params).then((r) => r.data)
 }
 
 export function getAvailableBookSource(params: {

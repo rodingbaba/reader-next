@@ -705,7 +705,10 @@ class APIService: ObservableObject {
     
     // MARK: - 获取 TTS 音频数据
     func fetchTTSAudioData(ttsId: String, text: String, speechRate: Double, timeoutInterval: TimeInterval = 20) async throws -> Data {
-        let ttsList = try await fetchTTSList()
+        var ttsList = try await fetchTTSList()
+        if !ttsList.contains(where: { $0.id == ttsId }) {
+            ttsList = try await fetchTTSList(forceRefresh: true)
+        }
         guard let tts = ttsList.first(where: { $0.id == ttsId }) else {
             throw NSError(domain: "APIService", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到指定的TTS引擎配置"])
         }

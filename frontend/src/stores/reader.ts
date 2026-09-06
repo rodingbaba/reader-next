@@ -1432,7 +1432,9 @@ export const useReaderStore = defineStore('reader', () => {
       chapters: chapters.value,
       currentIndex: currentIndex.value,
       startIndex: options.startIndex,
-      startSliceIndex: options.startSliceIndex
+      startSliceIndex: options.startSliceIndex,
+      speakerId: speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : undefined,
+      speechRate: speechConfig.speechRate
     })) {
       isSpeaking.value = true
       isPaused.value = false

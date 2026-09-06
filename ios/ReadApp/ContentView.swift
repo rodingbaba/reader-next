@@ -188,6 +188,15 @@ struct HybridWebView: UIViewRepresentable {
                     }
                     
                     
+                    if let sId = payload?["speakerId"] as? String {
+                        UserPreferences.shared.selectedTTSId = sId
+                    } else if let sId = payload?["speakerId"] as? Int {
+                        UserPreferences.shared.selectedTTSId = String(sId)
+                    }
+                    if let rate = payload?["speechRate"] as? Double {
+                        UserPreferences.shared.setSpeechRate(rate, for: UserPreferences.shared.selectedTTSId)
+                    }
+
                     TTSManager.shared.startReading(
                         sentencesData: payload?["sentences"] as? [[String: Any]],
                         text: validText,

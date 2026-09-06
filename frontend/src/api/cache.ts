@@ -27,5 +27,5 @@ export function cacheBookSSE(params: {
  * Delete all content cache for a book
  */
 export function deleteBookCache(bookUrl: string) {
-  return http.post('/deleteBookCache', { bookUrl }).then((r) => r.data)
+  return http.post('deleteBookCache', { bookUrl }).then((r) => r.data)
 }

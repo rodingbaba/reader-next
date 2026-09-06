@@ -3,29 +3,29 @@ import http from './http'
 import type { Book, BookChapter, BookGroup } from '../types'
 
 export function getBookshelf() {
-  return http.get<Book[]>('/getBookshelf').then((r) => r.data)
+  return http.get<Book[]>('getBookshelf').then((r) => r.data)
 }
 
 export function getBookshelfWithCacheInfo() {
-  return http.get<Book[]>('/getShelfBookWithCacheInfo').then((r) => r.data)
+  return http.get<Book[]>('getShelfBookWithCacheInfo').then((r) => r.data)
 }
 
 export function getShelfBook(url: string) {
-  return http.post<Book>('/getShelfBook', { url }).then((r) => r.data)
+  return http.post<Book>('getShelfBook', { url }).then((r) => r.data)
 }
 
 export function saveBook(book: Partial<Book>) {
-  return http.post<Book>('/saveBook', book).then((r) => r.data)
+  return http.post<Book>('saveBook', book).then((r) => r.data)
 }
 
 export function saveBooks(books: Partial<Book>[]) {
-  return http.post<Book[]>('/saveBooks', books).then((r) => r.data)
+  return http.post<Book[]>('saveBooks', books).then((r) => r.data)
 }
 
 export function uploadTxtBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadTxtBook', formData, {
+  return http.post<Book>('uploadTxtBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then((r) => r.data)
 }
@@ -33,7 +33,7 @@ export function uploadTxtBook(file: File) {
 export function uploadEpubBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadEpubBook', formData, {
+  return http.post<Book>('uploadEpubBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then((r) => r.data)
 }
@@ -41,7 +41,7 @@ export function uploadEpubBook(file: File) {
 export function uploadPdfBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadPdfBook', formData, {
+  return http.post<Book>('uploadPdfBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then((r) => r.data)
 }
@@ -49,21 +49,21 @@ export function uploadPdfBook(file: File) {
 export function uploadMobiBook(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return http.post<Book>('/uploadMobiBook', formData, {
+  return http.post<Book>('uploadMobiBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then((r) => r.data)
 }
 
 export function deleteBook(book: Partial<Book>, keepFiles = false) {
-  return http.post<string>(`/deleteBook${keepFiles ? '?keep_files=true' : ''}`, book).then((r) => r.data)
+  return http.post<string>(`deleteBook${keepFiles ? '?keep_files=true' : ''}`, book).then((r) => r.data)
 }
 
 export function deleteBooks(books: Partial<Book>[], keepFiles = false) {
-  return http.post<{ deleted: number }>(`/deleteBooks${keepFiles ? '?keep_files=true' : ''}`, books).then((r) => r.data)
+  return http.post<{ deleted: number }>(`deleteBooks${keepFiles ? '?keep_files=true' : ''}`, books).then((r) => r.data)
 }
 
 export function getBookInfo(url: string, origin?: string) {
-  return http.post<Book>('/getBookInfo', { url, bookSourceUrl: origin }).then((r) => r.data)
+  return http.post<Book>('getBookInfo', { url, bookSourceUrl: origin }).then((r) => r.data)
 }
 
 export function getChapterList(params: {
@@ -72,7 +72,7 @@ export function getChapterList(params: {
   bookSourceUrl?: string
   refresh?: number
 }) {
-  return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
+  return http.post<BookChapter[]>('getChapterList', params).then((r) => r.data)
 }
 
 export async function getBookContent(params: {
@@ -89,7 +89,7 @@ export async function getBookContent(params: {
       console.error('Native getCache error', e)
     }
   }
-  return http.post<string>('/getBookContent', params).then((r) => r.data)
+  return http.post<string>('getBookContent', params).then((r) => r.data)
 }
 
 export async function saveBookProgress(params: {
@@ -108,28 +108,28 @@ export async function saveBookProgress(params: {
     invokeSync('saveProgress', payload)
     return ""
   }
-  return http.post<string>('/saveBookProgress', params).then((r) => r.data)
+  return http.post<string>('saveBookProgress', params).then((r) => r.data)
 }
 
 export function deleteBookCache(bookUrl: string) {
-  return http.post('/deleteBookCache', { bookUrl }).then((r) => r.data)
+  return http.post('deleteBookCache', { bookUrl }).then((r) => r.data)
 }
 
 // ─── Groups ───
 export function getBookGroups() {
-  return http.get<BookGroup[]>('/getBookGroups').then((r) => r.data)
+  return http.get<BookGroup[]>('getBookGroups').then((r) => r.data)
 }
 
 export function saveBookGroup(group: BookGroup) {
-  return http.post<string>('/saveBookGroup', group).then((r) => r.data)
+  return http.post<string>('saveBookGroup', group).then((r) => r.data)
 }
 
 export function deleteBookGroup(groupId: number) {
-  return http.post<string>('/deleteBookGroup', { groupId }).then((r) => r.data)
+  return http.post<string>('deleteBookGroup', { groupId }).then((r) => r.data)
 }
 
 export function saveBookGroupId(bookUrl: string, groupId: number) {
-  return http.post<string>('/saveBookGroupId', { bookUrl, groupId }).then((r) => r.data)
+  return http.post<string>('saveBookGroupId', { bookUrl, groupId }).then((r) => r.data)
 }
 
 export function setBookSource(params: {
@@ -137,7 +137,7 @@ export function setBookSource(params: {
   newUrl: string
   bookSourceUrl: string
 }) {
-  return http.post<Book>('/setBookSource', params).then((r) => r.data)
+  return http.post<Book>('setBookSource', params).then((r) => r.data)
 }
 
 // ─── Cover helper ───
