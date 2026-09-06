@@ -702,6 +702,8 @@ class TTSManager: NSObject, ObservableObject {
         
         // 按换行符分割，保持原文分段，并且严格过滤掉空段落，以保证和前端过滤后的 DOM logicalIndex 强对齐
         let paragraphs = filtered.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         
         return paragraphs
     }
