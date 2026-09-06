@@ -406,10 +406,6 @@ class TTSManager: NSObject, ObservableObject {
         preloadedNextChapterIndex = nil
         nextChapterPreloadToken = UUID()
         
-        // 分句
-        sentences = splitTextIntoSentences(text)
-        totalSentences = sentences.count
-        
         // 尝试恢复进度
         if let explicitStartIndex = startIndex, explicitStartIndex >= 0 && explicitStartIndex < sentences.count {
             currentSentenceIndex = explicitStartIndex
@@ -723,7 +719,7 @@ class TTSManager: NSObject, ObservableObject {
         }
         
         // 跳过纯标点或空白
-        if isPunctuationOnly(sentence.text) {
+        if isPunctuationOnly(sentence) {
             logger.log("⏭️ 跳过纯标点/空白段落 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
             currentSentenceIndex += 1
             speakNextSentence()
@@ -744,10 +740,10 @@ class TTSManager: NSObject, ObservableObject {
         let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         
         logger.log("朗读句子 \(currentSentenceIndex + 1)/\(totalSentences) - 语速: \(speechRate)", category: "TTS")
-        logger.log("句子内容: \(sentence.text.prefix(50))...", category: "TTS")
+        logger.log("句子内容: \(sentence.prefix(50))...", category: "TTS")
         
         // 播放音频
-        playAudio(text: sentence.text, ttsId: ttsId, speechRate: speechRate)
+        playAudio(text: sentence, ttsId: ttsId, speechRate: speechRate)
         
         // 更新锁屏信息
         if currentChapterIndex < chapters.count {
