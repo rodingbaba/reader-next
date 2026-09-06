@@ -1551,6 +1551,12 @@ export const useReaderStore = defineStore('reader', () => {
   /* ─── Book / chapter ops ─── */
   async function loadBook(b: Book) {
     loading.value = true
+    
+    // 同步占位，防止路由跳转后 ReaderView.vue onMounted 认为没书而触发 restorePersistedSession 导致新老书串台
+    book.value = b
+    chapters.value = []
+    content.value = ''
+    
     const latestBook = await resolveLatestShelfBook(b)
     book.value = latestBook
     appStore.markBookOpened(latestBook.bookUrl)
