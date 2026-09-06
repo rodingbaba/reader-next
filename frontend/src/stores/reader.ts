@@ -1363,6 +1363,7 @@ export const useReaderStore = defineStore('reader', () => {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
 
+    let finalSentences: any[] = []
     if (invokeTTS('play', {
       sentences: (() => {
         const sentences: {
@@ -1371,14 +1372,20 @@ export const useReaderStore = defineStore('reader', () => {
           slices: { sliceIndex: number; charStart: number; charLength: number }[];
         }[] = [];
         let currentSentence: typeof sentences[0] | null = null;
+        
+        let rootSelector = '.chapter-text'
+        if (config.readMethod === '上下滚动' || config.readMethod === '上下滚动2') {
+          rootSelector = `.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`
+        }
+        const root = document.querySelector(rootSelector)
+        if (!root) return []
 
-        document.querySelectorAll('.chapter-text p').forEach(p => {
+        root.querySelectorAll('p').forEach(p => {
           const idx = p.getAttribute('data-original-index');
           if (idx === null) return;
           const originalIndex = parseInt(idx, 10);
 
           const t = (p as HTMLElement).innerText.replace(/\n/g, ' ').trim();
-          // Plan v1.1: Web 权威单向清洗，统一完成标点清洗与空段剔除
           if (!t) return;
 
           const sliceIdxStr = p.getAttribute('data-slice-index');
@@ -1406,10 +1413,10 @@ export const useReaderStore = defineStore('reader', () => {
           }
         });
 
-        // Plan v1.1: Web 权威单向清洗, filter pure symbol sentences
-        return sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
+        finalSentences = sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
+        return finalSentences;
       })(),
-      text: rawText, // Keep fallback for older Native implementations
+      text: finalSentences.length > 0 ? finalSentences.map(s => s.text).join('\n') : rawText,
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
