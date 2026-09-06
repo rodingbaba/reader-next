@@ -850,67 +850,68 @@ export function useReaderAutoPlayback(
             if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
               setHorizontalPageIndex(targetPage)
             }
-          } else {
-            // Fallback logic if no sliceIndex provided
-            const currentPageEl = pages[horizontalPageIndex.value]
-            if (currentPageEl) {
-              const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
-              if (elOnCurrentPage) {
-                targetEl = elOnCurrentPage
-              }
+          }
+        } else {
+          // Fallback logic if no sliceIndex provided
+          const currentPageEl = pages[horizontalPageIndex.value]
+          if (currentPageEl) {
+            const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
+            if (elOnCurrentPage) {
+              targetEl = elOnCurrentPage
             }
           }
         }
-
-        showParagraph(targetEl)
       }
-    }
-
-    function handleContentChanged() {
-      autoReadingParagraphIndex = -1
-
-      if (store.isSpeaking && lastNativeTTSIndex >= 0) {
-        window.setTimeout(() => {
-          if (store.isSpeaking && lastNativeTTSIndex >= 0) {
-            syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex)
-          }
-        }, 200)
-      }
-
-      if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
-        if (autoParagraphTimer) {
-          clearTimeout(autoParagraphTimer)
-          autoParagraphTimer = null
-        }
-        window.setTimeout(() => {
-          if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
-            runAutoParagraph()
-          }
-        }, 100)
-      }
-    }
-
-    function disposeAutoPlayback() {
-      cancelSpeechTransition()
-      stopAutoScroll()
-    }
-
-    return {
-      resolvePlaybackTarget,
-      getStoredTTSCursor,
-      saveTTSCursor,
-      clearReadingClass,
-      syncNativeTTSProgress,
-      setChapterLayoutReady,
-      startAutoScroll,
-      stopAutoScroll,
-      startSpeech,
-      speechPrev,
-      speechNext,
-      restartSpeechFromCurrentParagraph,
-      cancelSpeechTransition,
-      resetAutoParagraphIndex,
-      handleContentChanged,
-      disposeAutoPlayback,
+      
+      showParagraph(targetEl)
     }
   }
+
+  function handleContentChanged() {
+    autoReadingParagraphIndex = -1
+
+    if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+      window.setTimeout(() => {
+        if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+          syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex)
+        }
+      }, 200)
+    }
+
+    if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
+      if (autoParagraphTimer) {
+        clearTimeout(autoParagraphTimer)
+        autoParagraphTimer = null
+      }
+      window.setTimeout(() => {
+        if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
+          runAutoParagraph()
+        }
+      }, 100)
+    }
+  }
+
+  function disposeAutoPlayback() {
+    cancelSpeechTransition()
+    stopAutoScroll()
+  }
+
+  return {
+    resolvePlaybackTarget,
+    getStoredTTSCursor,
+    saveTTSCursor,
+    clearReadingClass,
+    syncNativeTTSProgress,
+    setChapterLayoutReady,
+    startAutoScroll,
+    stopAutoScroll,
+    startSpeech,
+    speechPrev,
+    speechNext,
+    restartSpeechFromCurrentParagraph,
+    cancelSpeechTransition,
+    resetAutoParagraphIndex,
+    handleContentChanged,
+    disposeAutoPlayback,
+  }
+}
