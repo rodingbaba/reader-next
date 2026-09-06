@@ -743,7 +743,9 @@ class APIService: ObservableObject {
             }
         }
         
-        LogManager.shared.log("发起 TTS 请求: \(request.httpMethod ?? "GET") \(url.absoluteString)", category: "网络")
+                let urlString = url.absoluteString
+        let truncatedUrl = urlString.count > 150 ? String(urlString.prefix(150)) + "... (截断)" : urlString
+        LogManager.shared.log("发起 TTS 请求: \(request.httpMethod ?? "GET") \(truncatedUrl)", category: "网络")
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
