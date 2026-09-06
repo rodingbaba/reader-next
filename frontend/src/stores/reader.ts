@@ -1372,7 +1372,7 @@ export const useReaderStore = defineStore('reader', () => {
           slices: { sliceIndex: number; charStart: number; charLength: number }[];
         }[] = [];
         let currentSentence: typeof sentences[0] | null = null;
-        
+
         let paragraphs: Element[] = []
         if (config.readMethod === '上下滚动' || config.readMethod === '上下滚动2') {
           const root = document.querySelector(`.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`)
@@ -1553,8 +1553,6 @@ export const useReaderStore = defineStore('reader', () => {
     loading.value = true
     const latestBook = await resolveLatestShelfBook(b)
     book.value = latestBook
-    chapters.value = []
-    content.value = ''
     appStore.markBookOpened(latestBook.bookUrl)
     currentIndex.value = latestBook.durChapterIndex || 0
     chapterScrollProgress.value = 0
