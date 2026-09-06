@@ -60,9 +60,14 @@
                 </div>
               </div>
             </div>
-            <button v-else class="action-btn primary full" @click="handleLogin">
-              &#30331;&#24405; / &#27880;&#20876;
-            </button>
+            <div v-else class="user-login-actions">
+              <button class="action-btn primary full" @click="handleLogin">
+                &#30331;&#24405; / &#27880;&#20876;
+              </button>
+              <button v-if="isNative" class="action-btn full" @click="handleModifyServer" style="margin-top: 12px; font-size: 0.85rem; opacity: 0.7;">
+                修改服务器地址
+              </button>
+            </div>
           </section>
 
           <section v-if="appStore.isSecureMode" class="drawer-section">
@@ -396,6 +401,11 @@ function close() {
 function handleLogin() {
   close()
   appStore.showLoginModal = true
+}
+
+function handleModifyServer() {
+  close()
+  appStore.showServerConfigModal = true
 }
 
 async function handleLogout() {

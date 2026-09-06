@@ -69,6 +69,11 @@
               {{ isLogin ? '注册' : '登录' }}
             </a>
           </p>
+          <p v-if="isNative" class="switch-mode" style="margin-top: 0.2rem;">
+            <a href="#" @click.prevent="openServerConfig" style="color: var(--text-muted); text-decoration: underline;">
+              修改服务器地址
+            </a>
+          </p>
         </div>
       </div>
     </Transition>
@@ -79,6 +84,7 @@
 import { ref, reactive } from 'vue'
 import { login, register } from '../api/user'
 import { useAppStore } from '../stores/app'
+import { isNativeApp } from '../utils/nativeBridge'
 import { useBookshelfStore } from '../stores/bookshelf'
 
 defineProps<{
@@ -90,6 +96,12 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const isNative = isNativeApp()
+
+function openServerConfig() {
+  emit('update:modelValue', false)
+  appStore.showServerConfigModal = true
+}
 const shelfStore = useBookshelfStore()
 
 const isLogin = ref(true)
