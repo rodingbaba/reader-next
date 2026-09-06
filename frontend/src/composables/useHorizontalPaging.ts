@@ -105,15 +105,17 @@ export function useHorizontalPaging(
       style: paragraph.getAttribute('style') || '',
       className: paragraph.getAttribute('class') || '',
       originalIndex: paragraph.getAttribute('data-original-index') || '',
+      sliceIndex: parseInt(paragraph.getAttribute('data-slice-index') || '0', 10),
       text: (paragraph.textContent || '').trimEnd(),
     }
   }
 
-  function buildParagraphHtml(style: string, text: string, className = '', originalIndex = '') {
+  function buildParagraphHtml(style: string, text: string, className = '', originalIndex = '', sliceIndex = 0) {
     const stylePart = style ? ` style="${style}"` : ''
     const classPart = className ? ` class="${className}"` : ''
     const indexPart = originalIndex ? ` data-original-index="${originalIndex}"` : ''
-    return `<p${classPart}${stylePart}${indexPart}>${escapeHtml(text)}</p>`
+    const slicePart = sliceIndex > 0 ? ` data-slice-index="${sliceIndex}"` : ''
+    return `<p${classPart}${stylePart}${indexPart}${slicePart}>${escapeHtml(text)}</p>`
   }
 
   function firstVisibleChar(text: string) {
@@ -287,12 +289,13 @@ export function useHorizontalPaging(
 
     const fitParagraphSegment = (
       blockHtml: string,
-      options: { isContinuation: boolean; minRemainingLines?: number },
+      options: { isContinuation: boolean; minRemainingLines?: number; sliceIndex?: number },
     ) => {
       const parsed = parseParagraphHtml(blockHtml)
       if (!parsed || parsed.text.length <= 1) return null
 
       const { style, text, className, originalIndex } = parsed
+      const currentSliceIndex = options.sliceIndex ?? parsed.sliceIndex ?? 0
       const currentHeight = measureContentHeight(currentParts)
       const remainingHeight = pageHeight - currentHeight
       const minRemainingHeight = (options.minRemainingLines || 0) * config.value.fontSize * config.value.lineHeight
@@ -305,7 +308,7 @@ export function useHorizontalPaging(
       while (left <= right) {
         const mid = Math.floor((left + right) / 2)
         const tryStyle = buildSegmentStyle(style, options.isContinuation, mid < text.length)
-        const tryHtml = buildParagraphHtml(tryStyle, text.slice(0, mid), segmentClassName, originalIndex)
+        const tryHtml = buildParagraphHtml(tryStyle, text.slice(0, mid), segmentClassName, originalIndex, currentSliceIndex)
         if (!overflows([...currentParts, tryHtml])) {
           fitCount = mid
           left = mid + 1
@@ -322,14 +325,14 @@ export function useHorizontalPaging(
       const hasMoreText = fitCount < text.length
       const fitStyle = buildSegmentStyle(style, options.isContinuation, hasMoreText)
       return {
-        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName, originalIndex),
+        html: buildParagraphHtml(fitStyle, text.slice(0, fitCount), segmentClassName, originalIndex, currentSliceIndex),
         remainingHtml: hasMoreText
-          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className), originalIndex)
+          ? buildParagraphHtml(style, text.slice(fitCount), removeIndentClass(className), originalIndex, currentSliceIndex + 1)
           : '',
       }
     }
 
-    const appendOversizedParagraph = (blockHtml: string, isContinuation = false) => {
+    const appendOversizedParagraph = (blockHtml: string, isContinuation = false, currentSliceIndex = 0) => {
       const parsed = parseParagraphHtml(blockHtml)
       if (!parsed || parsed.text.length <= 1) {
         pages.push(blockHtml)
@@ -338,12 +341,14 @@ export function useHorizontalPaging(
 
       let pending = blockHtml
       let continuation = isContinuation
+      let sliceIndex = currentSliceIndex
       while (pending) {
-        const fitted = fitParagraphSegment(pending, { isContinuation: continuation })
+        const fitted = fitParagraphSegment(pending, { isContinuation: continuation, sliceIndex })
         if (fitted) {
           currentParts = [...currentParts, fitted.html]
           pending = fitted.remainingHtml
           continuation = true
+          sliceIndex++
           if (pending) flushPage()
           continue
         }
@@ -366,12 +371,12 @@ export function useHorizontalPaging(
       }
 
       if (currentParts.length) {
-        const fitted = fitParagraphSegment(blockHtml, { isContinuation: false })
+        const fitted = fitParagraphSegment(blockHtml, { isContinuation: false, sliceIndex: 0 })
         if (fitted) {
           currentParts = [...currentParts, fitted.html]
           if (fitted.remainingHtml) {
             flushPage()
-            appendOversizedParagraph(fitted.remainingHtml, true)
+            appendOversizedParagraph(fitted.remainingHtml, true, 1)
           }
           return
         }
@@ -383,7 +388,7 @@ export function useHorizontalPaging(
         }
       }
 
-      appendOversizedParagraph(blockHtml)
+      appendOversizedParagraph(blockHtml, false, 0)
     }
 
     for (const paragraph of paragraphs) {

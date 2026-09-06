@@ -101,7 +101,7 @@ export function useReaderAutoPlayback(
     return list
   }
 
-  
+
   interface TTSCursor {
     bookUrl: string
     chapterIndex: number
@@ -115,7 +115,7 @@ export function useReaderAutoPlayback(
     try {
       const raw = localStorage.getItem(`tts_cursor_${store.book.bookUrl}`)
       if (raw) return JSON.parse(raw) as TTSCursor
-    } catch {}
+    } catch { }
     return null
   }
 
@@ -134,8 +134,8 @@ export function useReaderAutoPlayback(
     }
     localStorage.setItem(`tts_cursor_${store.book.bookUrl}`, JSON.stringify(cursor))
   }
-  
-  ;(window as any).saveTTSCursor = () => saveTTSCursor()
+
+  ; (window as any).saveTTSCursor = () => saveTTSCursor()
 
   function resolvePlaybackTarget(): HTMLElement | null {
     const reading = chapterTextRef.value?.querySelector('.reading') as HTMLElement | null
@@ -153,7 +153,7 @@ export function useReaderAutoPlayback(
         const sIdx = el.getAttribute('data-slice-index') || '0'
         return oIdx === String(cursor.originalIndex) && sIdx === String(cursor.sliceIndex)
       }) || list.find(el => el.getAttribute('data-original-index') === String(cursor.originalIndex))
-      
+
       if (targetInCursor) {
         if (isHorizontalPageMode.value) {
           return targetInCursor
@@ -796,9 +796,33 @@ export function useReaderAutoPlayback(
   }
 
   let lastNativeTTSIndex = -1
+  let lastNativeTTSSliceIndex: number | undefined
 
-  function syncNativeTTSProgress(index: number) {
+  let isChapterLayoutReady = true
+  let pendingProgressQueue: { index: number; sliceIndex?: number }[] = []
+
+  function setChapterLayoutReady(ready: boolean) {
+    isChapterLayoutReady = ready
+    if (ready && pendingProgressQueue.length > 0) {
+      if (store.isSpeaking && !store.isPaused) {
+        const targetProgress = pendingProgressQueue[pendingProgressQueue.length - 1]
+        syncNativeTTSProgress(targetProgress.index, targetProgress.sliceIndex)
+      }
+      pendingProgressQueue = []
+    }
+    if (!ready) {
+      pendingProgressQueue = []
+    }
+  }
+
+  function syncNativeTTSProgress(index: number, sliceIndex?: number) {
     lastNativeTTSIndex = index
+    lastNativeTTSSliceIndex = sliceIndex
+    if (!isChapterLayoutReady) {
+      pendingProgressQueue.push({ index, sliceIndex })
+      return
+    }
+
     let roots: HTMLElement[] = []
     if (isContinuousMode.value) {
       roots = Array.from(scrollContainerRef.value?.querySelectorAll(`.continuous-chapter[data-chapter-index="${store.currentIndex}"] .chapter-text[data-role="continuous"]`) || []) as HTMLElement[]
@@ -812,67 +836,81 @@ export function useReaderAutoPlayback(
     if (els.length > 0) {
       clearReadingClass()
       els.forEach(el => el.classList.add('reading'))
-      
+
       let targetEl = els[0]
       if (isHorizontalPageMode.value && chapterTextRef.value) {
         const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page'))
-        const currentPageEl = pages[horizontalPageIndex.value]
-        if (currentPageEl) {
-          const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
-          if (elOnCurrentPage) {
-            targetEl = elOnCurrentPage
+
+        if (sliceIndex !== undefined) {
+          // If native provides sliceIndex, find the exact page that contains this slice
+          const exactEl = els.find(el => parseInt(el.getAttribute('data-slice-index') || '0', 10) === sliceIndex)
+          if (exactEl) {
+            targetEl = exactEl
+            const targetPage = pages.findIndex(page => page.contains(exactEl))
+            if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
+              setHorizontalPageIndex(targetPage)
+            }
+          } else {
+            // Fallback logic if no sliceIndex provided
+            const currentPageEl = pages[horizontalPageIndex.value]
+            if (currentPageEl) {
+              const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
+              if (elOnCurrentPage) {
+                targetEl = elOnCurrentPage
+              }
+            }
           }
         }
+
+        showParagraph(targetEl)
       }
-      
-      showParagraph(targetEl)
-    }
-  }
-
-  function handleContentChanged() {
-    autoReadingParagraphIndex = -1
-
-    if (store.isSpeaking && lastNativeTTSIndex >= 0) {
-      window.setTimeout(() => {
-        if (store.isSpeaking && lastNativeTTSIndex >= 0) {
-          syncNativeTTSProgress(lastNativeTTSIndex)
-        }
-      }, 200)
     }
 
-    if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
-      if (autoParagraphTimer) {
-        clearTimeout(autoParagraphTimer)
-        autoParagraphTimer = null
+    function handleContentChanged() {
+      autoReadingParagraphIndex = -1
+
+      if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+        window.setTimeout(() => {
+          if (store.isSpeaking && lastNativeTTSIndex >= 0) {
+            syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex)
+          }
+        }, 200)
       }
-      window.setTimeout(() => {
-        if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
-          runAutoParagraph()
+
+      if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
+        if (autoParagraphTimer) {
+          clearTimeout(autoParagraphTimer)
+          autoParagraphTimer = null
         }
-      }, 100)
+        window.setTimeout(() => {
+          if (store.isAutoScrolling && config.value.autoPageMode === 'paragraph') {
+            runAutoParagraph()
+          }
+        }, 100)
+      }
+    }
+
+    function disposeAutoPlayback() {
+      cancelSpeechTransition()
+      stopAutoScroll()
+    }
+
+    return {
+      resolvePlaybackTarget,
+      getStoredTTSCursor,
+      saveTTSCursor,
+      clearReadingClass,
+      syncNativeTTSProgress,
+      setChapterLayoutReady,
+      startAutoScroll,
+      stopAutoScroll,
+      startSpeech,
+      speechPrev,
+      speechNext,
+      restartSpeechFromCurrentParagraph,
+      cancelSpeechTransition,
+      resetAutoParagraphIndex,
+      handleContentChanged,
+      disposeAutoPlayback,
     }
   }
-
-  function disposeAutoPlayback() {
-    cancelSpeechTransition()
-    stopAutoScroll()
-  }
-
-  return {
-    resolvePlaybackTarget,
-    getStoredTTSCursor,
-    saveTTSCursor,
-    clearReadingClass,
-    syncNativeTTSProgress,
-    startAutoScroll,
-    stopAutoScroll,
-    startSpeech,
-    speechPrev,
-    speechNext,
-    restartSpeechFromCurrentParagraph,
-    cancelSpeechTransition,
-    resetAutoParagraphIndex,
-    handleContentChanged,
-    disposeAutoPlayback,
-  }
-}

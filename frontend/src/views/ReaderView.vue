@@ -1868,8 +1868,12 @@ function persistReadingProgressTemporaryKeepalive() {
 }
 
 async function prevChapter() {
+  setChapterLayoutReady(false)
   const targetIndex = store.currentIndex - 1
-  if (targetIndex < 0) return
+  if (targetIndex < 0) {
+    setChapterLayoutReady(true)
+    return
+  }
 
   if (!isContinuousMode.value) {
     await store.prevChapter()
@@ -1881,8 +1885,12 @@ async function prevChapter() {
 }
 
 async function nextChapter() {
+  setChapterLayoutReady(false)
   const targetIndex = store.currentIndex + 1
-  if (targetIndex >= store.chapters.length) return
+  if (targetIndex >= store.chapters.length) {
+    setChapterLayoutReady(true)
+    return
+  }
 
   if (!isContinuousMode.value) {
     await store.nextChapter()
@@ -1894,7 +1902,11 @@ async function nextChapter() {
 }
 
 async function jumpFromCatalog(targetIndex: number) {
-  if (targetIndex < 0 || targetIndex >= store.chapters.length) return
+  setChapterLayoutReady(false)
+  if (targetIndex < 0 || targetIndex >= store.chapters.length) {
+    setChapterLayoutReady(true)
+    return
+  }
 
   if (!isContinuousMode.value) {
     await store.loadChapter(targetIndex)
@@ -2346,6 +2358,7 @@ function scheduleRestoreReadingPosition() {
 const {
   clearReadingClass,
   syncNativeTTSProgress,
+  setChapterLayoutReady,
   startAutoScroll,
   stopAutoScroll,
   startSpeech,
@@ -2956,7 +2969,7 @@ onBeforeRouteLeave(() => {
 })
 
 onMounted(async () => {
-  (window as any).__nativeBridgeTTSProgress = (index: number) => { syncNativeTTSProgress(index) }
+  (window as any).__nativeBridgeTTSProgress = (index: number, sliceIndex?: number) => { syncNativeTTSProgress(index, sliceIndex) }
   (window as any).__nativeBridgeTTSStateChange = (state: string) => {
     if (state === 'playing') {
       store.isSpeaking = true
@@ -3148,7 +3161,13 @@ watch(
         horizontalPageIndex.value = 0
         horizontalPages.value = [] // Clear pages so restore waits
       }
-      rebuildHorizontalPages()
+      rebuildHorizontalPages().then(() => {
+        setChapterLayoutReady(true)
+      })
+    } else {
+      nextTick(() => {
+        setChapterLayoutReady(true)
+      })
     }
   },
 )

@@ -1364,23 +1364,52 @@ export const useReaderStore = defineStore('reader', () => {
     if (!rawText) return
 
     if (invokeTTS('play', {
-      text: (() => {
-        let lastIndex: string | null = null;
-        let result = '';
+      sentences: (() => {
+        const sentences: {
+          text: string;
+          originalIndex: number;
+          slices: { sliceIndex: number; charStart: number; charLength: number }[];
+        }[] = [];
+        let currentSentence: typeof sentences[0] | null = null;
+
         document.querySelectorAll('.chapter-text p').forEach(p => {
           const idx = p.getAttribute('data-original-index');
+          if (idx === null) return;
+          const originalIndex = parseInt(idx, 10);
+
           const t = (p as HTMLElement).innerText.replace(/\n/g, ' ').trim();
+          // Plan v1.1: Web 权威单向清洗，统一完成标点清洗与空段剔除
           if (!t) return;
-          if (idx !== null && idx === lastIndex) {
-            result += ' ' + t;
+
+          const sliceIdxStr = p.getAttribute('data-slice-index');
+          const sliceIndex = sliceIdxStr !== null ? parseInt(sliceIdxStr, 10) : 0;
+
+          if (currentSentence && currentSentence.originalIndex === originalIndex) {
+            const charStart = currentSentence.text.length;
+            currentSentence.text += t;
+            currentSentence.slices.push({
+              sliceIndex,
+              charStart,
+              charLength: t.length
+            });
           } else {
-            if (result) result += '\n';
-            result += t;
-            lastIndex = idx;
+            currentSentence = {
+              text: t,
+              originalIndex,
+              slices: [{
+                sliceIndex,
+                charStart: 0,
+                charLength: t.length
+              }]
+            };
+            sentences.push(currentSentence);
           }
         });
-        return result || rawText;
+
+        // Plan v1.1: Web 权威单向清洗, filter pure symbol sentences
+        return sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
       })(),
+      text: rawText, // Keep fallback for older Native implementations
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
