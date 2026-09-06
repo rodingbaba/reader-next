@@ -1040,18 +1040,7 @@ class TTSManager: NSObject, ObservableObject {
         logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
         logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
 
-        if let targetSlice = initialStartSliceIndex, targetSlice > 0 {
-            if currentSentenceIndex >= 0 && currentSentenceIndex < sentences.count {
-                let sentence = sentences[currentSentenceIndex]
-                if targetSlice < sentence.slices.count {
-                    let slice = sentence.slices[targetSlice]
-                    let ratio = Double(slice.charStart) / Double(sentence.text.count)
-                    audioPlayer?.currentTime = (audioPlayer?.duration ?? 0) * ratio
-                    logger.log("🎵 跨页起播: 跳过音频至 \(audioPlayer?.currentTime ?? 0) 秒", category: "TTS")
-                }
-            }
-            initialStartSliceIndex = nil // Only apply once
-        }
+
 
         let success = audioPlayer?.play() ?? false
             if success {
