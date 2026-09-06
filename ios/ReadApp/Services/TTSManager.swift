@@ -697,17 +697,38 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 智能分段（优化版）
     private func splitTextIntoSentences(_ text: String) -> [String] {
-        // 先过滤SVG和HTML标签
-        let filtered = removeSVGTags(text)
+        let htmlPattern = "<[a-z][\\s\\S]*?>"
+        let hasHtml = text.range(of: htmlPattern, options: [.regularExpression, .caseInsensitive]) != nil
         
-        // 按换行符分割，保持原文分段，并且严格过滤掉空段落，以保证和前端过滤后的 DOM logicalIndex 强对齐
-        let paragraphs = filtered.components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        var rawParagraphs: [String] = []
         
-        return paragraphs
+        if hasHtml {
+            let pPattern = "<p[^>]*>(.*?)</p>"
+            if let regex = try? NSRegularExpression(pattern: pPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+                let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count))
+                for match in matches {
+                    if let range = Range(match.range(at: 1), in: text) {
+                        rawParagraphs.append(String(text[range]))
+                    }
+                }
+            }
+        }
+        
+        if rawParagraphs.isEmpty {
+            rawParagraphs = text.components(separatedBy: "\n")
+        }
+        
+        var result: [String] = []
+        for p in rawParagraphs {
+            var clean = removeSVGTags(p)
+            clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty {
+                result.append(clean)
+            }
+        }
+        
+        return result
     }
-    
     // 移除不再使用的 speakChapterTitle()
     
     // MARK: - 朗读下一句
