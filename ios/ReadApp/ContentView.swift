@@ -123,8 +123,9 @@ struct HybridWebView: UIViewRepresentable {
         
         @objc private func onTTSProgress(_ notification: Notification) {
             guard let index = notification.userInfo?["index"] as? Int else { return }
+            let sliceStr = notification.userInfo?["sliceIndex"] as? Int != nil ? ", \(notification.userInfo!["sliceIndex"]!)" : ""
             DispatchQueue.main.async { [weak self] in
-                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index))")
+                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index)\(sliceStr))")
             }
         }
         
@@ -181,8 +182,11 @@ struct HybridWebView: UIViewRepresentable {
                         }
                     }
                     
+                    
                     TTSManager.shared.startReading(
+                        sentencesData: payload?["sentences"] as? [[String: Any]],
                         text: validText,
+
                         chapters: parsedChapters,
                         currentIndex: validIndex,
                         startIndex: startIndex,

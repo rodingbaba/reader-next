@@ -11,7 +11,14 @@ class TTSManager: NSObject, ObservableObject {
     @Published var isPaused = false
     @Published var currentSentenceIndex = 0 {
         didSet {
-            NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: ["index": currentSentenceIndex])
+            guard currentSentenceIndex >= 0 && currentSentenceIndex < sentences.count else { return }
+            let originalIndex = sentences[currentSentenceIndex].originalIndex
+            var userInfo: [String: Any] = ["index": originalIndex]
+            if let firstSlice = sentences[currentSentenceIndex].slices.first {
+                userInfo["sliceIndex"] = firstSlice.sliceIndex
+                lastReportedSliceIndex = firstSlice.sliceIndex
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: userInfo)
         }
     }
     @Published var totalSentences = 0
@@ -19,7 +26,8 @@ class TTSManager: NSObject, ObservableObject {
     @Published var preloadedIndices: Set<Int> = []  // 已预载成功的段落索引
     
     private var audioPlayer: AVAudioPlayer?
-    private var sentences: [String] = []
+    private var sentences: [TTSSentence] = []
+    private var lastReportedSliceIndex: Int? = nil
     var currentChapterIndex: Int = 0  // 公开给ReadingView使用
     private var chapters: [BookChapter] = []
     var bookUrl: String = ""  // 公开给ReadingView使用
@@ -50,7 +58,7 @@ class TTSManager: NSObject, ObservableObject {
     private var overlappingPlayers: [AVAudioPlayer] = []
 
     // 下一章预载
-    private var nextChapterSentences: [String] = []  // 下一章的段落
+    private var nextChapterSentences: [TTSSentence] = []  // 下一章的段落
     private var nextChapterCache: [Int: Data] = [:]  // 下一章的音频缓存（索引-1为章节名）
     private var nextChapterPrewarmedPlayers: [Int: AVAudioPlayer] = [:] // 下一章预解码播放器
     private var preloadedNextChapterIndex: Int?
@@ -59,6 +67,48 @@ class TTSManager: NSObject, ObservableObject {
 
     // 淡出 timer
     private var overlapTimer: Timer?
+    private var playbackTimer: Timer?
+
+    private func startPlaybackTimer() {
+        stopPlaybackTimer()
+        DispatchQueue.main.async {
+            self.playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                self?.updateSliceProgress()
+            }
+        }
+    }
+
+    private func stopPlaybackTimer() {
+        DispatchQueue.main.async {
+            self.playbackTimer?.invalidate()
+            self.playbackTimer = nil
+        }
+    }
+
+    private func updateSliceProgress() {
+        guard isPlaying, !isPaused, let player = audioPlayer else { return }
+        let currentTime = player.currentTime
+        let duration = player.duration
+        guard duration > 0, currentSentenceIndex >= 0, currentSentenceIndex < sentences.count else { return }
+        
+        let sentence = sentences[currentSentenceIndex]
+        if sentence.slices.isEmpty { return }
+        
+        let progress = currentTime / duration
+        let targetCharIndex = Int(progress * Double(sentence.text.count))
+        
+        if let currentSlice = sentence.slices.first(where: { targetCharIndex >= $0.charStart && targetCharIndex < ($0.charStart + $0.charLength) }) {
+            let sliceIndex = currentSlice.sliceIndex
+            if self.lastReportedSliceIndex != sliceIndex {
+                self.lastReportedSliceIndex = sliceIndex
+                NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: [
+                    "index": sentence.originalIndex,
+                    "sliceIndex": sliceIndex
+                ])
+            }
+        }
+    }
+
 
     // 后台保活
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -295,7 +345,7 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     // MARK: - 开始朗读
-    func startReading(text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
+    func startReading(sentencesData: [[String: Any]]? = nil, text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
         logger.log("开始朗读 - 书名: \(bookTitle), 章节: \(currentIndex)", category: "TTS")
         logger.log("内容长度: \(text.count) 字符", category: "TTS")
         
@@ -309,6 +359,34 @@ class TTSManager: NSObject, ObservableObject {
         
         // 加载封面图片
         loadCoverArtwork()
+        var parsedSentences: [TTSSentence] = []
+        if let data = sentencesData {
+            for dict in data {
+                if let t = dict["text"] as? String,
+                   let oIdx = dict["originalIndex"] as? Int {
+                    var parsedSlices: [TTSSlice] = []
+                    if let slicesData = dict["slices"] as? [[String: Any]] {
+                        for sDict in slicesData {
+                            if let sIdx = sDict["sliceIndex"] as? Int,
+                               let cStart = sDict["charStart"] as? Int,
+                               let cLen = sDict["charLength"] as? Int {
+                                parsedSlices.append(TTSSlice(sliceIndex: sIdx, charStart: cStart, charLength: cLen))
+                            }
+                        }
+                    }
+                    parsedSentences.append(TTSSentence(text: t, originalIndex: oIdx, slices: parsedSlices))
+                }
+            }
+        }
+        if parsedSentences.isEmpty {
+            let texts = splitTextIntoSentences(text)
+            for (i, t) in texts.enumerated() {
+                parsedSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
+            }
+        }
+        self.sentences = parsedSentences
+        self.totalSentences = self.sentences.count
+
         
         // 开始后台任务
         beginBackgroundTask()
@@ -375,6 +453,7 @@ class TTSManager: NSObject, ObservableObject {
             currentPlayToken = UUID()
             playingIndex = nil
             audioPlayer?.stop()
+        stopPlaybackTimer()
             audioPlayer?.delegate = nil
             audioPlayer = nil
 
@@ -395,6 +474,7 @@ class TTSManager: NSObject, ObservableObject {
             currentPlayToken = UUID()
             playingIndex = nil
             audioPlayer?.stop()
+        stopPlaybackTimer()
             audioPlayer?.delegate = nil
             audioPlayer = nil
 
@@ -628,7 +708,7 @@ class TTSManager: NSObject, ObservableObject {
         beginBackgroundTask()
         startKeepAlive()
         
-        let sentence = sentences[currentSentenceIndex]
+        let sentence = sentences[currentSentenceIndex].text
         
         // 章节名去重处理：如果是段落0，并且它跟章节名相似，则跳过
         if currentSentenceIndex == 0, let chapter = getChapter(at: currentChapterIndex) {
@@ -643,7 +723,7 @@ class TTSManager: NSObject, ObservableObject {
         }
         
         // 跳过纯标点或空白
-        if isPunctuationOnly(sentence) {
+        if isPunctuationOnly(sentence.text) {
             logger.log("⏭️ 跳过纯标点/空白段落 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
             currentSentenceIndex += 1
             speakNextSentence()
@@ -664,10 +744,10 @@ class TTSManager: NSObject, ObservableObject {
         let speechRate = UserPreferences.shared.getSpeechRate(for: UserPreferences.shared.selectedTTSId)
         
         logger.log("朗读句子 \(currentSentenceIndex + 1)/\(totalSentences) - 语速: \(speechRate)", category: "TTS")
-        logger.log("句子内容: \(sentence.prefix(50))...", category: "TTS")
+        logger.log("句子内容: \(sentence.text.prefix(50))...", category: "TTS")
         
         // 播放音频
-        playAudio(text: sentence, ttsId: ttsId, speechRate: speechRate)
+        playAudio(text: sentence.text, ttsId: ttsId, speechRate: speechRate)
         
         // 更新锁屏信息
         if currentChapterIndex < chapters.count {
@@ -863,7 +943,7 @@ class TTSManager: NSObject, ObservableObject {
         let sentence = sentences[index]
         
         // 跳过纯标点
-        if isPunctuationOnly(sentence) {
+        if isPunctuationOnly(sentence.text) {
             await MainActor.run {
                 _ = preloadedIndices.insert(index)
             }
@@ -877,7 +957,7 @@ class TTSManager: NSObject, ObservableObject {
         do {
             let data = try await APIService.shared.fetchTTSAudioData(
                 ttsId: ttsId,
-                text: sentence,
+                text: sentence.text,
                 speechRate: speechRate
             )
             
@@ -900,6 +980,7 @@ class TTSManager: NSObject, ObservableObject {
     private func playPrewarmedPlayer(_ player: AVAudioPlayer) {
         cancelOverlap()
         audioPlayer?.stop()
+        stopPlaybackTimer()
         audioPlayer?.delegate = nil
         
         audioPlayer = player
@@ -913,6 +994,7 @@ class TTSManager: NSObject, ObservableObject {
             // 先停掉旧 player 并清空 delegate，防止其释放时触发 audioPlayerDidFinishPlaying
             cancelOverlap()
             audioPlayer?.stop()
+        stopPlaybackTimer()
             audioPlayer?.delegate = nil
             audioPlayer = nil
             playingIndex = nil
@@ -939,6 +1021,7 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     private func startPlayback() {
+        startPlaybackTimer()
         logger.log("创建/使用 AVAudioPlayer 成功", category: "TTS")
         logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
         logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
@@ -1089,7 +1172,12 @@ class TTSManager: NSObject, ObservableObject {
                     }
                     
                     // 分段
-                    nextChapterSentences = splitTextIntoSentences(content)
+                    let texts = splitTextIntoSentences(content)
+                        var newSentences: [TTSSentence] = []
+                        for (i, t) in texts.enumerated() {
+                            newSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
+                        }
+                        nextChapterSentences = newSentences
                     logger.log("下一章分段完成，共 \(nextChapterSentences.count) 段", category: "TTS")
                     
                     // 预载下一章的前几个段落（根据用户的预载设置）
@@ -1135,7 +1223,7 @@ class TTSManager: NSObject, ObservableObject {
             do {
                 let data = try await APIService.shared.fetchTTSAudioData(
                     ttsId: ttsId,
-                    text: sentence,
+                    text: sentence.text,
                     speechRate: speechRate
                 )
                 
@@ -1172,6 +1260,7 @@ class TTSManager: NSObject, ObservableObject {
         cancelOverlap()
         stopKeepAlive()
         audioPlayer?.stop()
+        stopPlaybackTimer()
         audioPlayer?.delegate = nil
         audioPlayer = nil
         playingIndex = nil
@@ -1247,6 +1336,7 @@ class TTSManager: NSObject, ObservableObject {
             cancelOverlap()
             currentPlayToken = UUID()
             audioPlayer?.stop()
+        stopPlaybackTimer()
             audioPlayer?.delegate = nil
             audioPlayer = nil
             playingIndex = nil
@@ -1290,6 +1380,7 @@ class TTSManager: NSObject, ObservableObject {
         cancelOverlap()
         currentPlayToken = UUID()
         audioPlayer?.stop()
+        stopPlaybackTimer()
         audioPlayer?.delegate = nil
         audioPlayer = nil
         playingIndex = nil
@@ -1312,7 +1403,12 @@ class TTSManager: NSObject, ObservableObject {
                         logger.log("⏳ 从网络加载章节内容，耗时: \(String(format: "%.2f", loadTime))s", category: "TTS")
                     }
                     
-                    sentences = splitTextIntoSentences(content)
+                    let texts = splitTextIntoSentences(content)
+                    var newSentences: [TTSSentence] = []
+                    for (i, t) in texts.enumerated() {
+                        newSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
+                    }
+                    sentences = newSentences
                     totalSentences = sentences.count
                     currentSentenceIndex = 0
                     
@@ -1419,4 +1515,17 @@ extension TTSManager: AVAudioPlayerDelegate {
         currentSentenceIndex += 1
         speakNextSentence()
     }
+}
+import Foundation
+
+struct TTSSlice {
+    let sliceIndex: Int
+    let charStart: Int
+    let charLength: Int
+}
+
+struct TTSSentence {
+    let text: String
+    let originalIndex: Int
+    let slices: [TTSSlice]
 }
