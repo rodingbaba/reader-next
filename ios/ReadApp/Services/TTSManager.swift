@@ -39,6 +39,10 @@ class TTSManager: NSObject, ObservableObject {
     private var currentSentenceObserver: Any?
     
     // 预载缓存
+    private var lastTTSId: String = ""
+    private var lastSpeechRate: Double = 0.0
+    
+    // 预载缓存
     private var audioCache: [Int: Data] = [:]  // 索引 -> 音频数据（索引-1为章节名，0~n为正文段落）
     private var prewarmedPlayers: [Int: AVAudioPlayer] = [:] // 预解码的播放器
     private var preloadQueue: [Int] = []       // 等待预载的队列
@@ -345,7 +349,9 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     // MARK: - 开始朗读
-    func startReading(sentencesData: [[String: Any]]? = nil, text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
+    private var initialStartSliceIndex: Int? = nil
+
+    func startReading(sentencesData: [[String: Any]]? = nil, text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, startSliceIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
         logger.log("开始朗读 - 书名: \(bookTitle), 章节: \(currentIndex)", category: "TTS")
         logger.log("内容长度: \(text.count) 字符", category: "TTS")
         
@@ -391,24 +397,36 @@ class TTSManager: NSObject, ObservableObject {
         // 开始后台任务
         beginBackgroundTask()
         
-        // 清空缓存和预载状态
-        audioCache.removeAll()
-        prewarmedPlayers.removeAll()
-        preloadedIndices.removeAll()
-        preloadQueue.removeAll()
-        activePreloadIndices.removeAll()
-        isPreloading = false
-        preloadWorkerTask?.cancel()
-        preloadWorkerTask = nil
-        nextChapterCache.removeAll()
-        nextChapterPrewarmedPlayers.removeAll()
-        nextChapterSentences.removeAll()
-        preloadedNextChapterIndex = nil
-        nextChapterPreloadToken = UUID()
+        let currentTTSId = UserPreferences.shared.selectedTTSId
+        let currentSpeechRate = UserPreferences.shared.getSpeechRate(for: currentTTSId)
+        let isSameSession = (self.currentChapterIndex == currentIndex) && (self.lastTTSId == currentTTSId) && (self.lastSpeechRate == currentSpeechRate) && (self.bookUrl == bookUrl)
+        
+        self.lastTTSId = currentTTSId
+        self.lastSpeechRate = currentSpeechRate
+        
+        if !isSameSession {
+            // 清空缓存和预载状态
+            audioCache.removeAll()
+            prewarmedPlayers.removeAll()
+            preloadedIndices.removeAll()
+            preloadQueue.removeAll()
+            activePreloadIndices.removeAll()
+            isPreloading = false
+            preloadWorkerTask?.cancel()
+            preloadWorkerTask = nil
+            nextChapterCache.removeAll()
+            nextChapterPrewarmedPlayers.removeAll()
+            nextChapterSentences.removeAll()
+            preloadedNextChapterIndex = nil
+            nextChapterPreloadToken = UUID()
+        } else {
+            logger.log("🔄 恢复相同章节的会话，保留音频缓存", category: "TTS")
+        }
         
         // 尝试恢复进度
         if let explicitStartIndex = startIndex, explicitStartIndex >= 0 && explicitStartIndex < sentences.count {
             currentSentenceIndex = explicitStartIndex
+            initialStartSliceIndex = startSliceIndex
         } else if resumeFromProgress, let progress = UserPreferences.shared.getTTSProgress(bookUrl: bookUrl) {
             if progress.chapterIndex == currentIndex && progress.sentenceIndex < sentences.count {
                 currentSentenceIndex = progress.sentenceIndex
@@ -1021,6 +1039,19 @@ class TTSManager: NSObject, ObservableObject {
         logger.log("创建/使用 AVAudioPlayer 成功", category: "TTS")
         logger.log("音频时长: \(audioPlayer?.duration ?? 0) 秒", category: "TTS")
         logger.log("音频格式: \(audioPlayer?.format.description ?? "unknown")", category: "TTS")
+
+        if let targetSlice = initialStartSliceIndex, targetSlice > 0 {
+            if currentSentenceIndex >= 0 && currentSentenceIndex < sentences.count {
+                let sentence = sentences[currentSentenceIndex]
+                if targetSlice < sentence.slices.count {
+                    let slice = sentence.slices[targetSlice]
+                    let ratio = Double(slice.charStart) / Double(sentence.text.count)
+                    audioPlayer?.currentTime = (audioPlayer?.duration ?? 0) * ratio
+                    logger.log("🎵 跨页起播: 跳过音频至 \(audioPlayer?.currentTime ?? 0) 秒", category: "TTS")
+                }
+            }
+            initialStartSliceIndex = nil // Only apply once
+        }
 
         let success = audioPlayer?.play() ?? false
             if success {

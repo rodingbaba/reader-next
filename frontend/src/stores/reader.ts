@@ -1359,7 +1359,7 @@ export const useReaderStore = defineStore('reader', () => {
     })
   }
 
-  function startTTS(text?: string, options: TTSOptions & { startIndex?: number } = {}, interruptCurrent = true) {
+  function startTTS(text?: string, options: TTSOptions & { startIndex?: number, startSliceIndex?: number } = {}, interruptCurrent = true) {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
 
@@ -1431,7 +1431,8 @@ export const useReaderStore = defineStore('reader', () => {
       coverUrl: book.value?.coverUrl,
       chapters: chapters.value,
       currentIndex: currentIndex.value,
-      startIndex: options.startIndex
+      startIndex: options.startIndex,
+      startSliceIndex: options.startSliceIndex
     })) {
       isSpeaking.value = true
       isPaused.value = false

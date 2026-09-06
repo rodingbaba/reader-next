@@ -665,10 +665,15 @@ export function useReaderAutoPlayback(
       chunkCount: currentSpeechSegments.length,
     })
     let startIndex = 0
+    let startSliceIndex = 0
     if (current) {
       const idxAttr = current.getAttribute('data-original-index')
+      const sliceAttr = current.getAttribute('data-slice-index')
       if (idxAttr !== null && idxAttr !== '') {
         startIndex = parseInt(idxAttr, 10)
+        if (sliceAttr !== null && sliceAttr !== '') {
+          startSliceIndex = parseInt(sliceAttr, 10)
+        }
       } else {
         const list = getAllParagraphs()
         startIndex = Math.max(0, list.indexOf(current))
@@ -677,6 +682,7 @@ export function useReaderAutoPlayback(
 
     store.startTTS(chunk.text, {
       startIndex: startIndex >= 0 ? startIndex : 0,
+      startSliceIndex,
       onEnd: () => {
         logSpeech('chunk onEnd', {
           provider: store.speechConfig.provider,
