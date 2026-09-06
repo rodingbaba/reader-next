@@ -1373,14 +1373,22 @@ export const useReaderStore = defineStore('reader', () => {
         }[] = [];
         let currentSentence: typeof sentences[0] | null = null;
         
-        let rootSelector = '.chapter-text'
+        let paragraphs: Element[] = []
         if (config.readMethod === '上下滚动' || config.readMethod === '上下滚动2') {
-          rootSelector = `.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`
+          const root = document.querySelector(`.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`)
+          if (root) {
+            paragraphs = Array.from(root.querySelectorAll('p'))
+          }
+        } else {
+          // Horizontal paging has multiple .chapter-text elements (one per page)
+          // We need to select p tags from ALL of them to build the complete chapter sentences
+          const roots = document.querySelectorAll('.chapter-text')
+          roots.forEach(root => {
+            paragraphs.push(...Array.from(root.querySelectorAll('p')))
+          })
         }
-        const root = document.querySelector(rootSelector)
-        if (!root) return []
 
-        root.querySelectorAll('p').forEach(p => {
+        paragraphs.forEach(p => {
           const idx = p.getAttribute('data-original-index');
           if (idx === null) return;
           const originalIndex = parseInt(idx, 10);

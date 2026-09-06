@@ -155,7 +155,11 @@ struct HybridWebView: UIViewRepresentable {
         
         private func handleTTSControl(action: String, payload: [String: Any]?) {
             DispatchQueue.main.async {
-                LogManager.shared.log("接收到 TTS 控制指令: action=\(action), payload=\(String(describing: payload))", category: "Hybrid")
+                
+                var safePayload = payload ?? [:]
+                safePayload.removeValue(forKey: "chapters") // Remove chapters from logs to save space
+                safePayload.removeValue(forKey: "sentences") // Remove sentences from logs to save space
+                LogManager.shared.log("接收到 TTS 控制指令: action=\(action), payload=\(String(describing: safePayload))", category: "Hybrid")
                 switch action {
                 case "play":
                     let text = payload?["text"] as? String
