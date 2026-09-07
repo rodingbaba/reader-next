@@ -2395,7 +2395,7 @@ const {
 )
 
 // F-C5: 将 Native 进度回调注册提前到 setup 顶层，避免深链进入阅读页且 Native 已在播放时 onMounted 之前的进度回调丢失
-;(window as any).__nativeBridgeTTSProgress = (index: number, sliceIndex?: number) => { syncNativeTTSProgress(index, sliceIndex) }
+;(window as any).__nativeBridgeTTSProgress = (index: number, sliceIndex?: number, textPrefix?: string) => { syncNativeTTSProgress(index, sliceIndex, textPrefix) }
 
 // Click behavior
 function handleBackgroundClick(e: Event) {

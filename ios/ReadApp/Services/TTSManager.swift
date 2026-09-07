@@ -13,7 +13,9 @@ class TTSManager: NSObject, ObservableObject {
         didSet {
             guard currentSentenceIndex >= 0 && currentSentenceIndex < sentences.count else { return }
             let originalIndex = sentences[currentSentenceIndex].originalIndex
-            var userInfo: [String: Any] = ["index": originalIndex]
+            // F-B1: 追加 textPrefix 供 Web 端做进度校准
+            let textPrefix = String(sentences[currentSentenceIndex].text.prefix(16))
+            var userInfo: [String: Any] = ["index": originalIndex, "textPrefix": textPrefix]
             if let firstSlice = sentences[currentSentenceIndex].slices.first {
                 userInfo["sliceIndex"] = firstSlice.sliceIndex
                 lastReportedSliceIndex = firstSlice.sliceIndex
@@ -105,9 +107,12 @@ class TTSManager: NSObject, ObservableObject {
             let sliceIndex = currentSlice.sliceIndex
             if self.lastReportedSliceIndex != sliceIndex {
                 self.lastReportedSliceIndex = sliceIndex
+                // F-B1: 追加 textPrefix 供 Web 端做进度校准
+                let textPrefix = String(sentence.text.prefix(16))
                 NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: [
                     "index": sentence.originalIndex,
-                    "sliceIndex": sliceIndex
+                    "sliceIndex": sliceIndex,
+                    "textPrefix": textPrefix
                 ])
             }
         }

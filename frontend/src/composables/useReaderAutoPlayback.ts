@@ -821,16 +821,18 @@ export function useReaderAutoPlayback(
 
   let lastNativeTTSIndex = -1
   let lastNativeTTSSliceIndex: number | undefined
+  let lastNativeTTSTextPrefix: string | undefined
 
   let isChapterLayoutReady = true
-  let pendingProgressQueue: { index: number; sliceIndex?: number }[] = []
+  // F-B1: 队列也存储 textPrefix 供布局就绪后做三级校准
+  let pendingProgressQueue: { index: number; sliceIndex?: number; textPrefix?: string }[] = []
 
   function setChapterLayoutReady(ready: boolean) {
     isChapterLayoutReady = ready
     if (ready && pendingProgressQueue.length > 0) {
       if (store.isSpeaking && !store.isPaused) {
         const targetProgress = pendingProgressQueue[pendingProgressQueue.length - 1]
-        syncNativeTTSProgress(targetProgress.index, targetProgress.sliceIndex)
+        syncNativeTTSProgress(targetProgress.index, targetProgress.sliceIndex, targetProgress.textPrefix)
       }
       pendingProgressQueue = []
     }
@@ -839,11 +841,12 @@ export function useReaderAutoPlayback(
     }
   }
 
-  function syncNativeTTSProgress(index: number, sliceIndex?: number) {
+  function syncNativeTTSProgress(index: number, sliceIndex?: number, textPrefix?: string) {
     lastNativeTTSIndex = index
     lastNativeTTSSliceIndex = sliceIndex
+    lastNativeTTSTextPrefix = textPrefix
     if (!isChapterLayoutReady) {
-      pendingProgressQueue.push({ index, sliceIndex })
+      pendingProgressQueue.push({ index, sliceIndex, textPrefix })
       return
     }
 
@@ -856,7 +859,35 @@ export function useReaderAutoPlayback(
 
     if (!roots.length) return
 
-    const els = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+    // F-B3: 三级校准策略——先按 originalIndex 定位，再校验文本前缀；不符则全文搜索前缀匹配段落；兜底回到 originalIndex
+    const findByOriginalIndex = () =>
+      roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+
+    const findByTextPrefix = (prefix: string): HTMLElement[] => {
+      if (!prefix) return []
+      return roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
+        .filter(p => {
+          const t = (p as HTMLElement).textContent?.trim() || ''
+          return t.startsWith(prefix.trim())
+        })
+    }
+
+    // 1. 快路径：按 originalIndex 定位 → 校验文本前缀相符
+    let els = findByOriginalIndex()
+    if (els.length > 0 && textPrefix) {
+      const trimmedPrefix = textPrefix.trim()
+      const firstElText = (els[0] as HTMLElement).textContent?.trim() || ''
+      if (!firstElText.startsWith(trimmedPrefix)) {
+        // 2. 慢路径：索引定位的段落文本与广播前缀不符 → 全 DOM 搜前缀匹配段落
+        console.warn(`[TTS-CALIBRATION] originalIndex=${index} 文本前缀不符，触发全文搜索校准。Native前缀="${trimmedPrefix}", DOM="${firstElText.slice(0, 30)}"`)
+        const fallbackEls = findByTextPrefix(trimmedPrefix)
+        if (fallbackEls.length > 0) {
+          els = fallbackEls
+        }
+        // 3. 兜底：els 保持 findByOriginalIndex 结果（现状行为）
+      }
+    }
+
     if (els.length > 0) {
       clearReadingClass()
       els.forEach(el => el.classList.add('reading'))
@@ -897,7 +928,7 @@ export function useReaderAutoPlayback(
     if (store.isSpeaking && lastNativeTTSIndex >= 0) {
       window.setTimeout(() => {
         if (store.isSpeaking && lastNativeTTSIndex >= 0) {
-          syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex)
+          syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex, lastNativeTTSTextPrefix)
         }
       }, 200)
     }
