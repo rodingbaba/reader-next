@@ -432,6 +432,18 @@ export function useReaderAutoPlayback(
       return
     }
 
+    // F-D1: 顶部截断轻量回正——段落顶部被滚动到视口上方但底部仍在视口内时，轻量回正到段落顶部上方 8px
+    const viewTop = container.scrollTop
+    const pTop = paragraph.offsetTop
+    const pBottom = pTop + paragraph.offsetHeight
+    if (pTop < viewTop && pBottom > viewTop) {
+      container.scrollTo({
+        top: Math.max(0, pTop - 8),
+        behavior: smooth ? 'smooth' : 'auto',
+      })
+      return
+    }
+
     const targetTop = Math.max(0, paragraph.offsetTop - 24)
     container.scrollTo({
       top: targetTop,

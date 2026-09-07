@@ -349,7 +349,9 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     // MARK: - 开始朗读
-    private var initialStartSliceIndex: Int? = nil
+    // F-C6: 清理未使用的 initialStartSliceIndex 字段（变更 1 已弃用 seek 起播）
+    // F-A3/A5: 标记本次 sentences 是否来自 Native fallback 分句（而非 Web 下发）
+    private var sentencesFromFallback: Bool = false
 
     func startReading(sentencesData: [[String: Any]]? = nil, text: String, chapters: [BookChapter], currentIndex: Int, startIndex: Int? = nil, startSliceIndex: Int? = nil, bookUrl: String, bookSourceUrl: String?, bookTitle: String, coverUrl: String?, onChapterChange: @escaping (Int) -> Void, resumeFromProgress: Bool = true) {
         logger.log("开始朗读 - 书名: \(bookTitle), 章节: \(currentIndex)", category: "TTS")
@@ -385,10 +387,15 @@ class TTSManager: NSObject, ObservableObject {
             }
         }
         if parsedSentences.isEmpty {
+            // F-A5: 原生 App 环境 Web 始终下发 sentences，fallback 触发说明 Web 下发失败，需排查
+            logger.log("⚠️ [fallback] sentencesData 为空或解析失败，Native 自行分句。原生环境应不命中 fallback，请检查 Web 下发", category: "TTS警告")
             let texts = splitTextIntoSentences(text)
             for (i, t) in texts.enumerated() {
                 parsedSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
             }
+            sentencesFromFallback = true
+        } else {
+            sentencesFromFallback = false
         }
         self.sentences = parsedSentences
         self.totalSentences = self.sentences.count
@@ -424,9 +431,14 @@ class TTSManager: NSObject, ObservableObject {
         }
         
         // 尝试恢复进度
-        if let explicitStartIndex = startIndex, explicitStartIndex >= 0 && explicitStartIndex < sentences.count {
-            currentSentenceIndex = explicitStartIndex
-            initialStartSliceIndex = startSliceIndex
+        // F-A1: Web 下发的 startIndex 语义为 originalIndex（逻辑段落锚点），需反查 sentences 数组下标，避免过滤纯符号段后错位
+        if let explicitStartIndex = startIndex, explicitStartIndex >= 0 {
+            if let targetIndex = sentences.firstIndex(where: { $0.originalIndex == explicitStartIndex }) {
+                currentSentenceIndex = targetIndex
+            } else {
+                logger.log("⚠️ startIndex=\(explicitStartIndex) 未匹配到 originalIndex，回退到 0", category: "TTS警告")
+                currentSentenceIndex = 0
+            }
         } else if resumeFromProgress, let progress = UserPreferences.shared.getTTSProgress(bookUrl: bookUrl) {
             if progress.chapterIndex == currentIndex && progress.sentenceIndex < sentences.count {
                 currentSentenceIndex = progress.sentenceIndex
@@ -502,17 +514,18 @@ class TTSManager: NSObject, ObservableObject {
     }
     
     // MARK: - 判断是否为纯标点或空白
+    // F-A4: 与 Web端正则 /^[\s\p{P}\p{S}]+$/u 对齐：仅含空白/标点/符号则为纯标点
     private func isPunctuationOnly(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return true }
-        
-        let regex = try? NSRegularExpression(pattern: "[\\p{L}\\p{N}\\p{M}]", options: [])
+
+        let regex = try? NSRegularExpression(pattern: "^[\\s\\p{P}\\p{S}]+$", options: [.useUnicodeWordBoundaries])
         let range = NSRange(location: 0, length: trimmed.utf16.count)
         if let regex = regex, regex.firstMatch(in: trimmed, options: [], range: range) != nil {
-            return false 
+            return true
         }
-        
-        return true 
+
+        return false
     }
     
     // MARK: - 激进保活 (Silent Audio)
@@ -745,27 +758,19 @@ class TTSManager: NSObject, ObservableObject {
         startKeepAlive()
         
         let sentence = sentences[currentSentenceIndex].text
-        
-        // 章节名去重处理：如果是段落0，并且它跟章节名相似，则跳过
-        if currentSentenceIndex == 0, let chapter = getChapter(at: currentChapterIndex) {
-            let sentenceFiltered = sentence.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "")
-            let titleFiltered = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: " ", with: "")
-            if !sentenceFiltered.isEmpty && !titleFiltered.isEmpty && (sentenceFiltered.contains(titleFiltered) || titleFiltered.contains(sentenceFiltered)) {
-                logger.log("⏭️ 首段与章节名高度重合，跳过首段 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
+
+        // F-A2: 移除 Native 首段与章节名去重逻辑，Web 下发的 sentences 已是权威数据源，不应二次过滤
+        // F-A3: 正常路径下移除 isPunctuationOnly 检查，Web 下发的 sentences 已过滤纯符号段
+        // 若 fallback 路径命中则保留 isPunctuationOnly 检查（见下方 fallbackOnly 分支）
+        if sentencesFromFallback {
+            if isPunctuationOnly(sentence) {
+                logger.log("⏭️ [fallback] 跳过纯标点/空白段落 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
                 currentSentenceIndex += 1
                 speakNextSentence()
                 return
             }
         }
-        
-        // 跳过纯标点或空白
-        if isPunctuationOnly(sentence) {
-            logger.log("⏭️ 跳过纯标点/空白段落 [\(currentSentenceIndex + 1)/\(totalSentences)]: \(sentence)", category: "TTS")
-            currentSentenceIndex += 1
-            speakNextSentence()
-            return
-        }
-        
+
         // 保存进度
         UserPreferences.shared.saveTTSProgress(bookUrl: bookUrl, chapterIndex: currentChapterIndex, sentenceIndex: currentSentenceIndex)
         
@@ -978,8 +983,8 @@ class TTSManager: NSObject, ObservableObject {
         guard index < sentences.count else { return false }
         let sentence = sentences[index]
         
-        // 跳过纯标点
-        if isPunctuationOnly(sentence.text) {
+        // F-A3: 仅 fallback 路径需要兜底过滤纯标点；Web 下发的 sentences 已过滤
+        if sentencesFromFallback && isPunctuationOnly(sentence.text) {
             await MainActor.run {
                 _ = preloadedIndices.insert(index)
             }

@@ -1393,7 +1393,7 @@ export const useReaderStore = defineStore('reader', () => {
           if (idx === null) return;
           const originalIndex = parseInt(idx, 10);
 
-          const t = (p as HTMLElement).innerText.replace(/\n/g, ' ').trim();
+          const t = (p as HTMLElement).textContent?.replace(/\s+/g, ' ').trim() || '';
           if (!t) return;
 
           const sliceIdxStr = p.getAttribute('data-slice-index');
