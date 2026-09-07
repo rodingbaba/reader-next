@@ -139,7 +139,13 @@ export function useReaderAutoPlayback(
 
   function resolvePlaybackTarget(): HTMLElement | null {
     const reading = chapterTextRef.value?.querySelector('.reading') as HTMLElement | null
-    if (reading) return reading
+    if (reading) {
+      const hostChapter = reading.closest('[data-chapter-index]') as HTMLElement | null
+      const hostChapterIndex = hostChapter?.getAttribute('data-chapter-index')
+      if (hostChapterIndex === null || hostChapterIndex === String(store.currentIndex)) {
+        return reading
+      }
+    }
 
     const container = scrollContainerRef.value
     if (!container) return null

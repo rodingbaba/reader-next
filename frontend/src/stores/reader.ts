@@ -1982,7 +1982,7 @@ export const useReaderStore = defineStore('reader', () => {
     replaceRules, fetchReplaceRules,
     switchSource, preloadNextChapter, preloadAroundChapter,
     refreshChapters,
-    isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS,
+    isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS, beginTTSSession,
     voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
     systemTtsNativeEventsReliable,
     fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,

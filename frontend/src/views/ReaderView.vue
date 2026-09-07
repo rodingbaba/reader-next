@@ -1220,6 +1220,8 @@ const isContinuousMode = computed(() =>
 )
 const hideReadChaptersMode = computed(() => config.value.readMethod === '上下滚动2')
 const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
+// F-C2: 重排互斥锁，防止 watch(readMethod) 快速连续切换导致排版串行
+const isReflowing = ref(false)
 const isIosWebkit = computed(() => {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
   return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1)
@@ -2392,6 +2394,9 @@ const {
   prevChapter,
 )
 
+// F-C5: 将 Native 进度回调注册提前到 setup 顶层，避免深链进入阅读页且 Native 已在播放时 onMounted 之前的进度回调丢失
+;(window as any).__nativeBridgeTTSProgress = (index: number, sliceIndex?: number) => { syncNativeTTSProgress(index, sliceIndex) }
+
 // Click behavior
 function handleBackgroundClick(e: Event) {
   // If clicked directly on the reader-view wrapper, toggle controls
@@ -2969,7 +2974,6 @@ onBeforeRouteLeave(() => {
 })
 
 onMounted(async () => {
-  (window as any).__nativeBridgeTTSProgress = (index: number, sliceIndex?: number) => { syncNativeTTSProgress(index, sliceIndex) }
   (window as any).__nativeBridgeTTSStateChange = (state: string) => {
     if (state === 'playing') {
       store.isSpeaking = true
@@ -3075,34 +3079,43 @@ watch(() => config.value.autoPageMode, () => {
 })
 
 watch(() => config.value.readMethod, async (_, oldVal) => {
-  // 必须在排版模式改变、DOM被销毁前，使用旧模式(oldVal)的逻辑保存当前的originalIndex
-  const savedPos = saveReadingPosition({ force: true, oldMode: oldVal })
-  if (savedPos) {
-    pendingRestorePosition.value = savedPos
-    pendingRestoreAttempts = 0
-  } else {
-    loadSavedReadingPosition()
-  }
-  
-  clearSelectionState()
-  
-  // 平滑过渡：如果在听书，固化游标并暂停，而不是清空
-  if (store.isSpeaking || store.isSpeechTransitioning) {
-    if (typeof (window as any).saveTTSCursor === 'function') {
-      (window as any).saveTTSCursor()
+  // F-C2: 重排互斥锁，未完成前丢弃后续切换，避免排版串行被破坏
+  if (isReflowing.value) return
+  isReflowing.value = true
+  try {
+    // 必须在排版模式改变、DOM被销毁前，使用旧模式(oldVal)的逻辑保存当前的originalIndex
+    const savedPos = saveReadingPosition({ force: true, oldMode: oldVal })
+    if (savedPos) {
+      pendingRestorePosition.value = savedPos
+      pendingRestoreAttempts = 0
+    } else {
+      loadSavedReadingPosition()
     }
-    store.pauseTTS()
-  }
 
-  if (isContinuousMode.value) {
-    await initializeContinuousChapters(store.currentIndex, false)
-  } else {
-    clearContinuousChapters()
-    await nextTick()
+    clearSelectionState()
+
+    // 平滑过渡：如果在听书，固化游标并暂停，而不是清空
+    if (store.isSpeaking || store.isSpeechTransitioning) {
+      if (typeof (window as any).saveTTSCursor === 'function') {
+        (window as any).saveTTSCursor()
+      }
+      // F-C1: 作废旧 sessionId，使切模式期间残留的 system/openai TTS 回调被丢弃
+      store.beginTTSSession()
+      store.pauseTTS()
+    }
+
+    if (isContinuousMode.value) {
+      await initializeContinuousChapters(store.currentIndex, false)
+    } else {
+      clearContinuousChapters()
+      await nextTick()
+    }
+    await rebuildHorizontalPages()
+    updateHorizontalEndState()
+    scheduleRestoreReadingPosition()
+  } finally {
+    isReflowing.value = false
   }
-  await rebuildHorizontalPages()
-  updateHorizontalEndState()
-  scheduleRestoreReadingPosition()
 })
 
 watch(() => store.currentIndex, () => {
