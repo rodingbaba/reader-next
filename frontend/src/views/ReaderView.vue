@@ -1125,6 +1125,8 @@ import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
+import { isNativeApp } from '../utils/nativeBridge'
+import { resolveNativeAssetUrl } from '../utils/secureAccess'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import { buildChapterSummaryIdentity, isCurrentChapterSummaryIdentity } from '../utils/chapterSummaryState'
 import { buildSummaryRelationshipGraph } from '../utils/summaryRelationshipGraph'
@@ -1201,6 +1203,8 @@ let restorePositionTimer: number | null = null
 let persistPositionTimer: number | null = null
 const pendingRestorePosition = ref<SavedReadingPosition | null>(null)
 let pendingRestoreAttempts = 0
+// 跨章翻页时的目标页锚点：'end' 表示跳到上一章末页，'start' 表示跳到下一章首页
+const pendingChapterPageAnchor = ref<'start' | 'end' | null>(null)
 let suppressPositionSaveUntil = 0
 let suppressContinuousScrollSyncUntil = 0
 let suppressContinuousAutoLoadUntil = 0
@@ -1678,6 +1682,16 @@ function formatChapterHtml(rawText: string) {
   if (/<[a-z][\s\S]*>/i.test(text)) {
     const wrapper = document.createElement('div')
     wrapper.innerHTML = text
+    // native app 下把根相对图片地址补全为绝对 URL 并附加认证参数
+    if (isNativeApp()) {
+      wrapper.querySelectorAll('img, image').forEach((el) => {
+        const attrs = ['src', 'href', 'xlink:href']
+        for (const attr of attrs) {
+          const val = el.getAttribute(attr)
+          if (val) el.setAttribute(attr, resolveNativeAssetUrl(val))
+        }
+      })
+    }
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
       let logicalIndex = 0
@@ -1801,6 +1815,7 @@ function pageForward() {
   if (isHorizontalPageMode.value) {
     const maxPage = Math.max(0, horizontalPages.value.length - 1)
     if (horizontalPageIndex.value >= maxPage) {
+      pendingChapterPageAnchor.value = 'start'
       nextChapter()
       return
     }
@@ -1822,6 +1837,7 @@ function pageBackward() {
   if (!container) return
   if (isHorizontalPageMode.value) {
     if (horizontalPageIndex.value <= 0) {
+      pendingChapterPageAnchor.value = 'end'
       prevChapter()
       return
     }
@@ -1873,6 +1889,7 @@ async function prevChapter() {
   setChapterLayoutReady(false)
   const targetIndex = store.currentIndex - 1
   if (targetIndex < 0) {
+    pendingChapterPageAnchor.value = null
     setChapterLayoutReady(true)
     return
   }
@@ -1890,6 +1907,7 @@ async function nextChapter() {
   setChapterLayoutReady(false)
   const targetIndex = store.currentIndex + 1
   if (targetIndex >= store.chapters.length) {
+    pendingChapterPageAnchor.value = null
     setChapterLayoutReady(true)
     return
   }
@@ -1905,6 +1923,7 @@ async function nextChapter() {
 
 async function jumpFromCatalog(targetIndex: number) {
   setChapterLayoutReady(false)
+  pendingChapterPageAnchor.value = null
   if (targetIndex < 0 || targetIndex >= store.chapters.length) {
     setChapterLayoutReady(true)
     return
@@ -2165,6 +2184,10 @@ function restoreReadingPositionInternal(saved: SavedReadingPosition | null, fina
   }
 
   if (isHorizontalPageMode.value) {
+    // 跨章锚点待处理时，暂停位置恢复，等待锚点定位完成
+    if (pendingChapterPageAnchor.value) {
+      return false
+    }
     if (store.loading || !horizontalPages.value.length) {
       debugPositionLog('restore waiting: horizontal content not ready', {
         saved,
@@ -3175,6 +3198,20 @@ watch(
         horizontalPages.value = [] // Clear pages so restore waits
       }
       rebuildHorizontalPages().then(() => {
+        // 跨章锚点定位：上一章末页或下一章首页
+        if (pendingChapterPageAnchor.value && horizontalPages.value.length) {
+          const maxPage = Math.max(0, horizontalPages.value.length - 1)
+          if (pendingChapterPageAnchor.value === 'end') {
+            horizontalPageIndex.value = maxPage
+          } else {
+            horizontalPageIndex.value = 0
+          }
+          pendingChapterPageAnchor.value = null
+          // 阻止历史位置恢复覆盖锚点定位
+          pendingRestorePosition.value = null
+          pendingRestoreAttempts = 0
+          syncHorizontalPageState()
+        }
         setChapterLayoutReady(true)
       })
     } else {
