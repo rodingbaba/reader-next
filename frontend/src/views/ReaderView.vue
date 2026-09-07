@@ -1691,6 +1691,8 @@ function formatChapterHtml(rawText: string) {
           if (val) el.setAttribute(attr, resolveNativeAssetUrl(val))
         }
       })
+      // 将转换后的 HTML 写回 text，确保无 <p> 标签时走纯文本路径也能使用转换后的 URL
+      text = wrapper.innerHTML
     }
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
