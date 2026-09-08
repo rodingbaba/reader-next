@@ -123,17 +123,17 @@ struct HybridWebView: UIViewRepresentable {
         
         @objc private func onTTSProgress(_ notification: Notification) {
             guard let index = notification.userInfo?["index"] as? Int else { return }
-            let sliceStr = notification.userInfo?["sliceIndex"] as? Int != nil ? ", \(notification.userInfo!["sliceIndex"]!)" : ""
+            let sliceArg = notification.userInfo?["sliceIndex"] as? Int != nil ? "\(notification.userInfo!["sliceIndex"]!)" : "undefined"
             // F-B2: 透传 textPrefix 供 Web 端做进度校准
-            let prefixStr: String
+            let prefixArg: String
             if let raw = notification.userInfo?["textPrefix"] as? String {
                 let escaped = raw.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                prefixStr = ", '\(escaped)'"
+                prefixArg = "'\(escaped)'"
             } else {
-                prefixStr = ""
+                prefixArg = "undefined"
             }
             DispatchQueue.main.async { [weak self] in
-                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index)\(sliceStr)\(prefixStr))")
+                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index), \(sliceArg), \(prefixArg))")
             }
         }
         
@@ -231,6 +231,11 @@ struct HybridWebView: UIViewRepresentable {
                     TTSManager.shared.resume()
                 case "stop":
                     TTSManager.shared.stop()
+                case "updateSlices":
+                    if let sentencesData = payload?["sentences"] as? [[String: Any]],
+                       let chapterIndex = (payload?["currentIndex"] as? Int) ?? (payload?["currentIndex"] as? Double).map({ Int($0) }) {
+                        TTSManager.shared.updateSentencesSlices(currentIndex: chapterIndex, sentencesData: sentencesData)
+                    }
                 case "setConfig":
                     if let config = payload {
                         let speakerId: String?

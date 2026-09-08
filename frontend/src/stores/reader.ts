@@ -1359,71 +1359,86 @@ export const useReaderStore = defineStore('reader', () => {
     })
   }
 
+  function extractDomSentences(): {
+    text: string;
+    originalIndex: number;
+    slices: { sliceIndex: number; charStart: number; charLength: number }[];
+  }[] {
+    const sentences: {
+      text: string;
+      originalIndex: number;
+      slices: { sliceIndex: number; charStart: number; charLength: number }[];
+    }[] = [];
+    let currentSentence: typeof sentences[0] | null = null;
+
+    let paragraphs: Element[] = []
+    if (config.readMethod === '上下滚动' || config.readMethod === '上下滚动2') {
+      const root = document.querySelector(`.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`)
+      if (root) {
+        paragraphs = Array.from(root.querySelectorAll('p'))
+      }
+    } else {
+      // Horizontal paging has multiple .chapter-text elements (one per page)
+      // We need to select p tags from ALL of them to build the complete chapter sentences
+      const roots = document.querySelectorAll('.chapter-text')
+      roots.forEach(root => {
+        paragraphs.push(...Array.from(root.querySelectorAll('p')))
+      })
+    }
+
+    paragraphs.forEach(p => {
+      const idx = p.getAttribute('data-original-index');
+      if (idx === null) return;
+      const originalIndex = parseInt(idx, 10);
+
+      const t = (p as HTMLElement).textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (!t) return;
+
+      const sliceIdxStr = p.getAttribute('data-slice-index');
+      const sliceIndex = sliceIdxStr !== null ? parseInt(sliceIdxStr, 10) : 0;
+
+      if (currentSentence && currentSentence.originalIndex === originalIndex) {
+        const charStart = currentSentence.text.length;
+        currentSentence.text += t;
+        currentSentence.slices.push({
+          sliceIndex,
+          charStart,
+          charLength: t.length
+        });
+      } else {
+        currentSentence = {
+          text: t,
+          originalIndex,
+          slices: [{
+            sliceIndex,
+            charStart: 0,
+            charLength: t.length
+          }]
+        };
+        sentences.push(currentSentence);
+      }
+    });
+
+    return sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
+  }
+
+  function updateNativeTTSSlices() {
+    if (!isSpeaking.value) return
+    const sentences = extractDomSentences()
+    if (!sentences.length) return
+    invokeTTS('updateSlices', {
+      currentIndex: currentIndex.value,
+      sentences
+    })
+  }
+
   function startTTS(text?: string, options: TTSOptions & { startIndex?: number, startSliceIndex?: number } = {}, interruptCurrent = true) {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
 
-    let finalSentences: any[] = []
+    const finalSentences = extractDomSentences()
     if (invokeTTS('play', {
-      sentences: (() => {
-        const sentences: {
-          text: string;
-          originalIndex: number;
-          slices: { sliceIndex: number; charStart: number; charLength: number }[];
-        }[] = [];
-        let currentSentence: typeof sentences[0] | null = null;
-
-        let paragraphs: Element[] = []
-        if (config.readMethod === '上下滚动' || config.readMethod === '上下滚动2') {
-          const root = document.querySelector(`.continuous-chapter[data-chapter-index="${currentIndex.value}"] .chapter-text`)
-          if (root) {
-            paragraphs = Array.from(root.querySelectorAll('p'))
-          }
-        } else {
-          // Horizontal paging has multiple .chapter-text elements (one per page)
-          // We need to select p tags from ALL of them to build the complete chapter sentences
-          const roots = document.querySelectorAll('.chapter-text')
-          roots.forEach(root => {
-            paragraphs.push(...Array.from(root.querySelectorAll('p')))
-          })
-        }
-
-        paragraphs.forEach(p => {
-          const idx = p.getAttribute('data-original-index');
-          if (idx === null) return;
-          const originalIndex = parseInt(idx, 10);
-
-          const t = (p as HTMLElement).textContent?.replace(/\s+/g, ' ').trim() || '';
-          if (!t) return;
-
-          const sliceIdxStr = p.getAttribute('data-slice-index');
-          const sliceIndex = sliceIdxStr !== null ? parseInt(sliceIdxStr, 10) : 0;
-
-          if (currentSentence && currentSentence.originalIndex === originalIndex) {
-            const charStart = currentSentence.text.length;
-            currentSentence.text += t;
-            currentSentence.slices.push({
-              sliceIndex,
-              charStart,
-              charLength: t.length
-            });
-          } else {
-            currentSentence = {
-              text: t,
-              originalIndex,
-              slices: [{
-                sliceIndex,
-                charStart: 0,
-                charLength: t.length
-              }]
-            };
-            sentences.push(currentSentence);
-          }
-        });
-
-        finalSentences = sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
-        return finalSentences;
-      })(),
+      sentences: finalSentences,
       text: finalSentences.length > 0 ? finalSentences.map(s => s.text).join('\n') : rawText,
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
@@ -1551,12 +1566,12 @@ export const useReaderStore = defineStore('reader', () => {
   /* ─── Book / chapter ops ─── */
   async function loadBook(b: Book) {
     loading.value = true
-    
+
     // 同步占位，防止路由跳转后 ReaderView.vue onMounted 认为没书而触发 restorePersistedSession 导致新老书串台
     book.value = b
     chapters.value = []
     content.value = ''
-    
+
     const latestBook = await resolveLatestShelfBook(b)
     book.value = latestBook
     appStore.markBookOpened(latestBook.bookUrl)
@@ -1987,7 +2002,7 @@ export const useReaderStore = defineStore('reader', () => {
     systemTtsNativeEventsReliable,
     fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
     addHttpTtsEngine, removeHttpTtsEngine, setActiveHttpTtsEngine, setOpenAISpeechSource, setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
-    setPreloadCount, setGapReduction, syncTTSConfigToNative,
+    setPreloadCount, setGapReduction, syncTTSConfigToNative, updateNativeTTSSlices,
     displayContent, processContentForDisplay,
     isAutoScrolling,
     initSpeechConfig,

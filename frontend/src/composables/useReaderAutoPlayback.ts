@@ -829,12 +829,17 @@ export function useReaderAutoPlayback(
 
   function setChapterLayoutReady(ready: boolean) {
     isChapterLayoutReady = ready
-    if (ready && pendingProgressQueue.length > 0) {
+    if (ready) {
       if (store.isSpeaking && !store.isPaused) {
-        const targetProgress = pendingProgressQueue[pendingProgressQueue.length - 1]
-        syncNativeTTSProgress(targetProgress.index, targetProgress.sliceIndex, targetProgress.textPrefix)
+        store.updateNativeTTSSlices()
       }
-      pendingProgressQueue = []
+      if (pendingProgressQueue.length > 0) {
+        if (store.isSpeaking && !store.isPaused) {
+          const targetProgress = pendingProgressQueue[pendingProgressQueue.length - 1]
+          syncNativeTTSProgress(targetProgress.index, targetProgress.sliceIndex, targetProgress.textPrefix)
+        }
+        pendingProgressQueue = []
+      }
     }
     if (!ready) {
       pendingProgressQueue = []
@@ -842,11 +847,12 @@ export function useReaderAutoPlayback(
   }
 
   function syncNativeTTSProgress(index: number, sliceIndex?: number, textPrefix?: string) {
+    const numericSliceIndex = typeof sliceIndex === 'number' ? sliceIndex : undefined
     lastNativeTTSIndex = index
-    lastNativeTTSSliceIndex = sliceIndex
+    lastNativeTTSSliceIndex = numericSliceIndex
     lastNativeTTSTextPrefix = textPrefix
     if (!isChapterLayoutReady) {
-      pendingProgressQueue.push({ index, sliceIndex, textPrefix })
+      pendingProgressQueue.push({ index, sliceIndex: numericSliceIndex, textPrefix })
       return
     }
 
@@ -896,9 +902,9 @@ export function useReaderAutoPlayback(
       if (isHorizontalPageMode.value && chapterTextRef.value) {
         const pages = Array.from(chapterTextRef.value.querySelectorAll('.horizontal-page'))
 
-        if (sliceIndex !== undefined) {
+        if (numericSliceIndex !== undefined) {
           // If native provides sliceIndex, find the exact page that contains this slice
-          const exactEl = els.find(el => parseInt(el.getAttribute('data-slice-index') || '0', 10) === sliceIndex)
+          const exactEl = els.find(el => parseInt(el.getAttribute('data-slice-index') || '0', 10) === numericSliceIndex)
           if (exactEl) {
             targetEl = exactEl
             const targetPage = pages.findIndex(page => page.contains(exactEl))
@@ -917,7 +923,7 @@ export function useReaderAutoPlayback(
           }
         }
       }
-      
+
       showParagraph(targetEl)
     }
   }

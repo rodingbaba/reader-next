@@ -353,6 +353,44 @@ class TTSManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - 热更新当前章节的切片数据（用于后台切章回到前台或排版完成后静默补齐 slices，不打断播放）
+    func updateSentencesSlices(currentIndex: Int, sentencesData: [[String: Any]]) {
+        guard isPlaying, currentIndex == currentChapterIndex else { return }
+        var slicesByOriginalIndex: [Int: [TTSSlice]] = [:]
+        for dict in sentencesData {
+            guard let oIdx = dict["originalIndex"] as? Int else { continue }
+            var parsedSlices: [TTSSlice] = []
+            if let slicesData = dict["slices"] as? [[String: Any]] {
+                for sDict in slicesData {
+                    if let sIdx = sDict["sliceIndex"] as? Int,
+                       let cStart = sDict["charStart"] as? Int,
+                       let cLen = sDict["charLength"] as? Int {
+                        parsedSlices.append(TTSSlice(sliceIndex: sIdx, charStart: cStart, charLength: cLen))
+                    }
+                }
+            }
+            if !parsedSlices.isEmpty {
+                slicesByOriginalIndex[oIdx] = parsedSlices
+            }
+        }
+
+        guard !slicesByOriginalIndex.isEmpty else { return }
+
+        var updatedSentences: [TTSSentence] = []
+        for sentence in self.sentences {
+            if let newSlices = slicesByOriginalIndex[sentence.originalIndex] {
+                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: sentence.originalIndex, slices: newSlices))
+            } else {
+                updatedSentences.append(sentence)
+            }
+        }
+        self.sentences = updatedSentences
+        logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)", category: "TTS")
+
+        // 如果当前正在播放，立即触发一次切片进度检测
+        updateSliceProgress()
+    }
+
     // MARK: - 开始朗读
     // F-C6: 清理未使用的 initialStartSliceIndex 字段（变更 1 已弃用 seek 起播）
     // F-A3/A5: 标记本次 sentences 是否来自 Native fallback 分句（而非 Web 下发）

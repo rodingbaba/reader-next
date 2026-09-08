@@ -1871,7 +1871,12 @@ function handleBeforeUnload() {
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState !== 'hidden') return
+  if (document.visibilityState === 'visible') {
+    if (store.isSpeaking && isHorizontalPageMode.value) {
+      store.updateNativeTTSSlices()
+    }
+    return
+  }
   persistReadingProgressTemporaryKeepalive()
 }
 
