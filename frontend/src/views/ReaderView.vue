@@ -1873,7 +1873,9 @@ function handleBeforeUnload() {
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
     if (store.isSpeaking && isHorizontalPageMode.value) {
-      store.updateNativeTTSSlices()
+      rebuildHorizontalPages().then(() => {
+        store.updateNativeTTSSlices(horizontalPages.value)
+      })
     }
     return
   }
@@ -3219,6 +3221,9 @@ watch(
           pendingRestoreAttempts = 0
           syncHorizontalPageState()
         }
+        if (store.isSpeaking) {
+          store.updateNativeTTSSlices(horizontalPages.value)
+        }
         setChapterLayoutReady(true)
       })
     } else {
@@ -3276,8 +3281,13 @@ watch(() => store.content, () => {
 })
 
 watch(() => store.loading, (loading) => {
-  if (!loading && pendingRestorePosition.value) {
-    scheduleRestoreReadingPosition()
+  if (!loading) {
+    if (pendingRestorePosition.value) {
+      scheduleRestoreReadingPosition()
+    }
+    if (store.isSpeaking && isHorizontalPageMode.value) {
+      store.updateNativeTTSSlices(horizontalPages.value)
+    }
   }
 })
 

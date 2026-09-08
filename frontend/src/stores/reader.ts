@@ -1359,11 +1359,65 @@ export const useReaderStore = defineStore('reader', () => {
     })
   }
 
-  function extractDomSentences(): {
+  function extractSentencesFromHtmlPages(pages: string[]) {
+    const sentences: {
+      text: string;
+      originalIndex: number;
+      slices: { sliceIndex: number; charStart: number; charLength: number }[];
+    }[] = [];
+    let currentSentence: typeof sentences[0] | null = null;
+    const container = document.createElement('div')
+
+    for (const pageHtml of pages) {
+      container.innerHTML = pageHtml
+      const paragraphs = Array.from(container.querySelectorAll('p'))
+      paragraphs.forEach(p => {
+        const idx = p.getAttribute('data-original-index')
+        if (idx === null) return
+        const originalIndex = parseInt(idx, 10)
+
+        const t = (p as HTMLElement).textContent?.replace(/\s+/g, ' ').trim() || ''
+        if (!t) return
+
+        const sliceIdxStr = p.getAttribute('data-slice-index')
+        const sliceIndex = sliceIdxStr !== null ? parseInt(sliceIdxStr, 10) : 0
+
+        if (currentSentence && currentSentence.originalIndex === originalIndex) {
+          const charStart = currentSentence.text.length
+          currentSentence.text += t
+          currentSentence.slices.push({
+            sliceIndex,
+            charStart,
+            charLength: t.length
+          })
+        } else {
+          currentSentence = {
+            text: t,
+            originalIndex,
+            slices: [{
+              sliceIndex,
+              charStart: 0,
+              charLength: t.length
+            }]
+          }
+          sentences.push(currentSentence)
+        }
+      })
+    }
+
+    return sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text))
+  }
+
+  function extractDomSentences(explicitPages?: string[]): {
     text: string;
     originalIndex: number;
     slices: { sliceIndex: number; charStart: number; charLength: number }[];
   }[] {
+    if (explicitPages && explicitPages.length > 0) {
+      const fromPages = extractSentencesFromHtmlPages(explicitPages)
+      if (fromPages.length > 0) return fromPages
+    }
+
     const sentences: {
       text: string;
       originalIndex: number;
@@ -1422,9 +1476,9 @@ export const useReaderStore = defineStore('reader', () => {
     return sentences.filter(s => !/^[\s\p{P}\p{S}]+$/u.test(s.text));
   }
 
-  function updateNativeTTSSlices() {
+  function updateNativeTTSSlices(explicitPages?: string[]) {
     if (!isSpeaking.value) return
-    const sentences = extractDomSentences()
+    const sentences = extractDomSentences(explicitPages)
     if (!sentences.length) return
     invokeTTS('updateSlices', {
       currentIndex: currentIndex.value,

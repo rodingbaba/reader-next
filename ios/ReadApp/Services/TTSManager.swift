@@ -78,9 +78,11 @@ class TTSManager: NSObject, ObservableObject {
     private func startPlaybackTimer() {
         stopPlaybackTimer()
         DispatchQueue.main.async {
-            self.playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
                 self?.updateSliceProgress()
             }
+            RunLoop.main.add(timer, forMode: .common)
+            self.playbackTimer = timer
         }
     }
 
@@ -103,8 +105,9 @@ class TTSManager: NSObject, ObservableObject {
         let progress = currentTime / duration
         let targetCharIndex = Int(progress * Double(sentence.text.count))
         
-        if let currentSlice = sentence.slices.first(where: { targetCharIndex >= $0.charStart && targetCharIndex < ($0.charStart + $0.charLength) }) {
-            let sliceIndex = currentSlice.sliceIndex
+        let currentSlice = sentence.slices.first(where: { targetCharIndex >= $0.charStart && targetCharIndex < ($0.charStart + $0.charLength) }) ?? (targetCharIndex >= sentence.text.count ? sentence.slices.last : sentence.slices.first)
+        if let slice = currentSlice {
+            let sliceIndex = slice.sliceIndex
             if self.lastReportedSliceIndex != sliceIndex {
                 self.lastReportedSliceIndex = sliceIndex
                 // F-B1: 追加 textPrefix 供 Web 端做进度校准
@@ -355,7 +358,14 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 热更新当前章节的切片数据（用于后台切章回到前台或排版完成后静默补齐 slices，不打断播放）
     func updateSentencesSlices(currentIndex: Int, sentencesData: [[String: Any]]) {
-        guard isPlaying, currentIndex == currentChapterIndex else { return }
+        guard isPlaying else {
+            logger.log("⚠️ 忽略热更新切片：当前未在播放状态 (target: \(currentIndex))", category: "TTS")
+            return
+        }
+        guard currentIndex == currentChapterIndex else {
+            logger.log("⚠️ 忽略热更新切片：章节不匹配 (target: \(currentIndex), current: \(currentChapterIndex))", category: "TTS")
+            return
+        }
         var slicesByOriginalIndex: [Int: [TTSSlice]] = [:]
         for dict in sentencesData {
             guard let oIdx = dict["originalIndex"] as? Int else { continue }
@@ -374,7 +384,10 @@ class TTSManager: NSObject, ObservableObject {
             }
         }
 
-        guard !slicesByOriginalIndex.isEmpty else { return }
+        guard !slicesByOriginalIndex.isEmpty else {
+            logger.log("⚠️ 忽略热更新切片：解析出的有效切片数据为空 (target: \(currentIndex), rawCount: \(sentencesData.count))", category: "TTS")
+            return
+        }
 
         var updatedSentences: [TTSSentence] = []
         for sentence in self.sentences {
@@ -387,7 +400,8 @@ class TTSManager: NSObject, ObservableObject {
         self.sentences = updatedSentences
         logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)", category: "TTS")
 
-        // 如果当前正在播放，立即触发一次切片进度检测
+        // 重置上次上报的 sliceIndex，以便立即触发最新切片进度检测
+        self.lastReportedSliceIndex = nil
         updateSliceProgress()
     }
 

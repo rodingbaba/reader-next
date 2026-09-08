@@ -416,6 +416,10 @@ export function useHorizontalPaging(
 
     container.scrollTo({ left: 0, behavior: 'auto' })
     updateHorizontalEndState()
+
+    if (store.isSpeaking) {
+      store.updateNativeTTSSlices(mergedPages)
+    }
   }
 
   function alignHorizontalToNearestPage(touchMoving: boolean) {
