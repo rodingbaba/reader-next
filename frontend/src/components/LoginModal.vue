@@ -121,9 +121,11 @@ const form = reactive({
 })
 
 // 弹窗打开时从 localStorage 重新读取 server_base_url 回显
+// 回显时去掉 /reader3 后缀，让用户看到干净的地址（和原 ServerConfigModal 行为一致）
 watch(() => props.modelValue, (visible) => {
   if (visible) {
-    form.serverUrl = localStorage.getItem('server_base_url') || ''
+    const stored = localStorage.getItem('server_base_url') || ''
+    form.serverUrl = stored.endsWith('/reader3') ? stored.replace(/\/reader3$/, '') : stored
     serverUrlError.value = ''
   }
 }, { immediate: true })
@@ -133,9 +135,9 @@ function close() {
   emit('update:modelValue', false)
 }
 
-/** 校验服务器地址格式，通过返回清理后的 url，不通过返回 null */
+/** 校验服务器地址格式，通过返回清理后的 url（自动补全 /reader3 后缀），不通过返回 null */
 function validateServerUrl(raw: string): string | null {
-  const url = raw.trim()
+  let url = raw.trim()
   if (!url) {
     serverUrlError.value = '请输入服务器地址'
     return null
@@ -144,7 +146,12 @@ function validateServerUrl(raw: string): string | null {
     serverUrlError.value = '请输入完整的服务器地址（例如 http://192.168.1.10:18080）'
     return null
   }
-  return url.replace(/\/+$/, '')
+  url = url.replace(/\/+$/, '')
+  // 自动补全 /reader3 后缀（和原 ServerConfigModal 行为一致）
+  if (!url.endsWith('/reader3')) {
+    url += '/reader3'
+  }
+  return url
 }
 
 async function handleSubmit() {
