@@ -226,6 +226,9 @@ export const useAppStore = defineStore('app', () => {
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
       isOnline.value = true
+      // 网络恢复：派发事件，触发 reader store 的 Outbox flush
+      // （app.ts 不直接 import reader store 以避免循环依赖）
+      window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
     })
     window.addEventListener('offline', () => {
       isOnline.value = false

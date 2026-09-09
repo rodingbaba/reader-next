@@ -308,6 +308,14 @@ export const useReaderStore = defineStore('reader', () => {
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
+
+  // 监听 app store 派发的 reader-flush-outbox 事件，网络恢复时自动补推 Outbox
+  if (typeof window !== 'undefined') {
+    window.addEventListener('reader-flush-outbox', () => {
+      void flushProgressOutbox()
+    })
+  }
+
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -322,6 +330,110 @@ export const useReaderStore = defineStore('reader', () => {
   const readChapterKeys = ref<Set<string>>(new Set())
   const progressDirty = ref(false)
   const lastServerProgressKey = ref('')
+
+  // ─── 离线进度 Outbox 队列 ───
+  // 断网时未发送成功的 saveBookProgress 存入本地队列，联网后自动批量回传
+  const OUTBOX_KEY = 'reader_progress_outbox'
+  const OUTBOX_MAX = 200
+  const OUTBOX_MAX_RETRY = 5
+  let outboxFlushing = false
+
+  interface ProgressOutboxEntry {
+    bookUrl: string
+    index: number
+    position: number
+    ts: number
+    retryCount: number
+  }
+
+  function loadOutbox(): ProgressOutboxEntry[] {
+    try {
+      const raw = localStorage.getItem(OUTBOX_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed as ProgressOutboxEntry[] : []
+    } catch {
+      return []
+    }
+  }
+
+  function saveOutbox(entries: ProgressOutboxEntry[]) {
+    try {
+      // 上限保护：超出时丢弃最旧的条目
+      const trimmed = entries.length > OUTBOX_MAX
+        ? entries.slice(entries.length - OUTBOX_MAX)
+        : entries
+      localStorage.setItem(OUTBOX_KEY, JSON.stringify(trimmed))
+    } catch (e) {
+      console.warn('saveOutbox 失败', e)
+    }
+  }
+
+  /**
+   * 入队：按 bookUrl 合并去重，同一本书只保留最新一条进度
+   */
+  function queueProgressToOutbox(payload: { bookUrl: string; index: number; position: number }) {
+    const entries = loadOutbox()
+    // 过滤掉同 bookUrl 的旧条目，再 push 新条目
+    const filtered = entries.filter((e) => e.bookUrl !== payload.bookUrl)
+    filtered.push({
+      bookUrl: payload.bookUrl,
+      index: payload.index,
+      position: payload.position,
+      ts: Date.now(),
+      retryCount: 0,
+    })
+    saveOutbox(filtered)
+  }
+
+  /**
+   * 批量推送 Outbox 队列到服务端。
+   * 串行推送（每条间隔 200ms），单批最多 20 条。
+   * 4xx 不可恢复（删除条目），5xx/网络错误保留重试（retryCount++）。
+   */
+  async function flushProgressOutbox(): Promise<void> {
+    if (outboxFlushing) return
+    const entries = loadOutbox()
+    if (entries.length === 0) return
+    outboxFlushing = true
+    try {
+      const batch = entries.slice(0, 20)
+      const remaining = entries.slice(20)
+      const nextEntries = [...remaining]
+      for (const entry of batch) {
+        try {
+          await saveBookProgress({
+            bookUrl: entry.bookUrl,
+            index: entry.index,
+            position: entry.position,
+          })
+          // 推送成功：不加入 nextEntries（即从队列删除）
+        } catch (error) {
+          const isClientError = error && typeof error === 'object'
+            && ('response' in error)
+            && (error as { response?: { status?: number } }).response?.status
+            && ((error as { response: { status: number } }).response.status >= 400
+              && (error as { response: { status: number } }).response.status < 500)
+          if (isClientError) {
+            // 4xx 不可恢复：从队列删除，Toast 提示
+            console.warn('Outbox 条目不可恢复，已跳过', entry, error)
+          } else {
+            // 5xx/网络错误：保留重试
+            if (entry.retryCount < OUTBOX_MAX_RETRY) {
+              nextEntries.push({ ...entry, retryCount: entry.retryCount + 1 })
+            } else {
+              console.warn('Outbox 条目重试上限，已丢弃', entry)
+            }
+          }
+        }
+        // 串行间隔 200ms
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      saveOutbox(nextEntries)
+    } finally {
+      outboxFlushing = false
+    }
+  }
 
   const currentChapter = computed(() => chapters.value[currentIndex.value] || null)
   const hasNext = computed(() => currentIndex.value < chapters.value.length - 1)
@@ -1704,7 +1816,10 @@ export const useReaderStore = defineStore('reader', () => {
     await saveBookProgress(payload).then(() => {
       progressDirty.value = false
       lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
-    }).catch(() => undefined)
+    }).catch(() => {
+      // 失败时入队 Outbox，等待联网后自动补推
+      queueProgressToOutbox(payload)
+    })
   }
 
   async function flushProgressToServer(force = false) {
@@ -1735,7 +1850,10 @@ export const useReaderStore = defineStore('reader', () => {
       headers,
       body: JSON.stringify(payload),
       keepalive: true,
-    }).catch(() => undefined)
+    }).catch(() => {
+      // keepalive 失败时入队 Outbox，等待联网后自动补推
+      if (payload) queueProgressToOutbox(payload)
+    })
     progressDirty.value = false
     lastServerProgressKey.value = nextKey
   }
@@ -1970,24 +2088,82 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
-  /* ─── Replace Rules ─── */
-  async function fetchReplaceRules() {
+  /* ─── Replace Rules（含本地镜像，离线可用） ─── */
+  const REPLACE_RULES_KEY = 'reader_replace_rules'
+
+  function loadCachedReplaceRules(): ReplaceRule[] {
     try {
-      replaceRules.value = await getReplaceRules()
-    } catch { /* ignore */ }
+      const raw = localStorage.getItem(REPLACE_RULES_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed as ReplaceRule[] : []
+    } catch {
+      return []
+    }
   }
 
-  /* ─── Bookmarks ─── */
+  function saveCachedReplaceRules(rules: ReplaceRule[]) {
+    try {
+      localStorage.setItem(REPLACE_RULES_KEY, JSON.stringify(rules))
+    } catch (e) {
+      console.warn('saveCachedReplaceRules 失败', e)
+    }
+  }
+
+  async function fetchReplaceRules() {
+    try {
+      const rules = await getReplaceRules()
+      replaceRules.value = rules
+      // 成功后落盘本地镜像，离线阅读时继续执行文本净化清洗
+      saveCachedReplaceRules(rules)
+    } catch {
+      // 远端失败：尝试从本地镜像恢复，保证离线净化规则可用
+      const cached = loadCachedReplaceRules()
+      if (cached.length > 0) {
+        replaceRules.value = cached
+      }
+    }
+  }
+
+  /* ─── Bookmarks（含本地镜像，离线可用） ─── */
+  const bookmarksCacheKey = (bookUrl: string) => `reader_bookmarks_${bookUrl}`
+
+  function loadCachedBookmarks(bookUrl: string): Bookmark[] {
+    try {
+      const raw = localStorage.getItem(bookmarksCacheKey(bookUrl))
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed as Bookmark[] : []
+    } catch {
+      return []
+    }
+  }
+
+  function saveCachedBookmarks(bookUrl: string, items: Bookmark[]) {
+    try {
+      localStorage.setItem(bookmarksCacheKey(bookUrl), JSON.stringify(items))
+    } catch (e) {
+      console.warn('saveCachedBookmarks 失败', e)
+    }
+  }
+
   async function fetchBookmarks() {
     try {
       const all = await getBookmarks()
       // Filter for current book
       if (book.value) {
         bookmarks.value = all.filter(b => b.bookName === book.value?.name && b.bookAuthor === book.value?.author)
+        // 成功后落盘本地镜像
+        saveCachedBookmarks(book.value.bookUrl, bookmarks.value)
       } else {
         bookmarks.value = all
       }
-    } catch { /* ignore */ }
+    } catch {
+      // 远端失败：尝试从本地镜像恢复，保证离线书签可见
+      if (book.value) {
+        bookmarks.value = loadCachedBookmarks(book.value.bookUrl)
+      }
+    }
   }
 
   async function addBookmark(pos: number = 0, snippet: string = '') {
@@ -2002,19 +2178,48 @@ export const useReaderStore = defineStore('reader', () => {
       time: Date.now(),
       content: '',
     }
-    await saveBookmark(b)
-    await fetchBookmarks()
+    // 离线时先写入本地镜像，联网后同步
+    const updated = [...bookmarks.value, b]
+    bookmarks.value = updated
+    saveCachedBookmarks(book.value.bookUrl, updated)
+    try {
+      await saveBookmark(b)
+      await fetchBookmarks()
+    } catch {
+      // 网络失败：保留本地镜像，Toast 提示
+      appStore.showToast('离线添加书签成功，联网后自动同步', 'warning')
+    }
   }
 
   async function removeBookmark(b: Bookmark) {
-    await apiDeleteBookmark(b)
-    await fetchBookmarks()
+    // 先更新本地镜像
+    const updated = bookmarks.value.filter(item => item !== b)
+    bookmarks.value = updated
+    if (book.value) {
+      saveCachedBookmarks(book.value.bookUrl, updated)
+    }
+    try {
+      await apiDeleteBookmark(b)
+      await fetchBookmarks()
+    } catch {
+      appStore.showToast('离线删除书签成功，联网后自动同步', 'warning')
+    }
   }
 
   async function removeBookmarks(items: Bookmark[]) {
     if (!items.length) return
-    await apiDeleteBookmarks(items)
-    await fetchBookmarks()
+    // 先更新本地镜像
+    const updated = bookmarks.value.filter(item => !items.includes(item))
+    bookmarks.value = updated
+    if (book.value) {
+      saveCachedBookmarks(book.value.bookUrl, updated)
+    }
+    try {
+      await apiDeleteBookmarks(items)
+      await fetchBookmarks()
+    } catch {
+      appStore.showToast('离线删除书签成功，联网后自动同步', 'warning')
+    }
   }
 
   function clear() {
@@ -2064,7 +2269,7 @@ export const useReaderStore = defineStore('reader', () => {
     loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
     chapterScrollProgress, setChapterScrollProgress,
     getPersistedReaderSession, restorePersistedSession,
-    persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
+    persistProgress, flushProgressToServer, flushProgressToServerKeepalive, flushProgressOutbox,
     config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
