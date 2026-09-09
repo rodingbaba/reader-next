@@ -24,6 +24,19 @@
           </div>
 
           <form class="login-form" @submit.prevent="handleSubmit">
+            <!-- App 端顶部常驻服务器地址输入框；Web 端自动隐藏 -->
+            <div v-if="isNative" class="form-field">
+              <label for="server-url">服务器地址</label>
+              <input
+                id="server-url"
+                v-model="form.serverUrl"
+                type="text"
+                placeholder="例如: http://192.168.1.100:18080"
+                autocomplete="off"
+              />
+              <p v-if="serverUrlError" class="field-error">{{ serverUrlError }}</p>
+            </div>
+
             <div class="form-field">
               <label for="username">用户名</label>
               <input
@@ -59,7 +72,7 @@
 
             <button type="submit" class="submit-btn" :disabled="submitting">
               <span v-if="submitting" class="btn-spinner"></span>
-              {{ isLogin ? '登 录' : '注 册' }}
+              {{ isLogin ? (isNative ? '连接并登录' : '登 录') : '注 册' }}
             </button>
           </form>
 
@@ -69,11 +82,7 @@
               {{ isLogin ? '注册' : '登录' }}
             </a>
           </p>
-          <p v-if="isNative" class="switch-mode" style="margin-top: 0.2rem;">
-            <a href="#" @click.prevent="openServerConfig" style="color: var(--text-muted); text-decoration: underline;">
-              修改服务器地址
-            </a>
-          </p>
+          <!-- 废弃底部“修改服务器地址”跳转链接：App 端已常驻顶部输入框 -->
         </div>
       </div>
     </Transition>
@@ -81,13 +90,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { login, register } from '../api/user'
 import { useAppStore } from '../stores/app'
 import { isNativeApp } from '../utils/nativeBridge'
 import { useBookshelfStore } from '../stores/bookshelf'
+import http from '../api/http'
 
-defineProps<{
+const props = defineProps<{
   modelValue: boolean
 }>()
 
@@ -96,28 +106,59 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
-const isNative = isNativeApp()
-
-function openServerConfig() {
-  emit('update:modelValue', false)
-  appStore.showServerConfigModal = true
-}
 const shelfStore = useBookshelfStore()
+const isNative = isNativeApp()
 
 const isLogin = ref(true)
 const submitting = ref(false)
+const serverUrlError = ref('')
+
 const form = reactive({
+  serverUrl: '',
   username: '',
   password: '',
   code: '',
 })
 
+// 弹窗打开时从 localStorage 重新读取 server_base_url 回显
+watch(() => props.modelValue, (visible) => {
+  if (visible) {
+    form.serverUrl = localStorage.getItem('server_base_url') || ''
+    serverUrlError.value = ''
+  }
+}, { immediate: true })
+
 function close() {
+  // 关闭即放弃：不回写 localStorage / http.defaults.baseURL
   emit('update:modelValue', false)
+}
+
+/** 校验服务器地址格式，通过返回清理后的 url，不通过返回 null */
+function validateServerUrl(raw: string): string | null {
+  const url = raw.trim()
+  if (!url) {
+    serverUrlError.value = '请输入服务器地址'
+    return null
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    serverUrlError.value = '请输入完整的服务器地址（例如 http://192.168.1.10:18080）'
+    return null
+  }
+  return url.replace(/\/+$/, '')
 }
 
 async function handleSubmit() {
   if (!form.username || !form.password) return
+
+  // App 端先校验并写回服务器地址
+  if (isNative) {
+    const trimmedUrl = validateServerUrl(form.serverUrl)
+    if (!trimmedUrl) return
+    // 写入时序：localStorage → http.defaults.baseURL → login
+    localStorage.setItem('server_base_url', trimmedUrl)
+    http.defaults.baseURL = trimmedUrl
+  }
+
   submitting.value = true
   try {
     const user = isLogin.value
@@ -255,6 +296,12 @@ async function handleSubmit() {
 .form-field input:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-bg);
+}
+
+.field-error {
+  color: var(--color-error, #e5484d);
+  font-size: var(--text-sm);
+  margin: 0;
 }
 
 .submit-btn {

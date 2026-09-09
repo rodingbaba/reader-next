@@ -405,7 +405,8 @@ function handleLogin() {
 
 function handleModifyServer() {
   close()
-  appStore.showServerConfigModal = true
+  // 废弃 ServerConfigModal：直接打开一体化 LoginModal
+  appStore.showLoginModal = true
 }
 
 async function handleLogout() {

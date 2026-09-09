@@ -6,6 +6,41 @@ import type { UserInfo, VersionUpdateInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import { computeNeedSecureKey, readStoredSecureKey, SECURE_KEY_STORAGE_KEY } from '../utils/secureAccess'
 
+const USER_INFO_CACHE_KEY = 'reader_user_info_cache'
+
+/** 从 localStorage 读取缓存的 userInfo（用于启动时秒级恢复登录态） */
+function loadCachedUserInfo(): UserInfo | null {
+  try {
+    const raw = localStorage.getItem(USER_INFO_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<UserInfo>
+    return {
+      username: parsed.username ?? '',
+      accessToken: '',
+      isAdmin: parsed.isAdmin ?? false,
+    } as UserInfo
+  } catch {
+    return null
+  }
+}
+
+/** 仅持久化纯展示字段（username / isAdmin），不写敏感 token */
+function persistUserInfo(user: UserInfo | null) {
+  if (!user) {
+    localStorage.removeItem(USER_INFO_CACHE_KEY)
+    return
+  }
+  const safePayload = {
+    username: user.username,
+    isAdmin: user.isAdmin,
+  }
+  try {
+    localStorage.setItem(USER_INFO_CACHE_KEY, JSON.stringify(safePayload))
+  } catch (e) {
+    console.warn('persistUserInfo 失败', e)
+  }
+}
+
 export const useAppStore = defineStore('app', () => {
   const STATS_KEY = 'reader-stats'
   // ─── Theme ───
@@ -55,12 +90,14 @@ export const useAppStore = defineStore('app', () => {
   }, { immediate: true })
 
   // ─── User ───
-  const userInfo = ref<UserInfo | null>(null)
+  // 启动时从本地缓存恢复 userInfo（不等待网络请求）
+  const userInfo = ref<UserInfo | null>(loadCachedUserInfo())
   const isSecureMode = ref(false)
   const needSecureKey = ref(false)
   const secureKeyRequired = ref(false)
   const adminAuthorized = ref(false)
-  const isLoggedIn = ref(false)
+  // isLoggedIn 初始化：只要本地有 accessToken 与 userInfo，立即视为已登录
+  const isLoggedIn = ref(!!localStorage.getItem('accessToken') && !!userInfo.value)
   const secureKey = ref(readStoredSecureKey())
   const versionUpdate = ref<VersionUpdateInfo | null>(null)
   const versionUpdateLoading = ref(false)
@@ -82,11 +119,14 @@ export const useAppStore = defineStore('app', () => {
         adminAuthorized: data.adminAuthorized,
       })
       isLoggedIn.value = !!data.userInfo?.username
+      // 成功时刷新本地 userInfo 缓存
+      persistUserInfo(data.userInfo ?? null)
       if (canCheckVersionUpdate.value) {
         void checkVersionUpdate()
       }
     } catch {
-      isLoggedIn.value = false
+      // 关键：网络错误不重置 isLoggedIn（离线/超时不应触发未登录态）
+      // 仅当确认为 401 / NEED_LOGIN 时才清理凭证，由 http.ts 拦截器统一处理
     }
   }
 
@@ -100,6 +140,8 @@ export const useAppStore = defineStore('app', () => {
       adminAuthorized: adminAuthorized.value,
     })
     localStorage.setItem('accessToken', user.accessToken)
+    // 同步持久化 userInfo 纯展示字段
+    persistUserInfo(user)
     if (canCheckVersionUpdate.value) {
       void checkVersionUpdate()
     }
@@ -109,6 +151,8 @@ export const useAppStore = defineStore('app', () => {
     userInfo.value = null
     isLoggedIn.value = false
     localStorage.removeItem('accessToken')
+    // 一并清理 userInfo 缓存，防止残留
+    persistUserInfo(null)
   }
 
   function setSecureKey(value: string) {
@@ -124,6 +168,7 @@ export const useAppStore = defineStore('app', () => {
   function updateUserInfo(next: UserInfo | null) {
     userInfo.value = next
     isLoggedIn.value = !!next?.username
+    persistUserInfo(next)
   }
 
   async function checkVersionUpdate(force = false) {
@@ -169,17 +214,23 @@ export const useAppStore = defineStore('app', () => {
   }
 
   // ─── UI State ───
-  const showServerConfigModal = ref(false)
+  // 废弃 ServerConfigModal：移除 showServerConfigModal，统一由 LoginModal 承载
   const showLoginModal = ref(false)
   const showSettingsDrawer = ref(false)
   const showSourceManager = ref(false)
   const showUserManager = ref(false)
   const showWebdavManager = ref(false)
   const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
-  const pwaReady = ref(false)
-  const pwaUpdateAvailable = ref(false)
-  const deferredInstallPrompt = ref<any>(null)
-  const waitingServiceWorker = ref<ServiceWorker | null>(null)
+
+  // 监听 online/offline 事件，断网/恢复时更新 isOnline
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+      isOnline.value = true
+    })
+    window.addEventListener('offline', () => {
+      isOnline.value = false
+    })
+  }
 
   const initialReadingStats = (() => {
     try {
@@ -260,44 +311,13 @@ export const useAppStore = defineStore('app', () => {
     isOnline.value = value
   }
 
-  function setPwaReady(value: boolean) {
-    pwaReady.value = value
-  }
-
-  function setPwaUpdateAvailable(value: boolean) {
-    pwaUpdateAvailable.value = value
-  }
-
-  function setWaitingServiceWorker(value: ServiceWorker | null) {
-    waitingServiceWorker.value = value
-  }
-
-  function setDeferredInstallPrompt(value: any) {
-    deferredInstallPrompt.value = value
-  }
-
-  async function installPwa() {
-    if (!deferredInstallPrompt.value) return false
-    deferredInstallPrompt.value.prompt()
-    const result = await deferredInstallPrompt.value.userChoice.catch(() => null)
-    deferredInstallPrompt.value = null
-    return result?.outcome === 'accepted'
-  }
-
-  function applyPwaUpdate() {
-    if (!waitingServiceWorker.value) return false
-    waitingServiceWorker.value.postMessage({ type: 'SKIP_WAITING' })
-    return true
-  }
-
   return {
     theme, setTheme, toggleTheme,
     userInfo, isSecureMode, needSecureKey, secureKeyRequired, adminAuthorized, secureKey, isLoggedIn,
     versionUpdate, versionUpdateLoading, versionUpdateChecked, canCheckVersionUpdate, hasVersionUpdateReminder,
     fetchUserInfo, setUser, clearUser, setSecureKey, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
-    showServerConfigModal, showLoginModal, showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
-    isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
-    setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
+    showLoginModal, showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
+    isOnline, setOnlineStatus,
     readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,
     toasts, showToast,
     enabledUnreadBadgeBooks, toggleUnreadBadge,

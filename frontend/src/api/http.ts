@@ -12,6 +12,17 @@ function dispatchNeedLogin() {
   window.dispatchEvent(new CustomEvent('need-login'))
 }
 
+/**
+ * 判断是否为网络断开/超时类错误（而非凭证失效）。
+ * 网络错误一律不触发 need-login 事件，避免离线时误跳登录面板。
+ */
+function isNetworkError(error: any): boolean {
+  if (!error.response) return true
+  if (error.code === 'ERR_NETWORK') return true
+  if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) return true
+  return false
+}
+
 function getBaseURL() {
   if (isNativeApp()) {
     return localStorage.getItem('server_base_url') || ''
@@ -60,8 +71,14 @@ http.interceptors.response.use(
     return response
   },
   (error) => {
+    // 关键：网络断开/超时一律视为常规网络错误，不触发 need-login
+    if (isNetworkError(error)) {
+      return Promise.reject(new Error(error.message || '网络连接失败，请检查网络'))
+    }
+
     const data = error.response?.data as Partial<ApiResponse> | undefined
     if (data && typeof data === 'object') {
+      // 仅在服务端明确返回 NEED_LOGIN 时触发登录拦截
       if (data.errorMsg === 'NEED_LOGIN' || data.data === 'NEED_LOGIN') {
         dispatchNeedLogin()
       }
@@ -69,6 +86,7 @@ http.interceptors.response.use(
         return Promise.reject(new Error(data.errorMsg))
       }
     }
+    // HTTP 401：服务端明确凭证失效 → 触发登录拦截
     if (error.response?.status === 401) {
       dispatchNeedLogin()
     }
