@@ -490,15 +490,21 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const [moved] = next.splice(fromIndex, 1)
     next.unshift(moved)
 
+    // 乐观更新：本地内存与持久化立即生效
     books.value = next
+    saveCachedBookshelf(books.value)
+
+    // 若当前检测到离线，直接完成，不触发网络请求
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return
+    }
+
     sorting.value = true
     try {
       await apiSaveBooks(next)
-      // 成功后同步本地持久化
-      saveCachedBookshelf(books.value)
     } catch (error) {
-      books.value = snapshot
-      throw error
+      // 离线或网络异常时不回滚本地书架排序，保留本地视觉连续性
+      appLog('书架', `书架置顶远端同步失败: ${(error as Error).message || String(error)}，保持本地排序`)
     } finally {
       sorting.value = false
     }

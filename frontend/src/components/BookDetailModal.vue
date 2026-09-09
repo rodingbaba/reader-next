@@ -144,6 +144,7 @@
 import { ref, watch, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList, saveBook } from '../api/bookshelf'
+import { getBrowserCachedChapterList } from '../utils/browserCache'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -233,14 +234,33 @@ watch(() => props.modelValue, async (visible) => {
     showAllChapters.value = false
     chapters.value = []
     chaptersLoading.value = true
+    const b = props.book as Book
+
+    // 优先秒显本地离线目录（如有）
     try {
-      const b = props.book as Book
-      chapters.value = await getChapterList({
+      const cached = await getBrowserCachedChapterList(b.bookUrl)
+      if (cached && cached.chapters.length > 0) {
+        chapters.value = cached.chapters
+        chaptersLoading.value = false
+      }
+    } catch {
+      // ignore
+    }
+
+    // 若当前离线且已有本地目录，不再请求网络
+    if (typeof navigator !== 'undefined' && !navigator.onLine && chapters.value.length > 0) {
+      chaptersLoading.value = false
+      return
+    }
+
+    try {
+      const serverChapters = await getChapterList({
         bookUrl: b.bookUrl,
         bookSourceUrl: b.origin,
       })
+      chapters.value = serverChapters
     } catch {
-      chapters.value = []
+      // 网络失败时保持本地缓存目录
     } finally {
       chaptersLoading.value = false
     }
@@ -254,21 +274,23 @@ function close() {
 async function startReading() {
   if (!props.book) return
   const b = props.book as Book
-  await shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
-  await readerStore.loadBook(b)
-  await readerStore.loadChapter(readerStore.currentIndex)
+  void shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
+  const loadBookTask = readerStore.loadBook(b)
   close()
-  router.push('/reader')
+  await router.push('/reader')
+  await loadBookTask
+  await readerStore.loadChapter(readerStore.currentIndex)
 }
 
 async function readChapter(index: number) {
   if (!props.book) return
   const b = props.book as Book
-  await shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
-  await readerStore.loadBook(b)
-  await readerStore.loadChapter(index)
+  void shelfStore.moveBookToFront(b.bookUrl).catch(() => undefined)
+  const loadBookTask = readerStore.loadBook(b)
   close()
-  router.push('/reader')
+  await router.push('/reader')
+  await loadBookTask
+  await readerStore.loadChapter(index)
 }
 
 function openAiBook() {

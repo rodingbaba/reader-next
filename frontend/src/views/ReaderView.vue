@@ -3058,7 +3058,8 @@ onMounted(async () => {
   speechTimerTicker = window.setInterval(() => {
     speechTimerNow.value = Date.now()
   }, 15000)
-  await Promise.all([
+  // 优先应用本地镜像（0ms 秒出），后台静默同步远端，绝不阻塞翻页排版
+  void Promise.all([
     store.fetchBookmarks(),
     store.fetchReplaceRules(),
   ])

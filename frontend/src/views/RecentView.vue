@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="recent-view">
     <div class="recent-content">
       <div class="recent-header">
@@ -120,7 +120,7 @@ async function handleBookClick(book: Book | SearchBook) {
   openingBookUrl.value = currentBook.bookUrl
 
   try {
-    await shelfStore.moveBookToFront(currentBook.bookUrl).catch(() => undefined)
+    void shelfStore.moveBookToFront(currentBook.bookUrl).catch(() => undefined)
     const loadBookTask = readerStore.loadBook(currentBook)
     await router.push('/reader')
     await loadBookTask

@@ -614,7 +614,14 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function resolveLatestShelfBook(localBook: Book) {
     if (!localBook.bookUrl) return localBook
-    const latest = await getShelfBook(localBook.bookUrl).catch(() => null)
+    // 若当前离线，直接返回本地书籍对象，杜绝无谓网络等待
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return localBook
+    }
+    const latest = await Promise.race([
+      getShelfBook(localBook.bookUrl),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+    ]).catch(() => null)
     if (!latest) return localBook
     const shelfBook = shelfStore.books.find((item) => item.bookUrl === localBook.bookUrl || item.bookUrl === latest.bookUrl)
     if (shelfBook) {
@@ -1737,8 +1744,11 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  let loadBookSeq = 0
+
   /* ─── Book / chapter ops ─── */
   async function loadBook(b: Book) {
+    const currentSeq = ++loadBookSeq
     loading.value = true
 
     // 同步占位，防止路由跳转后 ReaderView.vue onMounted 认为没书而触发 restorePersistedSession 导致新老书串台
@@ -1747,6 +1757,7 @@ export const useReaderStore = defineStore('reader', () => {
     content.value = ''
 
     const latestBook = await resolveLatestShelfBook(b)
+    if (currentSeq !== loadBookSeq) return
     book.value = latestBook
     appStore.markBookOpened(latestBook.bookUrl)
     currentIndex.value = latestBook.durChapterIndex || 0
@@ -1756,53 +1767,104 @@ export const useReaderStore = defineStore('reader', () => {
     progressDirty.value = false
     lastServerProgressKey.value = ''
     chaptersLoading.value = true
+
+    // ─── 核心 SWR / 本地优先改造 ───
+    // 1. 优先极速尝试命中本地离线目录（通常 5~15ms 完成）
+    let cached = await getBrowserCachedChapterList(latestBook.bookUrl).catch(() => null)
+    if (!cached || cached.chapters.length === 0) {
+      // 本地无 chapter_lists 记录时，尝试第二级正文容灾反推应急目录
+      const fallback = await restoreChapterListFromCacheRecords(latestBook.bookUrl).catch(() => [])
+      if (fallback.length > 0) {
+        cached = { bookUrl: latestBook.bookUrl, chapters: fallback, updatedAt: Date.now(), totalChapterNum: fallback.length }
+      }
+    }
+
+    if (currentSeq !== loadBookSeq) return
+
+    // 2. 命中本地缓存：0ms 秒开进书！
+    if (cached && cached.chapters.length > 0) {
+      chapters.value = cached.chapters
+      if (chapters.value.length) {
+        currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
+      }
+      chaptersLoading.value = false
+      appLog('目录', `⚡ 本地离线目录秒开成功，共 ${cached.chapters.length} 章`, { bookUrl: latestBook.bookUrl })
+      saveReaderSession()
+
+      // 若当前离线，无需再发任何网络请求
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return
+      }
+
+      // 3. 在线状态：启动后台静默重验更新（SWR Revalidate），绝不阻塞当前阅读
+      void (async () => {
+        try {
+          appLog('目录', `后台静默检测目录更新: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
+          const serverChapters = await getChapterList({
+            bookUrl: latestBook.bookUrl,
+            bookSourceUrl: latestBook.origin,
+          })
+          // 防切书串台守卫
+          if (currentSeq !== loadBookSeq || book.value?.bookUrl !== latestBook.bookUrl) return
+
+          // 连载追更新增判断
+          if (serverChapters.length > chapters.value.length) {
+            appLog('目录', `检测到连载更新：从 ${chapters.value.length} 章更新至 ${serverChapters.length} 章`, { bookUrl: latestBook.bookUrl })
+            chapters.value = serverChapters
+            if (chapters.value.length) {
+              currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
+            }
+            saveReaderSession()
+          }
+
+          // 异步落盘并清理孤儿章节
+          void setBrowserCachedChapterList(latestBook.bookUrl, serverChapters, serverChapters.length)
+            .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(serverChapters.map((c) => c.url).filter(Boolean))))
+            .catch(() => undefined)
+        } catch (err) {
+          // 后台检测失败静默忽略，不打扰用户当前阅读
+          appLog('目录', '后台静默检测目录更新失败(网络异常)，继续保持本地离线目录', { err: String(err) })
+        }
+      })()
+
+      return
+    }
+
+    // 4. 本地完全无离线目录（首次打开未缓存书籍）：需要走网络请求
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      chaptersLoading.value = false
+      loading.value = false
+      appLog('目录', '❌ 离线状态且本地无目录缓存，无法进入书籍')
+      throw new Error('离线状态且本地无目录缓存，请联网后重试')
+    }
+
     try {
-      appLog('目录', `开始请求远端目录: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
-      chapters.value = await getChapterList({
+      appLog('目录', `本地无缓存，开始请求远端目录: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
+      const serverChapters = await getChapterList({
         bookUrl: latestBook.bookUrl,
         bookSourceUrl: latestBook.origin,
       })
+      if (currentSeq !== loadBookSeq || book.value?.bookUrl !== latestBook.bookUrl) return
+
+      chapters.value = serverChapters
       appLog('目录', `远端目录获取成功，共 ${chapters.value.length} 章，准备落盘本地`, { bookUrl: latestBook.bookUrl })
-      // 远端目录成功：落盘到本地 IndexedDB + 清理孤儿章节正文
       void setBrowserCachedChapterList(latestBook.bookUrl, chapters.value, chapters.value.length)
         .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(chapters.value.map((c) => c.url).filter(Boolean))))
         .catch((err) => appLog('目录', '离线目录落盘失败', { err: String(err) }))
+
       if (chapters.value.length) {
         currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
       }
       saveReaderSession()
     } catch (error) {
-      appLog('目录', `远端目录获取失败: ${(error as Error).message || String(error)}，尝试本地离线目录`, { bookUrl: latestBook.bookUrl })
-      // 第一级：尝试回退本地缓存的目录，打通离线进书阻断
-      const cached = await getBrowserCachedChapterList(latestBook.bookUrl)
-      if (cached && cached.chapters.length > 0) {
-        chapters.value = cached.chapters
-        if (chapters.value.length) {
-          currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
-        }
-        appLog('目录', `✅ 从本地 chapter_lists 恢复离线目录成功，共 ${cached.chapters.length} 章`)
-        appStore.showToast('已切换离线目录', 'warning')
-        saveReaderSession()
-      } else {
-        // 第二级容灾：从本地已离线正文记录恢复应急目录
-        appLog('目录', '本地 chapter_lists 为空，尝试第二级正文容灾反推目录')
-        const fallbackChapters = await restoreChapterListFromCacheRecords(latestBook.bookUrl)
-        if (fallbackChapters.length > 0) {
-          chapters.value = fallbackChapters
-          if (chapters.value.length) {
-            currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
-          }
-          appLog('目录', `✅ 成功从本地已离线正文反向重构目录，共 ${fallbackChapters.length} 章`)
-          appStore.showToast('已从本地缓存恢复应急目录', 'warning')
-          saveReaderSession()
-        } else {
-          appLog('目录', '❌ 离线目录与正文容灾均无数据，无法进入书籍')
-          loading.value = false
-          throw new Error('离线状态且本地无目录缓存，请联网后重试')
-        }
-      }
+      if (currentSeq !== loadBookSeq) return
+      appLog('目录', `远端目录获取失败: ${(error as Error).message || String(error)}`, { bookUrl: latestBook.bookUrl })
+      loading.value = false
+      throw error
     } finally {
-      chaptersLoading.value = false
+      if (currentSeq === loadBookSeq) {
+        chaptersLoading.value = false
+      }
     }
   }
 
@@ -2138,16 +2200,27 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function fetchReplaceRules() {
+    // 1. 本地镜像秒出
+    const cached = loadCachedReplaceRules()
+    if (cached.length > 0 && replaceRules.value.length === 0) {
+      replaceRules.value = cached
+    }
+    // 若离线直接返回，杜绝网络等待
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return
+    }
+    // 2. 在线静默刷新
     try {
       const rules = await getReplaceRules()
       replaceRules.value = rules
-      // 成功后落盘本地镜像，离线阅读时继续执行文本净化清洗
+      // 成功后落盘本地镜像
       saveCachedReplaceRules(rules)
     } catch {
-      // 远端失败：尝试从本地镜像恢复，保证离线净化规则可用
-      const cached = loadCachedReplaceRules()
-      if (cached.length > 0) {
-        replaceRules.value = cached
+      if (replaceRules.value.length === 0) {
+        const fallback = loadCachedReplaceRules()
+        if (fallback.length > 0) {
+          replaceRules.value = fallback
+        }
       }
     }
   }
@@ -2175,19 +2248,28 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   async function fetchBookmarks() {
+    // 1. 本地镜像秒出
+    if (book.value) {
+      const cached = loadCachedBookmarks(book.value.bookUrl)
+      if (cached.length > 0 && bookmarks.value.length === 0) {
+        bookmarks.value = cached
+      }
+    }
+    // 若离线直接返回
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return
+    }
+    // 2. 在线静默刷新
     try {
       const all = await getBookmarks()
-      // Filter for current book
       if (book.value) {
         bookmarks.value = all.filter(b => b.bookName === book.value?.name && b.bookAuthor === book.value?.author)
-        // 成功后落盘本地镜像
         saveCachedBookmarks(book.value.bookUrl, bookmarks.value)
       } else {
         bookmarks.value = all
       }
     } catch {
-      // 远端失败：尝试从本地镜像恢复，保证离线书签可见
-      if (book.value) {
+      if (book.value && bookmarks.value.length === 0) {
         bookmarks.value = loadCachedBookmarks(book.value.bookUrl)
       }
     }
