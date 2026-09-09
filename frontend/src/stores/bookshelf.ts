@@ -36,6 +36,92 @@ const SEARCH_PREFERENCES_KEY = 'reader-search-preferences'
 const SEARCH_CACHE_TTL = 30 * 60 * 1000
 const SEARCH_CACHE_LIMIT = 20
 
+// ─── 书架本地持久化（Stale-While-Revalidate） ───
+const BOOKSHELF_CACHE_KEY = 'reader_bookshelf_cache'
+const BOOK_GROUPS_CACHE_KEY = 'reader_book_groups_cache'
+
+/** 从 localStorage 读取本地缓存的书架数组 */
+function loadCachedBookshelf(): Book[] {
+  try {
+    const raw = localStorage.getItem(BOOKSHELF_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed as Book[] : []
+  } catch {
+    return []
+  }
+}
+
+/** 从 localStorage 读取本地缓存的书架分组 */
+function loadCachedGroups(): BookGroup[] {
+  try {
+    const raw = localStorage.getItem(BOOK_GROUPS_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed as BookGroup[] : []
+  } catch {
+    return []
+  }
+}
+
+/** 持久化书架到 localStorage */
+function saveCachedBookshelf(books: Book[]) {
+  try {
+    localStorage.setItem(BOOKSHELF_CACHE_KEY, JSON.stringify(books))
+  } catch (e) {
+    console.warn('saveCachedBookshelf 失败', e)
+  }
+}
+
+/** 持久化书架分组到 localStorage */
+function saveCachedGroups(groups: BookGroup[]) {
+  try {
+    localStorage.setItem(BOOK_GROUPS_CACHE_KEY, JSON.stringify(groups))
+  } catch (e) {
+    console.warn('saveCachedGroups 失败', e)
+  }
+}
+
+/**
+ * 合并服务端书架与本地缓存的进度信息（防回弹仲裁）。
+ * 服务端为元数据权威，本地 durChapterIndex/durChapterPos/durChapterTime 取最新。
+ * browserCachedChapterCount 始终以本地 browserMap 为准。
+ */
+function mergeServerBooksWithLocalProtection(
+  serverBooks: Book[],
+  localBooks: Book[],
+  browserMap: Map<string, number>,
+): Book[] {
+  const localMap = new Map(localBooks.map((b) => [b.bookUrl, b]))
+  return serverBooks.map((server) => {
+    const local = localMap.get(server.bookUrl)
+    const browserCount = isLocalTxtBook(server) ? 0 : (browserMap.get(server.bookUrl) || 0)
+    if (!local) {
+      return { ...server, browserCachedChapterCount: browserCount }
+    }
+    // 仲裁：取进度更深的一方（durChapterIndex 更大者胜出，相同则比较 durChapterPos）
+    const localDeeper = (local.durChapterIndex ?? 0) > (server.durChapterIndex ?? 0)
+      || ((local.durChapterIndex ?? 0) === (server.durChapterIndex ?? 0)
+        && (local.durChapterPos ?? 0) > (server.durChapterPos ?? 0))
+    const mergedProgress = localDeeper
+      ? {
+          durChapterIndex: local.durChapterIndex,
+          durChapterPos: local.durChapterPos,
+          durChapterTime: local.durChapterTime,
+        }
+      : {
+          durChapterIndex: server.durChapterIndex,
+          durChapterPos: server.durChapterPos,
+          durChapterTime: server.durChapterTime,
+        }
+    return {
+      ...server,           // 服务端元数据为权威
+      ...mergedProgress,   // 进度取仲裁结果
+      browserCachedChapterCount: browserCount,
+    }
+  })
+}
+
 function loadSearchPreferences(): SearchPreferences {
   try {
     const raw = localStorage.getItem(SEARCH_PREFERENCES_KEY)
@@ -69,6 +155,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const loading = ref(false)
   const refreshing = ref(false)
   const sorting = ref(false)
+  // fetchBooks 并发竞态保护：每次启动递增 seq，远端段返回时若 seq 已过期则放弃写入
+  let fetchBooksSeq = 0
 
   async function refreshRecentBooks() {
     const browserSummaries = await listBrowserCacheSummary().catch(() => [])
@@ -101,37 +189,70 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     await refreshRecentBooks()
   }
 
+  /**
+   * Stale-While-Revalidate：
+   * 1. 本地秒出（无远端依赖，断网直接展示缓存书架）
+   * 2. 后台静默拉取远端更新，合并并刷新本地持久化
+   * 3. 远端失败保留本地书架，不闪烁
+   */
   async function fetchBooks() {
+    const mySeq = ++fetchBooksSeq
+    // 1. 优先读取本地持久化，实现 0ms 秒开书架
+    if (books.value.length === 0) {
+      const cached = loadCachedBookshelf()
+      if (cached.length > 0) {
+        books.value = cached
+        const cachedGroups = loadCachedGroups()
+        if (cachedGroups.length > 0 && groups.value.length === 0) {
+          groups.value = cachedGroups
+        }
+        // 本地秒出后立即刷新最近阅读，不阻塞
+        void refreshRecentBooks().catch(() => undefined)
+      }
+    }
+
+    // 2. 后台静默拉取远端更新
     loading.value = true
     try {
       const [serverBooks, browserSummaries] = await Promise.all([
         getBookshelfWithCacheInfo(),
         listBrowserCacheSummary().catch(() => []),
       ])
+      // 并发竞态保护：若已被更新的 fetchBooks 覆盖，放弃本次写入
+      if (mySeq !== fetchBooksSeq) return
       const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
-      books.value = serverBooks.map((book) => ({
-        ...book,
-        browserCachedChapterCount: isLocalTxtBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
-      }))
+      // 合并服务端书架与本地进度（防回弹仲裁）
+      books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
+      // 写回本地持久化
+      saveCachedBookshelf(books.value)
       await refreshRecentBooks()
+    } catch (err) {
+      // 远端失败：保留本地书架，不重置 books.value
+      console.warn('远端书架同步失败，继续使用本地离线书架', err)
     } finally {
       loading.value = false
     }
   }
 
+  /**
+   * 主动刷新书架（用户下拉刷新等场景）：
+   * 不走本地秒出段，直接拉取远端，失败时保留本地
+   */
   async function refreshBooks() {
     refreshing.value = true
+    const mySeq = ++fetchBooksSeq
     try {
       const [serverBooks, browserSummaries] = await Promise.all([
         getBookshelfWithCacheInfo(),
         listBrowserCacheSummary().catch(() => []),
       ])
+      if (mySeq !== fetchBooksSeq) return
       const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
-      books.value = serverBooks.map((book) => ({
-        ...book,
-        browserCachedChapterCount: isLocalTxtBook(book) ? 0 : browserMap.get(book.bookUrl) || 0,
-      }))
+      books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
+      saveCachedBookshelf(books.value)
       await refreshRecentBooks()
+    } catch (err) {
+      console.warn('刷新书架失败，保留本地数据', err)
     } finally {
       refreshing.value = false
     }
@@ -141,6 +262,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     await apiDeleteBook(book)
     await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
     books.value = books.value.filter((b) => b.bookUrl !== book.bookUrl)
+    // 同步清理本地持久化
+    saveCachedBookshelf(books.value)
     await refreshRecentBooks()
   }
 
@@ -166,9 +289,17 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
 
   async function fetchGroups() {
     try {
-      groups.value = await getBookGroups()
+      const serverGroups = await getBookGroups()
+      groups.value = serverGroups
+      saveCachedGroups(serverGroups)
     } catch {
-      groups.value = []
+      // 远端失败：若本地有缓存则保留，否则置空
+      const cached = loadCachedGroups()
+      if (cached.length > 0) {
+        groups.value = cached
+      } else {
+        groups.value = []
+      }
     }
   }
 
@@ -185,12 +316,15 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   async function removeGroup(groupId: number) {
     await apiDeleteBookGroup(groupId)
     groups.value = groups.value.filter((group) => group.groupId !== groupId)
+    // 同步清理本地持久化
+    saveCachedGroups(groups.value)
     books.value = books.value.map((book) => {
       if (book.group && (book.group & groupId) !== 0) {
         return { ...book, group: book.group & ~groupId }
       }
       return book
     })
+    saveCachedBookshelf(books.value)
   }
 
   // ─── Search ───
@@ -291,11 +425,13 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const toDelete = books.value
       .filter(b => selectedBookUrls.value.has(b.bookUrl))
       .map(b => ({ bookUrl: b.bookUrl, origin: b.origin }))
-    
+
     if (toDelete.length === 0) return
     await apiDeleteBooks(toDelete as Book[])
     await Promise.all(toDelete.map((book) => deleteBrowserBookCache(book.bookUrl).catch(() => undefined)))
     books.value = books.value.filter(b => !selectedBookUrls.value.has(b.bookUrl))
+    // 同步清理本地持久化
+    saveCachedBookshelf(books.value)
     clearSelection()
   }
 
@@ -325,6 +461,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     sorting.value = true
     try {
       await apiSaveBooks(next)
+      // 成功后同步本地持久化
+      saveCachedBookshelf(books.value)
     } catch (error) {
       books.value = snapshot
       throw error
@@ -348,6 +486,8 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     sorting.value = true
     try {
       await apiSaveBooks(next)
+      // 成功后同步本地持久化
+      saveCachedBookshelf(books.value)
     } catch (error) {
       books.value = snapshot
       throw error
