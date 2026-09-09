@@ -221,6 +221,12 @@ export const useAppStore = defineStore('app', () => {
   const showUserManager = ref(false)
   const showWebdavManager = ref(false)
   const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  // ─── PWA（保留字段，纯 Web 浏览器端向后兼容） ───
+  // 设计文档 8.4 节明确 PWA 死代码清理为后续规划，当前保留以避免 SettingsDrawer.vue / pwa.ts 引用断裂
+  const pwaReady = ref(false)
+  const pwaUpdateAvailable = ref(false)
+  const deferredInstallPrompt = ref<any>(null)
+  const waitingServiceWorker = ref<ServiceWorker | null>(null)
 
   // 监听 online/offline 事件，断网/恢复时更新 isOnline
   if (typeof window !== 'undefined') {
@@ -314,6 +320,37 @@ export const useAppStore = defineStore('app', () => {
     isOnline.value = value
   }
 
+  // ─── PWA setters & actions ───
+  function setPwaReady(value: boolean) {
+    pwaReady.value = value
+  }
+
+  function setPwaUpdateAvailable(value: boolean) {
+    pwaUpdateAvailable.value = value
+  }
+
+  function setWaitingServiceWorker(value: ServiceWorker | null) {
+    waitingServiceWorker.value = value
+  }
+
+  function setDeferredInstallPrompt(value: any) {
+    deferredInstallPrompt.value = value
+  }
+
+  async function installPwa() {
+    if (!deferredInstallPrompt.value) return false
+    deferredInstallPrompt.value.prompt()
+    const result = await deferredInstallPrompt.value.userChoice.catch(() => null)
+    deferredInstallPrompt.value = null
+    return result?.outcome === 'accepted'
+  }
+
+  function applyPwaUpdate() {
+    if (!waitingServiceWorker.value) return false
+    waitingServiceWorker.value.postMessage({ type: 'SKIP_WAITING' })
+    return true
+  }
+
   return {
     theme, setTheme, toggleTheme,
     userInfo, isSecureMode, needSecureKey, secureKeyRequired, adminAuthorized, secureKey, isLoggedIn,
@@ -321,6 +358,9 @@ export const useAppStore = defineStore('app', () => {
     fetchUserInfo, setUser, clearUser, setSecureKey, updateUserInfo, checkVersionUpdate, dismissVersionUpdateReminder,
     showLoginModal, showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
     isOnline, setOnlineStatus,
+    // PWA 相关字段（保留以避免 SettingsDrawer.vue / pwa.ts 引用断裂）
+    pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
+    setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
     readingStats, readingStatsSummary, startReadingSession, stopReadingSession, markBookOpened, markChapterRead,
     toasts, showToast,
     enabledUnreadBadgeBooks, toggleUnreadBadge,
