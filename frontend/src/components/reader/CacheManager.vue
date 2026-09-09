@@ -2,7 +2,7 @@
   <div class="cache-manager" :style="{ background: theme.popup, color: theme.fontColor }">
     <div class="cache-header">
       <div>
-        <h3>缓存章节</h3>
+        <h3>离线缓存</h3>
         <p v-if="store.book" class="cache-subtitle">{{ store.book.name }}</p>
       </div>
       <button class="close-btn" @click="store.backPanel()">
@@ -13,16 +13,17 @@
     </div>
 
     <div class="cache-body">
-      <div v-if="!isLocalTxt" class="summary-grid">
-        <div class="summary-card">
-          <span class="summary-label">服务端缓存</span>
-          <strong>{{ serverCachedCount }}</strong>
-          <small>已缓存章节</small>
-        </div>
-        <div class="summary-card">
-          <span class="summary-label">浏览器缓存</span>
+      <!-- 统一摘要：本机已离线 X 章，辅助显示云端就绪 Y 章（本地书不显示云端） -->
+      <div class="summary-grid">
+        <div class="summary-card primary-card">
+          <span class="summary-label">本机已离线</span>
           <strong>{{ browserCachedCount }}</strong>
           <small>离线可读章节</small>
+        </div>
+        <div v-if="!isLocalTxt" class="summary-card">
+          <span class="summary-label">云端就绪</span>
+          <strong>{{ serverCachedCount }}</strong>
+          <small>服务端已缓存</small>
         </div>
       </div>
 
@@ -42,65 +43,61 @@
       </div>
 
       <div v-else class="cache-sections">
-        <div v-if="isLocalTxt" class="info-card">
-          <p>本地书已存放在服务端书架文件中，不需要额外缓存；阅读时会直接读取上传后的本地文件。</p>
+        <div class="info-card">
+          <p>下载到本机后，断网仍可流畅阅读。本机离线数据保存在当前设备 IndexedDB，可随时清除。</p>
         </div>
 
-        <template v-else>
-          <div class="info-card">
-            <p>服务端缓存保存在后端存储目录；浏览器缓存保存在当前设备的 IndexedDB。断网时阅读页会优先读取浏览器已缓存章节。</p>
+        <!-- 统一“离线到本机”面板（含本地书，不再禁用） -->
+        <section class="cache-section">
+          <div class="section-head">
+            <h4>下载到本机</h4>
+            <button class="link-btn" @click="refreshStats">刷新</button>
           </div>
+          <div class="option-list">
+            <button class="cache-opt" @click="startBrowserCaching(50)">
+              <span class="label">下载后续 50 章</span>
+              <span class="sub">适合当前追更</span>
+            </button>
+            <button class="cache-opt" @click="startBrowserCaching(100)">
+              <span class="label">下载后续 100 章</span>
+              <span class="sub">中度离线阅读</span>
+            </button>
+            <button class="cache-opt primary" @click="startBrowserCaching(0)">
+              <span class="label">全本离线下载</span>
+              <span class="sub">持久化到本机 IndexedDB</span>
+            </button>
+            <button class="cache-opt danger" @click="clearBrowserCache">
+              <span class="label">清除本机离线数据</span>
+              <span class="sub">删除当前设备离线缓存</span>
+            </button>
+          </div>
+        </section>
 
-          <section class="cache-section">
-            <div class="section-head">
-              <h4>缓存到服务端</h4>
-              <button class="link-btn" @click="refreshStats">刷新</button>
-            </div>
-            <div class="option-list">
-              <button class="cache-opt" @click="startServerCaching(50)">
-                <span class="label">缓存后续 50 章</span>
-                <span class="sub">适合当前追更</span>
-              </button>
-              <button class="cache-opt" @click="startServerCaching(100)">
-                <span class="label">缓存后续 100 章</span>
-                <span class="sub">中度离线阅读</span>
-              </button>
-              <button class="cache-opt primary" @click="startServerCaching(0)">
-                <span class="label">全本缓存到服务端</span>
-                <span class="sub">保存到服务器磁盘</span>
-              </button>
-              <button class="cache-opt danger" @click="clearServerCache">
-                <span class="label">清除服务端缓存</span>
-                <span class="sub">删除当前书所有服务端缓存</span>
-              </button>
-            </div>
-          </section>
-
-          <section class="cache-section">
-            <div class="section-head">
-              <h4>缓存到浏览器</h4>
-              <button class="link-btn" @click="refreshStats">刷新</button>
-            </div>
-            <div class="option-list">
-              <button class="cache-opt" @click="startBrowserCaching(50)">
-                <span class="label">缓存后续 50 章</span>
-                <span class="sub">只保留在当前浏览器</span>
-              </button>
-              <button class="cache-opt" @click="startBrowserCaching(100)">
-                <span class="label">缓存后续 100 章</span>
-                <span class="sub">适合本地离线使用</span>
-              </button>
-              <button class="cache-opt primary" @click="startBrowserCaching(0)">
-                <span class="label">全本缓存到浏览器</span>
-                <span class="sub">持久化到 IndexedDB</span>
-              </button>
-              <button class="cache-opt danger" @click="clearBrowserCache">
-                <span class="label">清除浏览器缓存</span>
-                <span class="sub">删除当前设备离线缓存</span>
-              </button>
-            </div>
-          </section>
-        </template>
+        <!-- 云端预缓存：仅网络书显示，本地书无云端缓存语义 -->
+        <section v-if="!isLocalTxt" class="cache-section">
+          <div class="section-head">
+            <h4>云端预缓存（可选）</h4>
+            <button class="link-btn" @click="refreshStats">刷新</button>
+          </div>
+          <div class="option-list">
+            <button class="cache-opt" @click="startServerCaching(50)">
+              <span class="label">预缓存后续 50 章</span>
+              <span class="sub">加速后续下载</span>
+            </button>
+            <button class="cache-opt" @click="startServerCaching(100)">
+              <span class="label">预缓存后续 100 章</span>
+              <span class="sub">服务端提前抓取</span>
+            </button>
+            <button class="cache-opt primary" @click="startServerCaching(0)">
+              <span class="label">全本预缓存到云端</span>
+              <span class="sub">保存到服务器磁盘</span>
+            </button>
+            <button class="cache-opt danger" @click="clearServerCache">
+              <span class="label">清除云端缓存</span>
+              <span class="sub">删除服务端缓存</span>
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -126,6 +123,7 @@ const currentStatus = ref('准备中...')
 const currentChapterName = ref('')
 const serverCachedCount = ref(0)
 const browserCachedCount = ref(0)
+// 本地书无云端缓存语义，serverCachedCount 在 isLocalTxt 时返回 0
 const isLocalTxt = computed(() => isLocalTxtBook(store.book))
 let sse: EventSource | null = null
 let browserSignal = { cancelled: false }
@@ -140,9 +138,10 @@ onUnmounted(() => {
 
 async function refreshStats() {
   if (!store.book) return
+  // 本地书：只统计本机离线数，不查服务端
   if (isLocalTxt.value) {
     serverCachedCount.value = 0
-    browserCachedCount.value = 0
+    browserCachedCount.value = await countBrowserBookCache(store.book.bookUrl).catch(() => 0)
     return
   }
   const [serverList, browserCount] = await Promise.all([
@@ -159,7 +158,7 @@ function startServerCaching(count: number) {
   stopWorking()
   working.value = true
   progress.value = 0
-  currentStatus.value = '连接服务端缓存任务...'
+  currentStatus.value = '连接云端预缓存任务...'
   currentChapterName.value = ''
 
   const total = count === 0
@@ -180,16 +179,16 @@ function startServerCaching(count: number) {
       if (total > 0) {
         progress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
       }
-      currentStatus.value = `服务端缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
+      currentStatus.value = `云端预缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
     } catch {
-      currentStatus.value = '服务端缓存处理中...'
+      currentStatus.value = '云端预缓存处理中...'
     }
   }
 
   sse.addEventListener('end', async (event) => {
     try {
       const data = JSON.parse((event as MessageEvent).data)
-      currentStatus.value = `服务端缓存完成，累计 ${data.cachedCount || 0} 章`
+      currentStatus.value = `云端预缓存完成，累计 ${data.cachedCount || 0} 章`
       progress.value = 100
     } finally {
       closeSSE()
@@ -201,7 +200,7 @@ function startServerCaching(count: number) {
   })
 
   sse.onerror = async () => {
-    currentStatus.value = '服务端缓存已中断'
+    currentStatus.value = '云端预缓存已中断'
     closeSSE()
     await refreshStats()
     window.setTimeout(() => {
@@ -211,12 +210,13 @@ function startServerCaching(count: number) {
 }
 
 async function startBrowserCaching(count: number) {
-  if (!store.book || isLocalTxt.value) return
+  if (!store.book) return
+  // 移除 isLocalTxt 限制：本地书也开放离线下载到本机
   stopWorking()
   browserSignal = { cancelled: false }
   working.value = true
   progress.value = 0
-  currentStatus.value = '准备浏览器缓存...'
+  currentStatus.value = '准备下载到本机...'
   currentChapterName.value = ''
 
   try {
@@ -232,18 +232,18 @@ async function startBrowserCaching(count: number) {
       signal: browserSignal,
       onProgress: ({ completed, total, chapterTitle }) => {
         currentChapterName.value = chapterTitle
-        currentStatus.value = `浏览器缓存中 (${completed}/${total})`
+        currentStatus.value = `下载到本机中 (${completed}/${total})`
         progress.value = total > 0 ? Math.round((completed / total) * 100) : 100
       },
     })
     if (!browserSignal.cancelled) {
-      currentStatus.value = `浏览器缓存完成，共 ${total} 章`
+      currentStatus.value = `本机离线完成，共 ${total} 章`
       progress.value = 100
-      appStore.showToast('已缓存到浏览器', 'success')
+      appStore.showToast('已下载到本机', 'success')
     }
   } catch (error) {
-    currentStatus.value = '浏览器缓存失败'
-    appStore.showToast((error as Error).message || '浏览器缓存失败', 'error')
+    currentStatus.value = '下载到本机失败'
+    appStore.showToast((error as Error).message || '下载到本机失败', 'error')
   } finally {
     await refreshStats()
     window.setTimeout(() => {
@@ -255,14 +255,14 @@ async function startBrowserCaching(count: number) {
 async function clearServerCache() {
   if (!store.book || isLocalTxt.value) return
   await deleteBookCache(store.book.bookUrl)
-  appStore.showToast('服务端缓存已清除', 'success')
+  appStore.showToast('云端缓存已清除', 'success')
   await refreshStats()
 }
 
 async function clearBrowserCache() {
-  if (!store.book || isLocalTxt.value) return
+  if (!store.book) return
   await deleteBrowserBookCache(store.book.bookUrl)
-  appStore.showToast('浏览器缓存已清除', 'success')
+  appStore.showToast('本机离线数据已清除', 'success')
   await refreshStats()
 }
 
@@ -327,6 +327,10 @@ function stopWorking() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.summary-card.primary-card {
+  background: rgba(201, 127, 58, 0.16);
 }
 
 .summary-label { font-size: 12px; opacity: 0.65; }

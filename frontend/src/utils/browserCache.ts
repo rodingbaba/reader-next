@@ -1,7 +1,10 @@
 import { invokeData, isNativeApp } from './nativeBridge'
+import type { BookChapter } from '../types'
+
 const DB_NAME = 'reader-browser-cache'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_NAME = 'chapters'
+const CHAPTER_LIST_STORE = 'chapter_lists'
 let dbPromise: Promise<IDBDatabase> | null = null
 
 export interface BrowserChapterCacheRecord {
@@ -18,6 +21,14 @@ export interface BrowserBookCacheSummary {
   bookUrl: string
   cachedChapterCount: number
   bytes: number
+  updatedAt: number
+}
+
+/** 章节目录缓存记录 */
+export interface BrowserChapterListRecord {
+  bookUrl: string
+  chapters: BookChapter[]
+  totalChapterNum: number
   updatedAt: number
 }
 
@@ -41,10 +52,15 @@ function openDb(): Promise<IDBDatabase> {
       }
       request.onupgradeneeded = () => {
         const db = request.result
+        // v1: chapters 表
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
           store.createIndex('bookUrl', 'bookUrl', { unique: false })
           store.createIndex('updatedAt', 'updatedAt', { unique: false })
+        }
+        // v2: chapter_lists 表（目录离线持久化）
+        if (!db.objectStoreNames.contains(CHAPTER_LIST_STORE)) {
+          db.createObjectStore(CHAPTER_LIST_STORE, { keyPath: 'bookUrl' })
         }
       }
     }).catch((error: unknown) => {
@@ -55,11 +71,19 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise!
 }
 
-async function withStore<T>(mode: IDBTransactionMode, handler: (store: IDBObjectStore) => Promise<T>): Promise<T> {
+/**
+ * 在指定 store 上执行事务。
+ * storeName 默认为 chapters，chapter_lists 表需显式传入。
+ */
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  handler: (store: IDBObjectStore) => Promise<T>,
+  storeName: string = STORE_NAME,
+): Promise<T> {
   const db = await openDb()
   return new Promise<T>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, mode)
-    const store = tx.objectStore(STORE_NAME)
+    const tx = db.transaction(storeName, mode)
+    const store = tx.objectStore(storeName)
 
     handler(store)
       .then((result) => {
@@ -97,13 +121,12 @@ export async function setBrowserCachedChapter(params: {
   chapterTitle?: string
   content: string
 }) {
+  // Native 双写：失败不阻塞 IndexedDB 写入（IndexedDB 为权威兜底）
   if (isNativeApp()) {
-    try {
-      await invokeData('saveCache', params)
-      return
-    } catch (e) {
+    void invokeData('saveCache', params).catch((e) => {
       console.error('Native saveCache error', e)
-    }
+    })
+    // 不 return，继续走 IndexedDB 写入
   }
 
   return withStore('readwrite', async (store) => {
@@ -121,11 +144,17 @@ export async function setBrowserCachedChapter(params: {
 }
 
 export async function deleteBrowserBookCache(bookUrl: string) {
-  return withStore('readwrite', async (store) => {
-    const index = store.index('bookUrl')
-    const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))
-    await Promise.all((records as BrowserChapterCacheRecord[]).map((record) => requestToPromise(store.delete(record.key))))
-  })
+  // 同时清理 chapters 表与 chapter_lists 表
+  await Promise.all([
+    withStore('readwrite', async (store) => {
+      const index = store.index('bookUrl')
+      const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))
+      await Promise.all((records as BrowserChapterCacheRecord[]).map((record) => requestToPromise(store.delete(record.key))))
+    }, STORE_NAME),
+    withStore('readwrite', async (store) => {
+      await requestToPromise(store.delete(bookUrl))
+    }, CHAPTER_LIST_STORE),
+  ])
 }
 
 export async function countBrowserBookCache(bookUrl: string) {
@@ -167,4 +196,45 @@ export async function clearAllBrowserCache() {
   return withStore('readwrite', async (store) => {
     await requestToPromise(store.clear())
   })
+}
+
+// ─── 章节目录离线持久化（chapter_lists 表） ───
+
+/** 写入书籍目录到本地 IndexedDB */
+export async function setBrowserCachedChapterList(bookUrl: string, chapters: BookChapter[], totalChapterNum: number) {
+  return withStore('readwrite', async (store) => {
+    const record: BrowserChapterListRecord = {
+      bookUrl,
+      chapters,
+      totalChapterNum,
+      updatedAt: Date.now(),
+    }
+    await requestToPromise(store.put(record))
+  }, CHAPTER_LIST_STORE)
+}
+
+/** 读取书籍目录的本地缓存（离线时作为主力数据源） */
+export async function getBrowserCachedChapterList(bookUrl: string): Promise<BrowserChapterListRecord | null> {
+  try {
+    return await withStore('readonly', async (store) => {
+      const result = await requestToPromise(store.get(bookUrl))
+      return (result as BrowserChapterListRecord | undefined) || null
+    }, CHAPTER_LIST_STORE)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 清理孤儿章节正文：删除指定 bookUrl 下不在 validChapterUrls 集合中的所有正文记录。
+ * 在目录刷新后 chapter.url 变化时调用，避免旧缓存成孤儿。
+ */
+export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: Set<string>) {
+  return withStore('readwrite', async (store) => {
+    const index = store.index('bookUrl')
+    const records = await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))
+    const staleRecords = (records as BrowserChapterCacheRecord[])
+      .filter((record) => !validChapterUrls.has(record.chapterUrl))
+    await Promise.all(staleRecords.map((record) => requestToPromise(store.delete(record.key))))
+  }, STORE_NAME)
 }

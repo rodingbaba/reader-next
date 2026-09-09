@@ -21,8 +21,14 @@ import {
 import { getReplaceRules } from '../api/replaceRule'
 import { getSpeechConfig, saveSpeechConfig as apiSaveSpeechConfig } from '../api/speechConfig'
 import type { Book, BookChapter, Bookmark, ReplaceRule } from '../types'
-import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
-import { isLocalTxtBook } from '../utils/localBook'
+import {
+  getBrowserCachedChapter,
+  setBrowserCachedChapter,
+  setBrowserCachedChapterList,
+  getBrowserCachedChapterList,
+  cleanupOrphanChapters,
+} from '../utils/browserCache'
+// isLocalTxtBook 已废弃：本地书也统一开放客户端离线缓存
 import { saveRecentReadBook } from '../utils/recentBooks'
 import {
   DEFAULT_OPENAI_BASE_URL,
@@ -1641,13 +1647,28 @@ export const useReaderStore = defineStore('reader', () => {
         bookUrl: latestBook.bookUrl,
         bookSourceUrl: latestBook.origin,
       })
+      // 远端目录成功：落盘到本地 IndexedDB + 清理孤儿章节正文
+      void setBrowserCachedChapterList(latestBook.bookUrl, chapters.value, chapters.value.length)
+        .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(chapters.value.map((c) => c.url).filter(Boolean))))
+        .catch(() => undefined)
       if (chapters.value.length) {
         currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
       }
       saveReaderSession()
     } catch (error) {
-      loading.value = false
-      throw error
+      // 远端目录失败：尝试回退本地缓存的目录，打通离线进书阻断
+      const cached = await getBrowserCachedChapterList(latestBook.bookUrl)
+      if (cached && cached.chapters.length > 0) {
+        chapters.value = cached.chapters
+        if (chapters.value.length) {
+          currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
+        }
+        appStore.showToast('已切换离线目录', 'warning')
+        saveReaderSession()
+      } else {
+        loading.value = false
+        throw error
+      }
     } finally {
       chaptersLoading.value = false
     }
@@ -1728,21 +1749,19 @@ export const useReaderStore = defineStore('reader', () => {
 
     const chapter = chapters.value[index]
 
-    const isLocalTxt = isLocalTxtBook(book.value)
-    const useBrowserCache = !isLocalTxt
-    const browserCached = useBrowserCache
-      ? await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
-      : null
+    // 废除 useBrowserCache = !isLocalTxt：统一对所有书籍（含本地书）开放客户端离线写入与读取
+    // 这样断网时用户连自己上传的书也能阅读（前提是已离线下载到本机）
+    const browserCached = await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
 
     if (!forceRefresh && browserCached) {
       return browserCached
     }
 
-    if (!appStore.isOnline && !isLocalTxt) {
+    if (!appStore.isOnline) {
       if (browserCached) {
         return browserCached
       }
-      throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
+      throw new Error('当前处于离线状态，且该章节未缓存到本机')
     }
 
     let chapterContent = ''
@@ -1760,14 +1779,13 @@ export const useReaderStore = defineStore('reader', () => {
       throw error
     }
 
-    if (useBrowserCache) {
-      await setBrowserCachedChapter({
-        bookUrl: book.value.bookUrl,
-        chapterUrl: chapter.url,
-        chapterTitle: chapter.title,
-        content: chapterContent,
-      }).catch(() => undefined)
-    }
+    // 统一写入本机离线库（含本地书）
+    await setBrowserCachedChapter({
+      bookUrl: book.value.bookUrl,
+      chapterUrl: chapter.url,
+      chapterTitle: chapter.title,
+      content: chapterContent,
+    }).catch(() => undefined)
 
     return chapterContent
   }
@@ -1900,11 +1918,16 @@ export const useReaderStore = defineStore('reader', () => {
     chaptersLoading.value = true
     try {
       preloadedContent.value.clear()
-      chapters.value = await getChapterList({
+      const refreshed = await getChapterList({
         bookUrl: book.value.bookUrl,
         bookSourceUrl: book.value.origin,
         refresh: 1,
       })
+      chapters.value = refreshed
+      // 刷新成功：落盘新目录 + 清理孤儿章节正文
+      void setBrowserCachedChapterList(book.value.bookUrl, refreshed, refreshed.length)
+        .then(() => cleanupOrphanChapters(book.value!.bookUrl, new Set(refreshed.map((c) => c.url).filter(Boolean))))
+        .catch(() => undefined)
       const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
       if (chapters.value[targetIndex]) {
         await loadChapter(targetIndex, true)
