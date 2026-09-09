@@ -5,6 +5,7 @@ import { dismissVersionUpdate, getVersionUpdate } from '../api/update'
 import type { UserInfo, VersionUpdateInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import { computeNeedSecureKey, readStoredSecureKey, SECURE_KEY_STORAGE_KEY } from '../utils/secureAccess'
+import { appLog } from '../utils/appLogger'
 
 const USER_INFO_CACHE_KEY = 'reader_user_info_cache'
 
@@ -232,12 +233,14 @@ export const useAppStore = defineStore('app', () => {
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
       isOnline.value = true
+      appLog('网络', '状态变更: 检测到【网络已连通 (在线)】')
       // 网络恢复：派发事件，触发 reader store 的 Outbox flush
       // （app.ts 不直接 import reader store 以避免循环依赖）
       window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
     })
     window.addEventListener('offline', () => {
       isOnline.value = false
+      appLog('网络', '状态变更: 检测到【处于离线模式 (断网/飞行模式)】')
     })
   }
 

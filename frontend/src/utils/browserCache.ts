@@ -1,4 +1,5 @@
 import { invokeData, isNativeApp } from './nativeBridge'
+import { appLog } from './appLogger'
 import type { BookChapter } from '../types'
 
 const DB_NAME = 'reader-browser-cache'
@@ -84,15 +85,21 @@ async function withStore<T>(
   return new Promise<T>((resolve, reject) => {
     const tx = db.transaction(storeName, mode)
     const store = tx.objectStore(storeName)
+    let result: T
+
+    tx.oncomplete = () => {
+      resolve(result)
+    }
+    tx.onerror = () => {
+      reject(tx.error)
+    }
+    tx.onabort = () => {
+      reject(tx.error || new Error('IndexedDB 事务已中止'))
+    }
 
     handler(store)
-      .then((result) => {
-        tx.oncomplete = () => {
-          resolve(result)
-        }
-        tx.onerror = () => {
-          reject(tx.error)
-        }
+      .then((res) => {
+        result = res
       })
       .catch((error) => {
         reject(error)
@@ -202,14 +209,19 @@ export async function clearAllBrowserCache() {
 
 /** 写入书籍目录到本地 IndexedDB */
 export async function setBrowserCachedChapterList(bookUrl: string, chapters: BookChapter[], totalChapterNum: number) {
+  if (!bookUrl || !chapters?.length) return
+  // 深度脱敏：将 Vue Proxy 响应式对象转换为纯原生 JS 数组，规避 WebKit 的 DataCloneError
+  const plainChapters: BookChapter[] = JSON.parse(JSON.stringify(chapters))
+
   return withStore('readwrite', async (store) => {
     const record: BrowserChapterListRecord = {
       bookUrl,
-      chapters,
+      chapters: plainChapters,
       totalChapterNum,
       updatedAt: Date.now(),
     }
     await requestToPromise(store.put(record))
+    appLog('目录', `成功落盘离线目录到 IndexedDB (${plainChapters.length} 章)`, { bookUrl })
   }, CHAPTER_LIST_STORE)
 }
 
@@ -220,8 +232,34 @@ export async function getBrowserCachedChapterList(bookUrl: string): Promise<Brow
       const result = await requestToPromise(store.get(bookUrl))
       return (result as BrowserChapterListRecord | undefined) || null
     }, CHAPTER_LIST_STORE)
-  } catch {
+  } catch (err) {
+    appLog('目录', `读取离线目录 IndexedDB 异常`, { bookUrl, err: String(err) })
     return null
+  }
+}
+
+/**
+ * 第二级容灾：从已离线正文表（chapters）中逆向恢复目录
+ * 当本地离线目录表为空或损坏、但存在已缓存正文时触发，确保断网下书籍依然可读
+ */
+export async function restoreChapterListFromCacheRecords(bookUrl: string): Promise<BookChapter[]> {
+  try {
+    return await withStore('readonly', async (store) => {
+      const index = store.index('bookUrl')
+      const records = (await requestToPromise(index.getAll(IDBKeyRange.only(bookUrl)))) as BrowserChapterCacheRecord[]
+      if (!records || !records.length) return []
+
+      appLog('目录', `触发第二级正文容灾反推，找到已离线正文记录 ${records.length} 条`, { bookUrl })
+
+      return records.map((r, i) => ({
+        index: i,
+        title: r.chapterTitle || `第 ${i + 1} 章`,
+        url: r.chapterUrl,
+      }))
+    }, STORE_NAME)
+  } catch (err) {
+    appLog('目录', `正文容灾反推目录失败`, { bookUrl, err: String(err) })
+    return []
   }
 }
 

@@ -26,8 +26,10 @@ import {
   setBrowserCachedChapter,
   setBrowserCachedChapterList,
   getBrowserCachedChapterList,
+  restoreChapterListFromCacheRecords,
   cleanupOrphanChapters,
 } from '../utils/browserCache'
+import { appLog } from '../utils/appLogger'
 // isLocalTxtBook 已废弃：本地书也统一开放客户端离线缓存
 import { saveRecentReadBook } from '../utils/recentBooks'
 import {
@@ -1755,31 +1757,49 @@ export const useReaderStore = defineStore('reader', () => {
     lastServerProgressKey.value = ''
     chaptersLoading.value = true
     try {
+      appLog('目录', `开始请求远端目录: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
       chapters.value = await getChapterList({
         bookUrl: latestBook.bookUrl,
         bookSourceUrl: latestBook.origin,
       })
+      appLog('目录', `远端目录获取成功，共 ${chapters.value.length} 章，准备落盘本地`, { bookUrl: latestBook.bookUrl })
       // 远端目录成功：落盘到本地 IndexedDB + 清理孤儿章节正文
       void setBrowserCachedChapterList(latestBook.bookUrl, chapters.value, chapters.value.length)
         .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(chapters.value.map((c) => c.url).filter(Boolean))))
-        .catch(() => undefined)
+        .catch((err) => appLog('目录', '离线目录落盘失败', { err: String(err) }))
       if (chapters.value.length) {
         currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
       }
       saveReaderSession()
     } catch (error) {
-      // 远端目录失败：尝试回退本地缓存的目录，打通离线进书阻断
+      appLog('目录', `远端目录获取失败: ${(error as Error).message || String(error)}，尝试本地离线目录`, { bookUrl: latestBook.bookUrl })
+      // 第一级：尝试回退本地缓存的目录，打通离线进书阻断
       const cached = await getBrowserCachedChapterList(latestBook.bookUrl)
       if (cached && cached.chapters.length > 0) {
         chapters.value = cached.chapters
         if (chapters.value.length) {
           currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
         }
+        appLog('目录', `✅ 从本地 chapter_lists 恢复离线目录成功，共 ${cached.chapters.length} 章`)
         appStore.showToast('已切换离线目录', 'warning')
         saveReaderSession()
       } else {
-        loading.value = false
-        throw error
+        // 第二级容灾：从本地已离线正文记录恢复应急目录
+        appLog('目录', '本地 chapter_lists 为空，尝试第二级正文容灾反推目录')
+        const fallbackChapters = await restoreChapterListFromCacheRecords(latestBook.bookUrl)
+        if (fallbackChapters.length > 0) {
+          chapters.value = fallbackChapters
+          if (chapters.value.length) {
+            currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
+          }
+          appLog('目录', `✅ 成功从本地已离线正文反向重构目录，共 ${fallbackChapters.length} 章`)
+          appStore.showToast('已从本地缓存恢复应急目录', 'warning')
+          saveReaderSession()
+        } else {
+          appLog('目录', '❌ 离线目录与正文容灾均无数据，无法进入书籍')
+          loading.value = false
+          throw new Error('离线状态且本地无目录缓存，请联网后重试')
+        }
       }
     } finally {
       chaptersLoading.value = false
@@ -1872,28 +1892,35 @@ export const useReaderStore = defineStore('reader', () => {
     const browserCached = await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
 
     if (!forceRefresh && browserCached) {
+      appLog('正文', `第 ${index} 章《${chapter.title}》读取完成 (命中本机离线缓存)`, { size: browserCached.length })
       return browserCached
     }
 
     if (!appStore.isOnline) {
       if (browserCached) {
+        appLog('正文', `第 ${index} 章《${chapter.title}》读取完成 (离线命中)`, { size: browserCached.length })
         return browserCached
       }
+      appLog('正文', `第 ${index} 章《${chapter.title}》读取失败: 当前处于离线状态且未下载到本机`)
       throw new Error('当前处于离线状态，且该章节未缓存到本机')
     }
 
     let chapterContent = ''
     try {
+      appLog('正文', `第 ${index} 章《${chapter.title}》发起远端网络请求`)
       chapterContent = await getBookContent({
         chapterUrl: chapter.url,
         bookSourceUrl: book.value.origin,
         refresh: forceRefresh ? 1 : 0,
       })
+      appLog('正文', `第 ${index} 章《${chapter.title}》远端获取成功，写入本机离线`, { size: chapterContent.length })
     } catch (error) {
       if (browserCached) {
+        appLog('正文', `第 ${index} 章《${chapter.title}》网络请求失败，降级使用本机缓存`)
         appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
         return browserCached
       }
+      appLog('正文', `第 ${index} 章《${chapter.title}》网络请求失败: ${(error as Error).message}`)
       throw error
     }
 

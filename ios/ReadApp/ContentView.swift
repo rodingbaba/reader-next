@@ -285,6 +285,12 @@ struct HybridWebView: UIViewRepresentable {
         }
         
         private func handleSyncControl(action: String, payload: [String: Any]?) {
+            if action == "log" {
+                let category = (payload?["category"] as? String) ?? "前端"
+                let msg = (payload?["message"] as? String) ?? ""
+                LogManager.shared.log(msg, category: category)
+                return
+            }
             LogManager.shared.log("接收到 Sync 控制指令: action=\(action), payload=\(String(describing: payload))", category: "Hybrid")
             if action == "saveProgress" {
                 guard let p = payload, let url = p["bookUrl"] as? String else {

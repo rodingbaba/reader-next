@@ -44,7 +44,7 @@
 
       <div v-else class="cache-sections">
         <div class="info-card">
-          <p>下载到本机后，断网仍可流畅阅读。本机离线数据保存在当前设备 IndexedDB，可随时清除。</p>
+          <p>下载到本机后，断网仍可流畅阅读。本机离线数据保存在当前设备本地，可随时清除。</p>
         </div>
 
         <!-- 统一“离线到本机”面板（含本地书，不再禁用） -->
@@ -62,9 +62,9 @@
               <span class="label">下载后续 100 章</span>
               <span class="sub">中度离线阅读</span>
             </button>
-            <button class="cache-opt primary" @click="startBrowserCaching(0)">
+            <button class="cache-opt" @click="startBrowserCaching(0)">
               <span class="label">全本离线下载</span>
-              <span class="sub">持久化到本机 IndexedDB</span>
+              <span class="sub">离线整本书籍到本地</span>
             </button>
             <button class="cache-opt danger" @click="clearBrowserCache">
               <span class="label">清除本机离线数据</span>
@@ -112,6 +112,7 @@ import { getBookshelfWithCacheInfo, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
 import { cacheBookToBrowser, resolveBookChapters } from '../../utils/bookCache'
 import { isLocalTxtBook } from '../../utils/localBook'
+import { appLog } from '../../utils/appLogger'
 
 const store = useReaderStore()
 const appStore = useAppStore()
@@ -221,13 +222,19 @@ async function startBrowserCaching(count: number) {
 
   try {
     const chapters = store.chapters.length ? store.chapters : await resolveBookChapters(store.book)
-    const total = count === 0
-      ? Math.max(0, chapters.length - store.currentIndex)
-      : Math.min(count, Math.max(0, chapters.length - store.currentIndex))
-    await cacheBookToBrowser({
+    const startIndex = count === 0 ? 0 : store.currentIndex
+
+    appLog('缓存', `用户触发离线下载: ${count === 0 ? '全本离线' : `后续 ${count} 章`}`, {
+      bookName: store.book.name,
+      totalChapters: chapters.length,
+      startIndex,
+      requestedCount: count,
+    })
+
+    const result = await cacheBookToBrowser({
       book: store.book,
       chapters,
-      startIndex: store.currentIndex,
+      startIndex,
       count: count || undefined,
       signal: browserSignal,
       onProgress: ({ completed, total, chapterTitle }) => {
@@ -237,12 +244,18 @@ async function startBrowserCaching(count: number) {
       },
     })
     if (!browserSignal.cancelled) {
-      currentStatus.value = `本机离线完成，共 ${total} 章`
       progress.value = 100
-      appStore.showToast('已下载到本机', 'success')
+      if (result.newlyCached === 0) {
+        currentStatus.value = '所选章节已全部就绪'
+        appStore.showToast('已全部离线，无需重复下载', 'success')
+      } else {
+        currentStatus.value = `本机离线完成，新增 ${result.newlyCached} 章`
+        appStore.showToast(`已下载 ${result.newlyCached} 章到本机`, 'success')
+      }
     }
   } catch (error) {
     currentStatus.value = '下载到本机失败'
+    appLog('缓存', `下载到本机失败: ${(error as Error).message}`)
     appStore.showToast((error as Error).message || '下载到本机失败', 'error')
   } finally {
     await refreshStats()

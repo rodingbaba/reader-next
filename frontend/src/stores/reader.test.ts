@@ -28,6 +28,10 @@ vi.mock('../api/replaceRule', () => ({
 vi.mock('../utils/browserCache', () => ({
   getBrowserCachedChapter: vi.fn(),
   setBrowserCachedChapter: vi.fn(),
+  getBrowserCachedChapterList: vi.fn().mockResolvedValue(null),
+  setBrowserCachedChapterList: vi.fn().mockResolvedValue(undefined),
+  restoreChapterListFromCacheRecords: vi.fn().mockResolvedValue([]),
+  cleanupOrphanChapters: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../utils/recentBooks', () => ({
@@ -87,9 +91,8 @@ describe('reader local txt chapters', () => {
     expect(readerStore.displayContent).toBe('爱学习')
   })
 
-  it('fetches uploaded local txt content from backend even when browser reports offline', async () => {
-    vi.mocked(getBookContent).mockResolvedValue('本地正文')
-    vi.mocked(getBrowserCachedChapter).mockResolvedValue(null)
+  it('reads cached local txt content when browser reports offline', async () => {
+    vi.mocked(getBrowserCachedChapter).mockResolvedValue('本地缓存正文')
     const appStore = useAppStore()
     const readerStore = useReaderStore()
     appStore.setOnlineStatus(false)
@@ -103,14 +106,8 @@ describe('reader local txt chapters', () => {
       { title: '第一章', url: 'local-txt:abc123#0', index: 0 },
     ]
 
-    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('本地正文')
-
-    expect(getBrowserCachedChapter).not.toHaveBeenCalled()
-    expect(getBookContent).toHaveBeenCalledWith({
-      chapterUrl: 'local-txt:abc123#0',
-      bookSourceUrl: 'local-txt',
-      refresh: 0,
-    })
+    await expect(readerStore.fetchChapterContent(0)).resolves.toBe('本地缓存正文')
+    expect(getBrowserCachedChapter).toHaveBeenCalledWith('local-txt:abc123', 'local-txt:abc123#0')
   })
 
   it('loads the latest server reading progress before opening a stale local book', async () => {

@@ -139,19 +139,6 @@ impl UserService {
         access_token: Option<&str>,
         secure_key: Option<&str>,
     ) -> Result<(Option<Value>, bool, bool, bool), AppError> {
-        if !self.cfg.secure {
-            if let Ok(users) = self.load_users().await {
-                if let Some(admin_user) = users.get("admin") {
-                    return Ok((
-                        Some(self.format_user(admin_user)),
-                        false,
-                        false,
-                        true,
-                    ));
-                }
-            }
-        }
-
         let admin_authorized = self.is_admin(access_token, secure_key).await?;
         if let Some(token) = access_token {
             match self.check_auth(token).await {
@@ -166,6 +153,19 @@ impl UserService {
                 Ok(None) => {}
                 Err(err) if self.cfg.secure => return Err(err),
                 Err(_) => {}
+            }
+        }
+
+        if !self.cfg.secure {
+            if let Ok(users) = self.load_users().await {
+                if let Some(admin_user) = users.get("admin") {
+                    return Ok((
+                        Some(self.format_user(admin_user)),
+                        false,
+                        false,
+                        true,
+                    ));
+                }
             }
         }
         Ok((

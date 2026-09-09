@@ -14,6 +14,7 @@ import type { Book, BookGroup, SearchBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalTxtBook } from '../utils/localBook'
 import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook } from '../utils/recentBooks'
+import { appLog } from '../utils/appLogger'
 
 type SearchScope = 'all' | 'group' | 'source'
 
@@ -105,15 +106,15 @@ function mergeServerBooksWithLocalProtection(
         && (local.durChapterPos ?? 0) > (server.durChapterPos ?? 0))
     const mergedProgress = localDeeper
       ? {
-          durChapterIndex: local.durChapterIndex,
-          durChapterPos: local.durChapterPos,
-          durChapterTime: local.durChapterTime,
-        }
+        durChapterIndex: local.durChapterIndex,
+        durChapterPos: local.durChapterPos,
+        durChapterTime: local.durChapterTime,
+      }
       : {
-          durChapterIndex: server.durChapterIndex,
-          durChapterPos: server.durChapterPos,
-          durChapterTime: server.durChapterTime,
-        }
+        durChapterIndex: server.durChapterIndex,
+        durChapterPos: server.durChapterPos,
+        durChapterTime: server.durChapterTime,
+      }
     return {
       ...server,           // 服务端元数据为权威
       ...mergedProgress,   // 进度取仲裁结果
@@ -166,11 +167,11 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       const shelfBook = shelfMap.get(getRecentReadBookKey(entry))
       const merged = shelfBook
         ? {
-            ...entry,
-            ...shelfBook,
-            recentReadAt: entry.recentReadAt,
-            durChapterTime: entry.recentReadAt,
-          }
+          ...entry,
+          ...shelfBook,
+          recentReadAt: entry.recentReadAt,
+          durChapterTime: entry.recentReadAt,
+        }
         : entry
       return {
         ...merged,
@@ -206,14 +207,18 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         if (cachedGroups.length > 0 && groups.value.length === 0) {
           groups.value = cachedGroups
         }
+        appLog('书架', `优先加载本地离线书架成功，共 ${cached.length} 本书`)
         // 本地秒出后立即刷新最近阅读，不阻塞
         void refreshRecentBooks().catch(() => undefined)
+      } else {
+        appLog('书架', '本地无离线书架缓存')
       }
     }
 
     // 2. 后台静默拉取远端更新
     loading.value = true
     try {
+      appLog('书架', '尝试静默同步远端书架...')
       const [serverBooks, browserSummaries] = await Promise.all([
         getBookshelfWithCacheInfo(),
         listBrowserCacheSummary().catch(() => []),
@@ -226,9 +231,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       // 写回本地持久化
       saveCachedBookshelf(books.value)
       await refreshRecentBooks()
+      appLog('书架', `远端书架同步完成，当前共 ${books.value.length} 本书`)
     } catch (err) {
       // 远端失败：保留本地书架，不重置 books.value
-      console.warn('远端书架同步失败，继续使用本地离线书架', err)
+      appLog('书架', `远端书架同步失败: ${(err as Error).message || String(err)}，继续保持本地离线书架`)
     } finally {
       loading.value = false
     }
@@ -242,6 +248,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     refreshing.value = true
     const mySeq = ++fetchBooksSeq
     try {
+      appLog('书架', '用户主动刷新书架...')
       const [serverBooks, browserSummaries] = await Promise.all([
         getBookshelfWithCacheInfo(),
         listBrowserCacheSummary().catch(() => []),
@@ -251,8 +258,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
       saveCachedBookshelf(books.value)
       await refreshRecentBooks()
+      appLog('书架', `主动刷新书架成功，共 ${books.value.length} 本书`)
     } catch (err) {
-      console.warn('刷新书架失败，保留本地数据', err)
+      appLog('书架', `主动刷新书架失败: ${(err as Error).message || String(err)}，保留本地数据`)
     } finally {
       refreshing.value = false
     }
