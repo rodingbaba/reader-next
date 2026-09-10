@@ -83,6 +83,7 @@ struct HybridWebView: UIViewRepresentable {
             forMainFrameOnly: true
         )
         userContentController.addUserScript(initScript)
+        webConfiguration.userContentController = userContentController
         
         let webView = WKWebView(frame: .zero, configuration: webConfiguration)
         webView.scrollView.bounces = false

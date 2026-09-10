@@ -217,14 +217,6 @@ class APIService: ObservableObject {
         headers: [String: String]? = nil,
         timeoutInterval: TimeInterval = 15
     ) async throws -> (Data, HTTPURLResponse) {
-        guard NetworkMonitor.shared.isOnline else {
-            throw NSError(
-                domain: NSURLErrorDomain,
-                code: NSURLErrorNotConnectedToInternet,
-                userInfo: [NSLocalizedDescriptionKey: "网络未连接或处于飞行模式"]
-            )
-        }
-
         let requestURL = "\(baseURL)/\(endpoint)"
 
         do {
