@@ -86,6 +86,14 @@ cd frontend && npm run build                 # Builds to frontend/dist/
 
 ## Release Workflow
 
+- **全端版本号统一联动（App 与 Web 协同更新）**:
+  - 每当用户要求更新版本号时，**必须同时更新 Web 端（后端+前端）与移动 App 端，保持全端版本号绝对一致**。
+  - 涉及的更新文件清单：
+    1. 后端：`Cargo.toml` 中的 `version = "x.y.z"`；
+    2. 后端锁：必须同步运行 `cargo update -p reader --precise x.y.z` 或相关命令同步 `Cargo.lock`，严禁遗漏；
+    3. 前端 Web：`frontend/package.json` 中的 `"version": "x.y.z"`；
+    4. 移动 App（iOS）：`ios/ReadApp.xcodeproj/project.pbxproj` 中所有的 `MARKETING_VERSION = x.y.z;`；
+  - 所有上述版本号修改必须在同一个提交中一并交付，确保发版 Tag 推送后，Docker 构建与 iOS App IPA 打包构建产物的版本号完全对齐。
 - **CRITICAL**: When bumping the version in `Cargo.toml` or adding dependencies, you MUST run `cargo fetch` or `cargo update` to sync `Cargo.lock`. Both files MUST be committed together. This prevents the Docker build from failing due to the `cargo build --locked` command.
 - Release by pushing the code, creating/pushing the version tag, and confirming the Docker publish workflow has been triggered.
 - After the Docker publish workflow is queued or running, do not wait for completion by default. Wait only when the user explicitly needs immediate deploy verification or the workflow has recently been unstable.

@@ -30,8 +30,7 @@ import {
   cleanupOrphanChapters,
 } from '../utils/browserCache'
 import { appLog } from '../utils/appLogger'
-// isLocalTxtBook 已废弃：本地书也统一开放客户端离线缓存
-import { saveRecentReadBook } from '../utils/recentBooks'
+import { saveRecentReadBook, loadRecentReadBooks } from '../utils/recentBooks'
 import {
   DEFAULT_OPENAI_BASE_URL,
   requestOpenAISpeechAudio,
@@ -311,13 +310,6 @@ export const useReaderStore = defineStore('reader', () => {
   const shelfStore = useBookshelfStore()
   const aiBookStore = useAiBookStore()
 
-  // 监听 app store 派发的 reader-flush-outbox 事件，网络恢复时自动补推 Outbox
-  if (typeof window !== 'undefined') {
-    window.addEventListener('reader-flush-outbox', () => {
-      void flushProgressOutbox()
-    })
-  }
-
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -333,12 +325,16 @@ export const useReaderStore = defineStore('reader', () => {
   const progressDirty = ref(false)
   const lastServerProgressKey = ref('')
 
-  // ─── 离线进度 Outbox 队列 ───
-  // 断网时未发送成功的 saveBookProgress 存入本地队列，联网后自动批量回传
+  // ─── 离线进度 Outbox 队列与调度器 ───
+  // 断网时未发送成功的 saveBookProgress 存入本地队列，网络恢复后智能退避补推
   const OUTBOX_KEY = 'reader_progress_outbox'
   const OUTBOX_MAX = 200
   const OUTBOX_MAX_RETRY = 5
   let outboxFlushing = false
+  let outboxTimer: ReturnType<typeof setTimeout> | null = null
+  let outboxConsecutiveFailures = 0
+  let lastOutboxAttemptTime = 0
+  const OUTBOX_MIN_THROTTLE_MS = 10_000 // 10秒防抖冷却
 
   interface ProgressOutboxEntry {
     bookUrl: string
@@ -353,7 +349,7 @@ export const useReaderStore = defineStore('reader', () => {
       const raw = localStorage.getItem(OUTBOX_KEY)
       if (!raw) return []
       const parsed = JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed as ProgressOutboxEntry[] : []
+      return Array.isArray(parsed) ? (parsed as ProgressOutboxEntry[]) : []
     } catch {
       return []
     }
@@ -361,7 +357,6 @@ export const useReaderStore = defineStore('reader', () => {
 
   function saveOutbox(entries: ProgressOutboxEntry[]) {
     try {
-      // 上限保护：超出时丢弃最旧的条目
       const trimmed = entries.length > OUTBOX_MAX
         ? entries.slice(entries.length - OUTBOX_MAX)
         : entries
@@ -371,45 +366,116 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
-  /**
-   * 入队：按 bookUrl 合并去重，同一本书只保留最新一条进度
-   */
-  function queueProgressToOutbox(payload: { bookUrl: string; index: number; position: number }) {
+  function getBackoffDelay(failures: number): number {
+    // 0次失败: 15s, 1次: 30s, 2次: 60s, 3次及以上: 封顶在 120s (2分钟)
+    if (failures <= 0) return 15_000
+    if (failures === 1) return 30_000
+    if (failures === 2) return 60_000
+    return 120_000
+  }
+
+  function clearOutboxTimer() {
+    if (outboxTimer) {
+      clearTimeout(outboxTimer)
+      outboxTimer = null
+    }
+  }
+
+  function scheduleOutboxFlush(forceDelay?: number) {
+    clearOutboxTimer()
+    // 门禁保护：真断网/飞行模式下完全不设置心跳定时器，绝无空转与电量消耗
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return
+    }
     const entries = loadOutbox()
-    // 过滤掉同 bookUrl 的旧条目，再 push 新条目
-    const filtered = entries.filter((e) => e.bookUrl !== payload.bookUrl)
-    filtered.push({
+    if (entries.length === 0) return
+
+    const delay = forceDelay ?? getBackoffDelay(outboxConsecutiveFailures)
+    outboxTimer = setTimeout(() => {
+      void flushProgressOutbox()
+    }, delay)
+  }
+
+  /**
+   * 机会主义同步（Opportunistic Sync）
+   * 在看书翻页、跨章、切前台、离开阅读器时被调用。
+   * 只要离线队列非空、网络在线且距离上次尝试超过 10 秒，顺带立即尝试一次！
+   */
+  function triggerOpportunisticOutboxSync() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    const now = Date.now()
+    if (now - lastOutboxAttemptTime < OUTBOX_MIN_THROTTLE_MS) return
+    const entries = loadOutbox()
+    if (entries.length === 0) return
+    void flushProgressOutbox()
+  }
+
+  /**
+   * 入队：按 bookUrl 单书覆盖去重，即使长时离线看书几小时，单书永远只占最新 1 条记录
+   */
+  function queueProgressToOutbox(payload: { bookUrl: string; index: number; position: number; ts?: number }) {
+    const entries = loadOutbox()
+    const now = payload.ts || Date.now()
+    const existingIndex = entries.findIndex((e) => e.bookUrl === payload.bookUrl)
+    const newEntry: ProgressOutboxEntry = {
       bookUrl: payload.bookUrl,
       index: payload.index,
       position: payload.position,
-      ts: Date.now(),
+      ts: now,
       retryCount: 0,
-    })
-    saveOutbox(filtered)
+    }
+    if (existingIndex >= 0) {
+      const existing = entries[existingIndex]
+      const isNewDeeper = (payload.index > existing.index)
+        || (payload.index === existing.index && payload.position >= existing.position)
+        || (now >= existing.ts)
+      if (isNewDeeper) {
+        entries[existingIndex] = newEntry
+      }
+    } else {
+      entries.push(newEntry)
+    }
+    saveOutbox(entries)
+    scheduleOutboxFlush()
   }
 
   /**
    * 批量推送 Outbox 队列到服务端。
    * 串行推送（每条间隔 200ms），单批最多 20 条。
-   * 4xx 不可恢复（删除条目），5xx/网络错误保留重试（retryCount++）。
    */
   async function flushProgressOutbox(): Promise<void> {
+    clearOutboxTimer()
     if (outboxFlushing) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+
     const entries = loadOutbox()
-    if (entries.length === 0) return
+    if (entries.length === 0) {
+      outboxConsecutiveFailures = 0
+      return
+    }
+
     outboxFlushing = true
+    lastOutboxAttemptTime = Date.now()
+    let hasFailure = false
+
     try {
       const batch = entries.slice(0, 20)
       const remaining = entries.slice(20)
       const nextEntries = [...remaining]
+
       for (const entry of batch) {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          nextEntries.push(entry)
+          hasFailure = true
+          break
+        }
         try {
           await saveBookProgress({
             bookUrl: entry.bookUrl,
             index: entry.index,
             position: entry.position,
+            ts: entry.ts,
           })
-          // 推送成功：不加入 nextEntries（即从队列删除）
         } catch (error) {
           const isClientError = error && typeof error === 'object'
             && ('response' in error)
@@ -417,10 +483,9 @@ export const useReaderStore = defineStore('reader', () => {
             && ((error as { response: { status: number } }).response.status >= 400
               && (error as { response: { status: number } }).response.status < 500)
           if (isClientError) {
-            // 4xx 不可恢复：从队列删除，Toast 提示
             console.warn('Outbox 条目不可恢复，已跳过', entry, error)
           } else {
-            // 5xx/网络错误：保留重试
+            hasFailure = true
             if (entry.retryCount < OUTBOX_MAX_RETRY) {
               nextEntries.push({ ...entry, retryCount: entry.retryCount + 1 })
             } else {
@@ -428,12 +493,40 @@ export const useReaderStore = defineStore('reader', () => {
             }
           }
         }
-        // 串行间隔 200ms
         await new Promise((r) => setTimeout(r, 200))
       }
       saveOutbox(nextEntries)
+
+      if (hasFailure) {
+        outboxConsecutiveFailures++
+      } else {
+        outboxConsecutiveFailures = 0
+      }
+
+      if (nextEntries.length > 0) {
+        scheduleOutboxFlush()
+      }
     } finally {
       outboxFlushing = false
+    }
+  }
+
+  // 多源事件监听驱动
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+      outboxConsecutiveFailures = 0
+      void flushProgressOutbox()
+    })
+    window.addEventListener('reader-flush-outbox', () => {
+      outboxConsecutiveFailures = 0
+      void flushProgressOutbox()
+    })
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          triggerOpportunisticOutboxSync()
+        }
+      })
     }
   }
 
@@ -612,22 +705,57 @@ export const useReaderStore = defineStore('reader', () => {
     return value < 1_000_000_000_000 ? value * 1000 : value
   }
 
+  function getDeeperBookProgress(target: Book, candidate?: Book | null): Book {
+    if (!candidate) return target
+    const targetIdx = target.durChapterIndex ?? 0
+    const candIdx = candidate.durChapterIndex ?? 0
+    const targetPos = target.durChapterPos ?? 0
+    const candPos = candidate.durChapterPos ?? 0
+    const targetTime = normalizeProgressTimestamp(target.durChapterTime)
+    const candTime = normalizeProgressTimestamp(candidate.durChapterTime)
+
+    // 候选者（通常是本地更活跃的记录）是否更深
+    const isCandidateDeeper = candIdx > targetIdx
+      || (candIdx === targetIdx && candPos > targetPos)
+      || (candIdx === targetIdx && candPos === targetPos && candTime > targetTime)
+
+    if (isCandidateDeeper) {
+      return {
+        ...target,
+        durChapterIndex: candidate.durChapterIndex ?? target.durChapterIndex,
+        durChapterTitle: candidate.durChapterTitle ?? target.durChapterTitle,
+        durChapterPos: candidate.durChapterPos ?? target.durChapterPos,
+        durChapterTime: candidate.durChapterTime ?? target.durChapterTime,
+      }
+    }
+    return target
+  }
+
   async function resolveLatestShelfBook(localBook: Book) {
     if (!localBook.bookUrl) return localBook
-    // 若当前离线，直接返回本地书籍对象，杜绝无谓网络等待
+    // 先与本地 shelfStore.books 以及 recentBooks 进行本地深度防回退融合
+    let mergedLocal = localBook
+    const shelfBook = shelfStore.books.find((item) => item.bookUrl === localBook.bookUrl)
+    mergedLocal = getDeeperBookProgress(mergedLocal, shelfBook)
+    const recent = loadRecentReadBooks().find((item) => item.bookUrl === localBook.bookUrl)
+    mergedLocal = getDeeperBookProgress(mergedLocal, recent)
+
+    // 若当前离线，直接返回仲裁后的本地书籍对象，杜绝无谓网络等待
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return localBook
+      return mergedLocal
     }
     const latest = await Promise.race([
       getShelfBook(localBook.bookUrl),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
     ]).catch(() => null)
-    if (!latest) return localBook
-    const shelfBook = shelfStore.books.find((item) => item.bookUrl === localBook.bookUrl || item.bookUrl === latest.bookUrl)
+    if (!latest) return mergedLocal
+
+    // 服务端返回后，进行防回退仲裁：若本地更深，保留本地最新进度（本地胜出原则）
+    const finalBook = getDeeperBookProgress(latest, mergedLocal)
     if (shelfBook) {
-      Object.assign(shelfBook, latest)
+      Object.assign(shelfBook, finalBook)
     }
-    return latest
+    return finalBook
   }
 
   function currentServerProgressPayload(index = currentIndex.value, progress = chapterScrollProgress.value) {
@@ -636,6 +764,7 @@ export const useReaderStore = defineStore('reader', () => {
       bookUrl: book.value.bookUrl,
       index,
       position: encodeServerProgress(progress),
+      ts: book.value.durChapterTime || Date.now(),
     }
   }
 
@@ -647,10 +776,10 @@ export const useReaderStore = defineStore('reader', () => {
     if (!book.value) return
     const encodedProgress = encodeServerProgress(progress)
     book.value.durChapterPos = encodedProgress
-    const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
-    if (shelfBook) {
-      shelfBook.durChapterPos = encodedProgress
-    }
+    shelfStore.updateBookProgress({
+      bookUrl: book.value.bookUrl,
+      durChapterPos: encodedProgress,
+    })
   }
 
   function getPersistedReaderSession(): PersistedReaderSession | null {
@@ -1876,12 +2005,12 @@ export const useReaderStore = defineStore('reader', () => {
       book.value.durChapterIndex = index
       book.value.durChapterTitle = chapters.value[index]?.title || book.value.durChapterTitle
       book.value.durChapterTime = Date.now()
-      const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
-      if (shelfBook) {
-        shelfBook.durChapterIndex = book.value.durChapterIndex
-        shelfBook.durChapterTitle = book.value.durChapterTitle
-        shelfBook.durChapterTime = book.value.durChapterTime
-      }
+      shelfStore.updateBookProgress({
+        bookUrl: book.value.bookUrl,
+        durChapterIndex: book.value.durChapterIndex,
+        durChapterTitle: book.value.durChapterTitle,
+        durChapterTime: book.value.durChapterTime,
+      })
     }
     syncLocalBookProgress(chapterScrollProgress.value)
     if (book.value) {
@@ -1890,6 +2019,7 @@ export const useReaderStore = defineStore('reader', () => {
     localStorage.setItem('reader-currentIndex', String(index))
     saveReaderSession()
     markProgressDirty()
+    triggerOpportunisticOutboxSync()
   }
 
   async function persistProgress(index = currentIndex.value, progress = chapterScrollProgress.value) {
@@ -1898,6 +2028,7 @@ export const useReaderStore = defineStore('reader', () => {
     await saveBookProgress(payload).then(() => {
       progressDirty.value = false
       lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
+      triggerOpportunisticOutboxSync()
     }).catch(() => {
       // 失败时入队 Outbox，等待联网后自动补推
       queueProgressToOutbox(payload)
@@ -2378,7 +2509,7 @@ export const useReaderStore = defineStore('reader', () => {
     loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
     chapterScrollProgress, setChapterScrollProgress,
     getPersistedReaderSession, restorePersistedSession,
-    persistProgress, flushProgressToServer, flushProgressToServerKeepalive, flushProgressOutbox,
+    persistProgress, flushProgressToServer, flushProgressToServerKeepalive, flushProgressOutbox, triggerOpportunisticOutboxSync,
     config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,

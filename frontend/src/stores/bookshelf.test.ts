@@ -135,4 +135,79 @@ describe('bookshelf search state', () => {
       sourceUrl: '',
     })).toBeNull()
   })
+
+  it('updateBookProgress persists progress to localStorage immediately', () => {
+    const store = useBookshelfStore()
+    store.books = [
+      {
+        name: '离线测试书',
+        author: '作者',
+        origin: 'source-1',
+        bookUrl: 'book-offline-1',
+        durChapterIndex: 2,
+        durChapterPos: 100,
+        durChapterTitle: '第3章',
+      },
+    ]
+
+    store.updateBookProgress({
+      bookUrl: 'book-offline-1',
+      durChapterIndex: 5,
+      durChapterPos: 800,
+      durChapterTitle: '第6章',
+      durChapterTime: 12345678,
+    })
+
+    const book = store.books.find((b) => b.bookUrl === 'book-offline-1')
+    expect(book?.durChapterIndex).toBe(5)
+    expect(book?.durChapterPos).toBe(800)
+    expect(book?.durChapterTitle).toBe('第6章')
+
+    const rawCache = localStorage.getItem('reader_bookshelf_cache')
+    expect(rawCache).toBeTruthy()
+    const cachedBooks = JSON.parse(rawCache!)
+    expect(cachedBooks[0].durChapterIndex).toBe(5)
+    expect(cachedBooks[0].durChapterPos).toBe(800)
+  })
+
+  it('cold boot offline restores cached bookshelf and merges recent books deeper progress', async () => {
+    // 模拟冷启动断网：远端接口失败
+    vi.mocked(getBookshelfWithCacheInfo).mockRejectedValue(new Error('Network error'))
+
+    // 预置旧书架缓存
+    localStorage.setItem('reader_bookshelf_cache', JSON.stringify([
+      {
+        name: '断网书',
+        author: '作者',
+        origin: 'source-1',
+        bookUrl: 'book-offline-cold',
+        durChapterIndex: 1,
+        durChapterPos: 100,
+        durChapterTime: 1000,
+      },
+    ]))
+
+    // 预置最近阅读记录（进度更深）
+    const { loadRecentReadBooks } = await import('../utils/recentBooks')
+    vi.mocked(loadRecentReadBooks).mockReturnValue([
+      {
+        name: '断网书',
+        author: '作者',
+        origin: 'source-1',
+        bookUrl: 'book-offline-cold',
+        durChapterIndex: 8,
+        durChapterPos: 500,
+        durChapterTime: 2000,
+        recentReadAt: 2000,
+      } as any,
+    ])
+
+    const store = useBookshelfStore()
+    await store.fetchBooks()
+
+    expect(store.books.length).toBe(1)
+    const book = store.books[0]
+    expect(book.durChapterIndex).toBe(8)
+    expect(book.durChapterPos).toBe(500)
+  })
 })

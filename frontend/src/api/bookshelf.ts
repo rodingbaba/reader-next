@@ -98,15 +98,21 @@ export async function saveBookProgress(params: {
   position?: number
   ts?: number
 }) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Offline: network unavailable')
+  }
+  params.ts = params.ts || Date.now()
   if (isNativeApp()) {
-    params.ts = params.ts || Date.now()
     const payload = {
       ...params,
       serverURL: localStorage.getItem('server_base_url') || '',
       accessToken: localStorage.getItem('accessToken') || ''
     }
-    invokeSync('saveProgress', payload)
-    return ""
+    try {
+      invokeSync('saveProgress', payload)
+    } catch (e) {
+      console.warn('Native saveProgress failed', e)
+    }
   }
   return http.post<string>('saveBookProgress', params).then((r) => r.data)
 }

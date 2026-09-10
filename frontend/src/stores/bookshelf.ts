@@ -200,8 +200,35 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     const mySeq = ++fetchBooksSeq
     // 1. 优先读取本地持久化，实现 0ms 秒开书架
     if (books.value.length === 0) {
-      const cached = loadCachedBookshelf()
+      let cached = loadCachedBookshelf()
       if (cached.length > 0) {
+        // 冷启动防回退：与本地最近阅读快速融合，防止冷启动拿到滞后数据
+        const recent = loadRecentReadBooks()
+        if (recent.length > 0) {
+          const recentMap = new Map(recent.map((r) => [r.bookUrl, r]))
+          let changed = false
+          cached = cached.map((b) => {
+            const r = recentMap.get(b.bookUrl)
+            if (!r) return b
+            const rDeeper = (r.durChapterIndex ?? 0) > (b.durChapterIndex ?? 0)
+              || ((r.durChapterIndex ?? 0) === (b.durChapterIndex ?? 0) && (r.durChapterPos ?? 0) > (b.durChapterPos ?? 0))
+              || ((r.durChapterTime ?? 0) > (b.durChapterTime ?? 0))
+            if (rDeeper) {
+              changed = true
+              return {
+                ...b,
+                durChapterIndex: r.durChapterIndex ?? b.durChapterIndex,
+                durChapterTitle: r.durChapterTitle ?? b.durChapterTitle,
+                durChapterPos: r.durChapterPos ?? b.durChapterPos,
+                durChapterTime: r.durChapterTime ?? b.durChapterTime,
+              }
+            }
+            return b
+          })
+          if (changed) {
+            saveCachedBookshelf(cached)
+          }
+        }
         books.value = cached
         const cachedGroups = loadCachedGroups()
         if (cachedGroups.length > 0 && groups.value.length === 0) {
@@ -232,6 +259,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       saveCachedBookshelf(books.value)
       await refreshRecentBooks()
       appLog('书架', `远端书架同步完成，当前共 ${books.value.length} 本书`)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
+      }
     } catch (err) {
       // 远端失败：保留本地书架，不重置 books.value
       appLog('书架', `远端书架同步失败: ${(err as Error).message || String(err)}，继续保持本地离线书架`)
@@ -259,6 +289,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       saveCachedBookshelf(books.value)
       await refreshRecentBooks()
       appLog('书架', `主动刷新书架成功，共 ${books.value.length} 本书`)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
+      }
     } catch (err) {
       appLog('书架', `主动刷新书架失败: ${(err as Error).message || String(err)}，保留本地数据`)
     } finally {
@@ -510,6 +543,44 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     }
   }
 
+  /**
+   * 实时更新单本书籍的阅读进度并持久化到 localStorage
+   * 翻页、滚动、换章时即刻调用，确保断网强杀进程后冷启动进度不丢失
+   */
+  function updateBookProgress(params: {
+    bookUrl: string
+    durChapterIndex?: number
+    durChapterTitle?: string
+    durChapterPos?: number
+    durChapterTime?: number
+  }) {
+    if (!params.bookUrl) return
+    const target = books.value.find((b) => b.bookUrl === params.bookUrl)
+    if (!target) return
+
+    let changed = false
+    if (params.durChapterIndex !== undefined && params.durChapterIndex !== target.durChapterIndex) {
+      target.durChapterIndex = params.durChapterIndex
+      changed = true
+    }
+    if (params.durChapterTitle !== undefined && params.durChapterTitle !== target.durChapterTitle) {
+      target.durChapterTitle = params.durChapterTitle
+      changed = true
+    }
+    if (params.durChapterPos !== undefined && params.durChapterPos !== target.durChapterPos) {
+      target.durChapterPos = params.durChapterPos
+      changed = true
+    }
+    if (params.durChapterTime !== undefined && params.durChapterTime !== target.durChapterTime) {
+      target.durChapterTime = params.durChapterTime
+      changed = true
+    }
+
+    if (changed) {
+      saveCachedBookshelf(books.value)
+    }
+  }
+
   return {
     books, recentBooks, loading, refreshing, sorting,
     fetchBooks, refreshBooks, removeBook,
@@ -522,5 +593,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     editMode,
     selectedBookUrls, toggleSelection, selectAll, clearSelection,
     bulkDelete, bulkSetGroup, reorderBooks, moveBookToFront,
+    updateBookProgress,
   }
 })

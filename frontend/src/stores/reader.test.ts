@@ -36,6 +36,7 @@ vi.mock('../utils/browserCache', () => ({
 
 vi.mock('../utils/recentBooks', () => ({
   saveRecentReadBook: vi.fn(),
+  loadRecentReadBooks: vi.fn().mockReturnValue([]),
 }))
 
 vi.mock('../utils/openaiSpeech', () => ({
@@ -351,5 +352,46 @@ describe('reader ai book auto-update', () => {
       chapterIndex: 0,
       mode: 'auto',
     })
+  })
+
+  it('queues failed progress to outbox and deduplicates for the same book', async () => {
+    vi.mocked(saveBookProgress).mockRejectedValue(new Error('Network offline'))
+    const readerStore = useReaderStore()
+    readerStore.book = {
+      name: '测试书',
+      author: '作者',
+      origin: 'source-1',
+      bookUrl: 'book-outbox-test',
+    }
+    readerStore.chapters = [
+      { title: '第一章', url: 'chapter-1', index: 0 },
+      { title: '第二章', url: 'chapter-2', index: 1 },
+      { title: '第三章', url: 'chapter-3', index: 2 },
+    ]
+
+    // 第一次翻页保存（失败）
+    await readerStore.persistProgress(0, 0.2)
+    let outboxRaw = localStorage.getItem('reader_progress_outbox')
+    expect(outboxRaw).toBeTruthy()
+    let entries = JSON.parse(outboxRaw!)
+    expect(entries.length).toBe(1)
+    expect(entries[0].bookUrl).toBe('book-outbox-test')
+    expect(entries[0].index).toBe(0)
+
+    // 第二次翻页保存（更深，继续失败）
+    await readerStore.persistProgress(1, 0.5)
+    outboxRaw = localStorage.getItem('reader_progress_outbox')
+    entries = JSON.parse(outboxRaw!)
+    // 单书覆盖去重：依然只有 1 条记录
+    expect(entries.length).toBe(1)
+    expect(entries[0].index).toBe(1)
+
+    // 模拟网络恢复，补推成功
+    vi.mocked(saveBookProgress).mockResolvedValue('')
+    await readerStore.flushProgressOutbox()
+
+    outboxRaw = localStorage.getItem('reader_progress_outbox')
+    entries = JSON.parse(outboxRaw!)
+    expect(entries.length).toBe(0)
   })
 })
