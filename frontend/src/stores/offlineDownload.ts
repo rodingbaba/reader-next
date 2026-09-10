@@ -29,14 +29,14 @@ export const useOfflineDownloadStore = defineStore('offlineDownload', () => {
     chapters: BookChapter[]
     count: number
     startIndex?: number
-  }) {
+  }): Promise<boolean> {
     if (isDownloading.value) {
       if (activeBookUrl.value === params.book.bookUrl) {
         appStore.showToast(`《${params.book.name}》正在后台下载中`)
       } else {
         appStore.showToast(`正在后台下载《${activeBookName.value}》，请等待完成`, 'warning')
       }
-      return
+      return false
     }
 
     activeBookUrl.value = params.book.bookUrl
@@ -54,6 +54,8 @@ export const useOfflineDownloadStore = defineStore('offlineDownload', () => {
       totalChapters: params.chapters.length,
       requestedCount: params.count,
     })
+
+    appStore.showToast('已转入后台静默下载，可收起面板继续阅读')
 
     try {
       const result = await cacheBookToBrowser({
@@ -96,6 +98,8 @@ export const useOfflineDownloadStore = defineStore('offlineDownload', () => {
         activeBookName.value = ''
       }, 1200)
     }
+
+    return true
   }
 
   function cancelDownload() {

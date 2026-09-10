@@ -251,11 +251,11 @@ async function startBrowserCaching(count: number) {
     chapters,
     count,
     startIndex,
-  }).then(() => {
-    refreshStats()
+  }).then((started) => {
+    if (started) {
+      refreshStats()
+    }
   })
-
-  appStore.showToast('已转入后台静默下载，可收起面板继续阅读')
 }
 
 async function clearServerCache() {
