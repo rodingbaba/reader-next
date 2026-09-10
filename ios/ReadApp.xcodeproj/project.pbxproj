@@ -21,6 +21,7 @@
 		1A000023000000000000002 /* LogManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000024000000000000002 /* LogManager.swift */; };
 		1A000025000000000000002 /* HTMLContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000026000000000000002 /* HTMLContentView.swift */; };
 		1A000027000000000000002 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000028000000000000002 /* LiquidGlass.swift */; };
+		1A000029000000000000002 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000030000000000000002 /* NetworkMonitor.swift */; };
 		99000001000000000000001 /* www in Resources */ = {isa = PBXBuildFile; fileRef = 99000002000000000000001 /* www */; };
 /* End PBXBuildFile section */
 
@@ -41,6 +42,7 @@
 		1A000024000000000000002 /* LogManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogManager.swift; sourceTree = "<group>"; };
 		1A000026000000000000002 /* HTMLContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLContentView.swift; sourceTree = "<group>"; };
 		1A000028000000000000002 /* LiquidGlass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlass.swift; sourceTree = "<group>"; };
+		1A000030000000000000002 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		24D7ED570ED5A1221018601D /* ReadApp.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = ReadApp.entitlements; sourceTree = "<group>"; };
 		99000002000000000000001 /* www */ = {isa = PBXFileReference; lastKnownFileType = folder; path = www; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -108,6 +110,7 @@
 				1A000008000000000000001 /* APIService.swift */,
 				1A000016000000000000001 /* TTSManager.swift */,
 				1A000024000000000000002 /* LogManager.swift */,
+				1A000030000000000000002 /* NetworkMonitor.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -203,6 +206,7 @@
 				1A000023000000000000002 /* LogManager.swift in Sources */,
 				1A000025000000000000002 /* HTMLContentView.swift in Sources */,
 				1A000027000000000000002 /* LiquidGlass.swift in Sources */,
+				1A000029000000000000002 /* NetworkMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -348,7 +352,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.6.6;
+				MARKETING_VERSION = 1.6.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.readapp.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -377,7 +381,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.6.6;
+				MARKETING_VERSION = 1.6.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.readapp.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

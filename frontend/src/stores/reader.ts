@@ -1,4 +1,4 @@
-import { invokeTTS } from '../utils/nativeBridge'
+import { invokeTTS, isNetworkOnline } from '../utils/nativeBridge'
 import { defineStore } from 'pinia'
 import http from '../api/http'
 import { ref, computed, reactive, watch } from 'vue'
@@ -384,7 +384,7 @@ export const useReaderStore = defineStore('reader', () => {
   function scheduleOutboxFlush(forceDelay?: number) {
     clearOutboxTimer()
     // 门禁保护：真断网/飞行模式下完全不设置心跳定时器，绝无空转与电量消耗
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return
     }
     const entries = loadOutbox()
@@ -402,7 +402,7 @@ export const useReaderStore = defineStore('reader', () => {
    * 只要离线队列非空、网络在线且距离上次尝试超过 10 秒，顺带立即尝试一次！
    */
   function triggerOpportunisticOutboxSync() {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) return
     const now = Date.now()
     if (now - lastOutboxAttemptTime < OUTBOX_MIN_THROTTLE_MS) return
     const entries = loadOutbox()
@@ -446,7 +446,7 @@ export const useReaderStore = defineStore('reader', () => {
   async function flushProgressOutbox(): Promise<void> {
     clearOutboxTimer()
     if (outboxFlushing) return
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) return
 
     const entries = loadOutbox()
     if (entries.length === 0) {
@@ -464,7 +464,7 @@ export const useReaderStore = defineStore('reader', () => {
       const nextEntries = [...remaining]
 
       for (const entry of batch) {
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
           nextEntries.push(entry)
           hasFailure = true
           break
@@ -741,12 +741,13 @@ export const useReaderStore = defineStore('reader', () => {
     mergedLocal = getDeeperBookProgress(mergedLocal, recent)
 
     // 若当前离线，直接返回仲裁后的本地书籍对象，杜绝无谓网络等待
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return mergedLocal
     }
+    // 在线时：做极短竞态（最多 150ms），若服务器未能迅速响应，直接采用本地权威进度秒开，绝不卡顿 1000ms
     const latest = await Promise.race([
       getShelfBook(localBook.bookUrl),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
     ]).catch(() => null)
     if (!latest) return mergedLocal
 
@@ -1921,7 +1922,7 @@ export const useReaderStore = defineStore('reader', () => {
       saveReaderSession()
 
       // 若当前离线，无需再发任何网络请求
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
         return
       }
 
@@ -1960,7 +1961,7 @@ export const useReaderStore = defineStore('reader', () => {
     }
 
     // 4. 本地完全无离线目录（首次打开未缓存书籍）：需要走网络请求
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       chaptersLoading.value = false
       loading.value = false
       appLog('目录', '❌ 离线状态且本地无目录缓存，无法进入书籍')
@@ -2146,7 +2147,7 @@ export const useReaderStore = defineStore('reader', () => {
       appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
 
       if (!isOpeningSavedChapter) {
-        await persistProgress(index, 0)
+        void persistProgress(index, 0).catch(() => undefined)
       }
 
       if (config.enablePreload) {
@@ -2337,7 +2338,7 @@ export const useReaderStore = defineStore('reader', () => {
       replaceRules.value = cached
     }
     // 若离线直接返回，杜绝网络等待
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return
     }
     // 2. 在线静默刷新
@@ -2387,7 +2388,7 @@ export const useReaderStore = defineStore('reader', () => {
       }
     }
     // 若离线直接返回
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return
     }
     // 2. 在线静默刷新

@@ -194,19 +194,14 @@ const openingBookUrl = ref('')
 const txtFileInputRef = ref<HTMLInputElement | null>(null)
 const txtUploading = ref(false)
 
-onMounted(async () => {
-  await appStore.fetchUserInfo()
-  await Promise.all([
+onMounted(() => {
+  // 后台静默刷新用户信息，不阻塞书架的本地即刻渲染
+  void appStore.fetchUserInfo().catch(() => undefined)
+  // 书架优先从本地持久化秒出展示，后台静默拉取远端
+  void Promise.all([
     shelfStore.fetchBooks().catch(() => undefined),
     shelfStore.fetchGroups().catch(() => undefined),
   ])
-  if (!appStore.isOnline) {
-    const restored = await readerStore.restorePersistedSession()
-    if (restored) {
-      appStore.showToast('已恢复最近阅读的离线章节', 'success')
-      router.replace('/reader')
-    }
-  }
 })
 
 function triggerTxtUpload() {

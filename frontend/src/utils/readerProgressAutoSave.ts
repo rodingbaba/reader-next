@@ -80,10 +80,14 @@ export function createReaderProgressExitSaver({
   }
 
   return {
-    async flushBeforeRouteLeave() {
+    async flushBeforeRouteLeave(timeoutMs = 120) {
       if (routeFlushPromise) return routeFlushPromise
       if (!beginPersist()) return
-      routeFlushPromise = Promise.resolve(flushToServer()).catch(() => undefined)
+      const flushTask = Promise.resolve(flushToServer()).catch(() => undefined)
+      routeFlushPromise = Promise.race([
+        flushTask,
+        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, timeoutMs))),
+      ])
       await routeFlushPromise
     },
 

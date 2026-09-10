@@ -1,4 +1,4 @@
-import { invokeData, invokeSync, isNativeApp } from '../utils/nativeBridge'
+import { invokeData, invokeSync, isNativeApp, isNetworkOnline } from '../utils/nativeBridge'
 import http from './http'
 import type { Book, BookChapter, BookGroup } from '../types'
 
@@ -98,7 +98,7 @@ export async function saveBookProgress(params: {
   position?: number
   ts?: number
 }) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (!isNetworkOnline()) {
     throw new Error('Offline: network unavailable')
   }
   params.ts = params.ts || Date.now()

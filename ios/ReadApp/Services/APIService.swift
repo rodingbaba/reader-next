@@ -217,6 +217,14 @@ class APIService: ObservableObject {
         headers: [String: String]? = nil,
         timeoutInterval: TimeInterval = 15
     ) async throws -> (Data, HTTPURLResponse) {
+        guard NetworkMonitor.shared.isOnline else {
+            throw NSError(
+                domain: NSURLErrorDomain,
+                code: NSURLErrorNotConnectedToInternet,
+                userInfo: [NSLocalizedDescriptionKey: "网络未连接或处于飞行模式"]
+            )
+        }
+
         let requestURL = "\(baseURL)/\(endpoint)"
 
         do {
@@ -229,8 +237,8 @@ class APIService: ObservableObject {
                 timeoutInterval: timeoutInterval
             )
         } catch let requestError as NSError {
-            // 对可恢复网络错误做一次快速重试
-            if shouldRetrySameServer(error: requestError) {
+            // 仅在仍然在线且为可恢复瞬时网络错误时做一次快速重试
+            if NetworkMonitor.shared.isOnline && shouldRetrySameServer(error: requestError) {
                 LogManager.shared.log("请求失败，重试一次 (\(requestURL)): \(requestError.localizedDescription)", category: "网络")
                 return try await performRequest(
                     urlString: requestURL,

@@ -1857,8 +1857,8 @@ function pageBackward() {
 }
 
 // Navigation
-async function goHome() {
-  await persistReadingProgressBeforeLeave()
+function goHome() {
+  persistReadingProgressKeepalive()
   router.replace('/')
 }
 
@@ -1882,9 +1882,6 @@ function handleVisibilityChange() {
   persistReadingProgressTemporaryKeepalive()
 }
 
-async function persistReadingProgressBeforeLeave() {
-  await readerProgressExitSaver.flushBeforeRouteLeave()
-}
 
 function persistReadingProgressKeepalive() {
   readerProgressExitSaver.flushKeepalive()

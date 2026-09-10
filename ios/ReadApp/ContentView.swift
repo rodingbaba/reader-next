@@ -75,7 +75,14 @@ struct HybridWebView: UIViewRepresentable {
         userContentController.add(context.coordinator, name: "ttsControl")
         userContentController.add(context.coordinator, name: "dataControl")
         userContentController.add(context.coordinator, name: "syncControl")
-        webConfiguration.userContentController = userContentController
+        NetworkMonitor.shared.startMonitoring()
+        let initialOnline = NetworkMonitor.shared.isOnline
+        let initScript = WKUserScript(
+            source: "window.__nativeInitialOnline = \(initialOnline);",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+        userContentController.addUserScript(initScript)
         
         let webView = WKWebView(frame: .zero, configuration: webConfiguration)
         webView.scrollView.bounces = false
@@ -83,6 +90,7 @@ struct HybridWebView: UIViewRepresentable {
         webView.backgroundColor = UIColor.clear
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
+        NetworkMonitor.shared.webView = webView
         
         if let url = URL(string: "readapp://localhost/index.html") {
             webView.load(URLRequest(url: url))
@@ -276,6 +284,16 @@ struct HybridWebView: UIViewRepresentable {
         }
         
         private func handleDataControl(action: String, payload: [String: Any]?, callbackId: String?, webView: WKWebView?) {
+            if action == "getNetworkStatus" {
+                let isOnline = NetworkMonitor.shared.isOnline
+                if let callbackId = callbackId {
+                    let js = "window.__nativeBridgeCallback('\(callbackId)', { isOnline: \(isOnline) }, null);"
+                    DispatchQueue.main.async {
+                        webView?.evaluateJavaScript(js)
+                    }
+                }
+                return
+            }
             if let callbackId = callbackId {
                 let js = "window.__nativeBridgeCallback('\(callbackId)', null, null);"
                 DispatchQueue.main.async {
@@ -293,6 +311,10 @@ struct HybridWebView: UIViewRepresentable {
             }
             LogManager.shared.log("接收到 Sync 控制指令: action=\(action), payload=\(String(describing: payload))", category: "Hybrid")
             if action == "saveProgress" {
+                guard NetworkMonitor.shared.isOnline else {
+                    LogManager.shared.log("当前处于离线/飞行模式，静默跳过原生 saveProgress", category: "网络")
+                    return
+                }
                 guard let p = payload, let url = p["bookUrl"] as? String else {
                     LogManager.shared.log("❌ 进度同步失败：缺少 bookUrl", category: "网络")
                     return

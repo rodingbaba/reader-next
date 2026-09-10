@@ -5,6 +5,7 @@ import { dismissVersionUpdate, getVersionUpdate } from '../api/update'
 import type { UserInfo, VersionUpdateInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
 import { computeNeedSecureKey, readStoredSecureKey, SECURE_KEY_STORAGE_KEY } from '../utils/secureAccess'
+import { isNetworkOnline } from '../utils/nativeBridge'
 import { appLog } from '../utils/appLogger'
 
 const USER_INFO_CACHE_KEY = 'reader_user_info_cache'
@@ -221,7 +222,7 @@ export const useAppStore = defineStore('app', () => {
   const showSourceManager = ref(false)
   const showUserManager = ref(false)
   const showWebdavManager = ref(false)
-  const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const isOnline = ref(isNetworkOnline())
   // ─── PWA（保留字段，纯 Web 浏览器端向后兼容） ───
   // 设计文档 8.4 节明确 PWA 死代码清理为后续规划，当前保留以避免 SettingsDrawer.vue / pwa.ts 引用断裂
   const pwaReady = ref(false)
@@ -229,7 +230,7 @@ export const useAppStore = defineStore('app', () => {
   const deferredInstallPrompt = ref<any>(null)
   const waitingServiceWorker = ref<ServiceWorker | null>(null)
 
-  // 监听 online/offline 事件，断网/恢复时更新 isOnline
+  // 监听 online/offline 及原生网络事件，断网/恢复时更新 isOnline
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
       isOnline.value = true
@@ -242,6 +243,16 @@ export const useAppStore = defineStore('app', () => {
       isOnline.value = false
       appLog('网络', '状态变更: 检测到【处于离线模式 (断网/飞行模式)】')
     })
+    window.addEventListener('native-network-change', ((e: CustomEvent) => {
+      const nextOnline = !!e.detail?.isOnline
+      if (isOnline.value !== nextOnline) {
+        isOnline.value = nextOnline
+        appLog('网络', `原生状态变更: 检测到【${nextOnline ? '网络已连通 (在线)' : '处于离线模式 (断网/飞行模式)'}】`)
+        if (nextOnline) {
+          window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
+        }
+      }
+    }) as EventListener)
   }
 
   const initialReadingStats = (() => {

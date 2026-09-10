@@ -15,7 +15,38 @@ declare global {
     };
     __nativeBridgeCallbacks?: Record<string, { resolve: (data: any) => void; reject: (err: any) => void }>;
     __nativeBridgeCallback?: (id: string, data: any, error?: any) => void;
+    __nativeInitialOnline?: boolean;
+    __nativeOnlineStatus?: boolean;
+    __onNativeNetworkChange?: (isOnline: boolean) => void;
   }
+}
+
+// 自动挂载原生网络变化回调，将原生网络事件广播为标准 Web 事件
+if (typeof window !== 'undefined') {
+  if (typeof window.__nativeInitialOnline === 'boolean') {
+    window.__nativeOnlineStatus = window.__nativeInitialOnline;
+  }
+  window.__onNativeNetworkChange = (isOnline: boolean) => {
+    window.__nativeOnlineStatus = isOnline;
+    window.dispatchEvent(new Event(isOnline ? 'online' : 'offline'));
+    window.dispatchEvent(new CustomEvent('native-network-change', { detail: { isOnline } }));
+  };
+}
+
+/**
+ * 获取当前最可靠的网络连通状态：
+ * 优先取原生 Bridge 毫秒级探测结果；非原生环境平滑降级使用 navigator.onLine
+ */
+export function isNetworkOnline(): boolean {
+  if (typeof window !== 'undefined') {
+    if (typeof window.__nativeOnlineStatus === 'boolean') {
+      return window.__nativeOnlineStatus;
+    }
+    if (typeof window.__nativeInitialOnline === 'boolean') {
+      return window.__nativeInitialOnline;
+    }
+  }
+  return typeof navigator !== 'undefined' ? navigator.onLine : true;
 }
 
 let callbackIdCounter = 0;

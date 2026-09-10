@@ -14,6 +14,7 @@ import type { Book, BookGroup, SearchBook } from '../types'
 import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 import { isLocalTxtBook } from '../utils/localBook'
 import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook } from '../utils/recentBooks'
+import { isNetworkOnline } from '../utils/nativeBridge'
 import { appLog } from '../utils/appLogger'
 
 type SearchScope = 'all' | 'group' | 'source'
@@ -243,7 +244,17 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     }
 
     // 2. 后台静默拉取远端更新
-    loading.value = true
+    // 若本地已有书籍数据，无需让全局 loading 为 true，避免离线时拖拽排序被禁用
+    if (books.value.length === 0) {
+      loading.value = true
+    }
+
+    // 若当前检测到离线，直接完成，无需发起远端请求
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      loading.value = false
+      return
+    }
+
     try {
       appLog('书架', '尝试静默同步远端书架...')
       const [serverBooks, browserSummaries] = await Promise.all([
@@ -329,6 +340,19 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   })
 
   async function fetchGroups() {
+    // 1. 优先本地秒出
+    if (groups.value.length === 0) {
+      const cached = loadCachedGroups()
+      if (cached.length > 0) {
+        groups.value = cached
+      }
+    }
+
+    // 若当前离线，无需发起远端请求
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      return
+    }
+
     try {
       const serverGroups = await getBookGroups()
       groups.value = serverGroups
@@ -528,18 +552,15 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     saveCachedBookshelf(books.value)
 
     // 若当前检测到离线，直接完成，不触发网络请求
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       return
     }
 
-    sorting.value = true
     try {
       await apiSaveBooks(next)
     } catch (error) {
       // 离线或网络异常时不回滚本地书架排序，保留本地视觉连续性
       appLog('书架', `书架置顶远端同步失败: ${(error as Error).message || String(error)}，保持本地排序`)
-    } finally {
-      sorting.value = false
     }
   }
 
