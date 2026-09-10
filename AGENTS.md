@@ -20,6 +20,10 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
    - **ALWAYS STOP AND ASK FOR EXPLICIT PERMISSION FROM THE USER BEFORE ANY GIT MODIFICATION COMMANDS.** This is a zero-tolerance boundary. If the user just says "approved" to a plan, that ONLY approves writing the code, NOT committing it. You MUST ask: "Code is ready, should I commit and push?" and wait for the user to say "yes".
    - When you ARE explicitly authorized to commit, ALWAYS ensure no modified files are left behind. Use `git add .` or run `git status` to meticulously verify that every intended modification (including newly created and heavily refactored files) is properly staged before committing.
    - ALWAYS clean up any temporary scripts, patch files, or scratch files you created during development before or immediately after committing code.
+   - **POST-PUSH AUDIT (每次推送后必查差异)**: 每次执行 `git push`（无论分支还是 tag）完成后，**必须立即主动检查本地工作区与远端的差异**（运行 `git status` 与 `git diff origin/<branch>`），严格确认：
+     1. 本地工作区是否为 100% 洁净（`nothing to commit, working tree clean`）；
+     2. 本地与远端跟踪分支完全一致（`up to date with 'origin/<branch>'` 且 `git diff origin/<branch>` 为空）；
+     3. 若发现异常的未暂存修改（例如编辑器打开标签页自动刷出脏缓存覆盖文件），必须主动向用户汇报差异详情并排查原因，绝不能直接忽略或留待用户自行发现。
 
 ## CodeGraph + LeanCTX Routing
 
