@@ -6,7 +6,7 @@ use quick_xml::Reader;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use zip::ZipArchive;
@@ -552,7 +552,7 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
         
         if target_index.map_or(true, |idx| idx == i) {
             let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
-            content = sanitize_epub_html(&html_str, &full_path, hash);
+            content = sanitize_epub_html(&html_str, &full_path, hash, Some(&mut archive));
             if title_str.is_empty() {
                 let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
                     Some(format!("第 {} 章", i + 1))
@@ -583,50 +583,23 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
     })
 }
 
-fn extract_title_from_html_str(html: &str) -> Option<String> {
-    let mut reader = Reader::from_str(html);
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) if local_name(e.name()) == "title" => {
-                let text = reader.read_text(e.name()).ok()?;
-                let text = strip_html_tags(&text);
-                if !text.is_empty() {
-                    return Some(text);
-                }
+fn extract_title_from_html_str(html_str: &str) -> Option<String> {
+    use once_cell::sync::Lazy;
+    static RE_H: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<h[1-3][^>]*>(.*?)</h[1-3]>").unwrap());
+    if let Some(caps) = RE_H.captures(html_str) {
+        if let Some(m) = caps.get(1) {
+            let raw = strip_html_tags(m.as_str());
+            let title = raw.trim().to_string();
+            if !title.is_empty() {
+                return Some(title);
             }
-            Ok(Event::Eof) | Err(_) => break,
-            _ => {}
         }
     }
-
-    let mut reader = Reader::from_str(html);
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(ref e)) => {
-                let ln = local_name(e.name());
-                if ln.len() == 2
-                    && ln.starts_with('h')
-                    && ln.as_bytes()[1] >= b'1'
-                    && ln.as_bytes()[1] <= b'6'
-                {
-                    let text = reader.read_text(e.name()).ok()?;
-                    let text = text.trim().to_string();
-                    if !text.is_empty() {
-                        return Some(text);
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
-        }
-    }
-
     None
 }
 
-fn resolve_relative_path(base: &str, relative: &str) -> String {
-    let mut parts: Vec<&str> = base.split('/').collect();
+fn resolve_relative_path(base_path: &str, relative: &str) -> String {
+    let mut parts: Vec<&str> = base_path.split('/').collect();
     if !parts.is_empty() {
         parts.pop();
     }
@@ -644,7 +617,12 @@ fn resolve_relative_path(base: &str, relative: &str) -> String {
     parts.join("/")
 }
 
-fn sanitize_epub_html(html: &str, base_path: &str, hash: Option<&str>) -> String {
+fn sanitize_epub_html<R: std::io::Read + std::io::Seek>(
+    html: &str,
+    base_path: &str,
+    hash: Option<&str>,
+    mut archive: Option<&mut ZipArchive<R>>,
+) -> String {
     use once_cell::sync::Lazy;
     static RE_SCRIPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<script[^>]*>.*?</script>").unwrap());
     static RE_STYLE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<style[^>]*>.*?</style>").unwrap());
@@ -655,20 +633,62 @@ fn sanitize_epub_html(html: &str, base_path: &str, hash: Option<&str>) -> String
     text = RE_STYLE.replace_all(&text, "").to_string();
     text = RE_HEAD.replace_all(&text, "").to_string();
 
-    if let Some(h) = hash {
-        text = RE_IMG.replace_all(&text, |caps: &regex::Captures| {
-            let original_match = caps.get(0).unwrap().as_str();
-            let src = caps.get(1).unwrap().as_str();
-            if src.starts_with("data:") || src.starts_with("http") {
-                return original_match.to_string();
+    text = RE_IMG.replace_all(&text, |caps: &regex::Captures| {
+        let original_match = caps.get(0).unwrap().as_str();
+        let src = caps.get(1).unwrap().as_str();
+        if src.starts_with("data:") || src.starts_with("http") {
+            return original_match.to_string();
+        }
+        let resolved = resolve_relative_path(base_path, src);
+
+        // 1. 优先尝试从 EPUB zip 包中读取并内嵌为 Base64 Data URL
+        // 确保离线断网和 iOS App 环境下无需任何网络请求即可展示图片
+        if let Some(ref mut zip) = archive {
+            let decoded_path = urlencoding::decode(&resolved)
+                .map(|s| s.into_owned())
+                .unwrap_or_else(|_| resolved.clone());
+            let paths_to_try = [&resolved, &decoded_path];
+            let mut found_bytes = None;
+            let mut matched_path = String::new();
+            for p in paths_to_try {
+                if let Ok(bytes) = read_zip_entry_to_bytes(zip, p) {
+                    found_bytes = Some(bytes);
+                    matched_path = p.to_string();
+                    break;
+                }
             }
-            let resolved = resolve_relative_path(base_path, src);
+
+            if let Some(bytes) = found_bytes {
+                let ext = std::path::Path::new(&matched_path)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let mime = match ext.as_str() {
+                    "png" => "image/png",
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "gif" => "image/gif",
+                    "svg" => "image/svg+xml",
+                    "webp" => "image/webp",
+                    _ => "application/octet-stream",
+                };
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let new_src = format!("data:{};base64,{}", mime, b64);
+                return original_match.replace(src, &new_src);
+            }
+        }
+
+        // 2. 兜底回退：如果 zip 中未能找到资源，保留原有的动态服务端路由
+        if let Some(h) = hash {
             let encoded = urlencoding::encode(&resolved);
             let new_src = format!("/api/local-book/epub/asset/{}?path={}", h, encoded);
-            original_match.replace(src, &new_src)
-        }).to_string();
-    }
-    
+            return original_match.replace(src, &new_src);
+        }
+
+        original_match.to_string()
+    }).to_string();
+
     // Quick and dirty fix to keep body content if possible, or just return text
     // We don't want the full html/head/body structure to confuse the frontend
     static RE_BODY: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap());
@@ -677,7 +697,7 @@ fn sanitize_epub_html(html: &str, base_path: &str, hash: Option<&str>) -> String
             return body.as_str().trim().to_string();
         }
     }
-    
+
     text.trim().to_string()
 }
 
@@ -787,5 +807,33 @@ mod tests {
         assert!(is_local_epub_url("local-epub:abc#0"));
         assert!(!is_local_epub_origin("local-txt"));
         assert!(!is_local_epub_url("local-txt:abc#0"));
+    }
+
+    #[test]
+    fn sanitize_epub_html_embeds_images_as_base64() {
+        use std::io::Write;
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("OEBPS/images/cover.png", options).unwrap();
+            zip.write_all(b"fake-png-data").unwrap();
+            zip.finish().unwrap();
+        }
+        buffer.set_position(0);
+        let mut archive = ZipArchive::new(buffer).unwrap();
+
+        let raw_html = r#"<div><p>正文</p><img src="images/cover.png" alt="cover"/></div>"#;
+        let sanitized = sanitize_epub_html(raw_html, "OEBPS/chapter1.xhtml", Some("hash123"), Some(&mut archive));
+        assert!(sanitized.contains("data:image/png;base64,"));
+        assert!(sanitized.contains("ZmFrZS1wbmctZGF0YQ=="));
+    }
+
+    #[test]
+    fn sanitize_epub_html_fallback_to_server_url_when_missing() {
+        let raw_html = r#"<div><p>正文</p><img src="images/missing.png"/></div>"#;
+        let sanitized = sanitize_epub_html::<std::io::Cursor<Vec<u8>>>(raw_html, "OEBPS/chapter1.xhtml", Some("hash123"), None);
+        assert!(sanitized.contains("/api/local-book/epub/asset/hash123?path=OEBPS%2Fimages%2Fmissing.png"));
     }
 }
