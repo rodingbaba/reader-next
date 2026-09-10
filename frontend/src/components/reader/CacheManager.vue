@@ -104,37 +104,68 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
+import { useOfflineDownloadStore } from '../../stores/offlineDownload'
 import { cacheBookSSE } from '../../api/cache'
 import { getBookshelfWithCacheInfo, deleteBookCache } from '../../api/bookshelf'
 import { countBrowserBookCache, deleteBrowserBookCache } from '../../utils/browserCache'
-import { cacheBookToBrowser, resolveBookChapters } from '../../utils/bookCache'
+import { resolveBookChapters } from '../../utils/bookCache'
 import { isLocalTxtBook } from '../../utils/localBook'
-import { appLog } from '../../utils/appLogger'
 
 const store = useReaderStore()
 const appStore = useAppStore()
+const offlineStore = useOfflineDownloadStore()
 const theme = computed(() => store.currentTheme)
 
-const working = ref(false)
-const progress = ref(0)
-const currentStatus = ref('准备中...')
-const currentChapterName = ref('')
+// 云端预缓存独立状态
+const isServerCaching = ref(false)
+const serverProgress = ref(0)
+const serverStatus = ref('准备中...')
+let sse: EventSource | null = null
+
+// 本机离线下载状态（优先绑定全局后台下载任务）
+const isBrowserDownloading = computed(() => offlineStore.isBookDownloading(store.book?.bookUrl))
+
+// 统一状态控制
+const working = computed(() => isServerCaching.value || isBrowserDownloading.value)
+
+const progress = computed(() => {
+  if (isBrowserDownloading.value) return offlineStore.progress
+  return serverProgress.value
+})
+
+const currentStatus = computed(() => {
+  if (isBrowserDownloading.value) return offlineStore.currentStatus
+  return serverStatus.value
+})
+
+const currentChapterName = computed(() => {
+  if (isBrowserDownloading.value) return offlineStore.currentChapterName
+  return ''
+})
+
 const serverCachedCount = ref(0)
 const browserCachedCount = ref(0)
 // 本地书无云端缓存语义，serverCachedCount 在 isLocalTxt 时返回 0
 const isLocalTxt = computed(() => isLocalTxtBook(store.book))
-let sse: EventSource | null = null
-let browserSignal = { cancelled: false }
 
 onMounted(() => {
   refreshStats()
 })
 
 onUnmounted(() => {
-  stopWorking()
+  // 核心改动：抽屉收起仅关闭云端 SSE，绝对不中断本机后台下载！
+  closeSSE()
+  isServerCaching.value = false
+})
+
+// 当后台下载结束时，自动刷新统计数字
+watch(isBrowserDownloading, (downloading, wasDownloading) => {
+  if (!downloading && wasDownloading) {
+    refreshStats()
+  }
 })
 
 async function refreshStats() {
@@ -157,10 +188,9 @@ async function refreshStats() {
 function startServerCaching(count: number) {
   if (!store.book || isLocalTxt.value) return
   stopWorking()
-  working.value = true
-  progress.value = 0
-  currentStatus.value = '连接云端预缓存任务...'
-  currentChapterName.value = ''
+  isServerCaching.value = true
+  serverProgress.value = 0
+  serverStatus.value = '连接云端预缓存任务...'
 
   const total = count === 0
     ? Math.max(0, store.chapters.length - store.currentIndex)
@@ -178,91 +208,54 @@ function startServerCaching(count: number) {
       const data = JSON.parse(event.data)
       const completed = (data.successCount || 0) + (data.cachedCount || 0) - (data.failedCount || 0)
       if (total > 0) {
-        progress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
+        serverProgress.value = Math.min(100, Math.round((Math.max(0, completed) / total) * 100))
       }
-      currentStatus.value = `云端预缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
+      serverStatus.value = `云端预缓存中 (${data.cachedCount || 0} 已缓存 / ${data.successCount || 0} 新增)`
     } catch {
-      currentStatus.value = '云端预缓存处理中...'
+      serverStatus.value = '云端预缓存处理中...'
     }
   }
 
   sse.addEventListener('end', async (event) => {
     try {
       const data = JSON.parse((event as MessageEvent).data)
-      currentStatus.value = `云端预缓存完成，累计 ${data.cachedCount || 0} 章`
-      progress.value = 100
+      serverStatus.value = `云端预缓存完成，累计 ${data.cachedCount || 0} 章`
+      serverProgress.value = 100
     } finally {
       closeSSE()
       await refreshStats()
       window.setTimeout(() => {
-        working.value = false
+        isServerCaching.value = false
       }, 800)
     }
   })
 
   sse.onerror = async () => {
-    currentStatus.value = '云端预缓存已中断'
+    serverStatus.value = '云端预缓存已中断'
     closeSSE()
     await refreshStats()
     window.setTimeout(() => {
-      working.value = false
+      isServerCaching.value = false
     }, 1200)
   }
 }
 
 async function startBrowserCaching(count: number) {
   if (!store.book) return
-  // 移除 isLocalTxt 限制：本地书也开放离线下载到本机
-  stopWorking()
-  browserSignal = { cancelled: false }
-  working.value = true
-  progress.value = 0
-  currentStatus.value = '准备下载到本机...'
-  currentChapterName.value = ''
+  const chapters = store.chapters.length ? store.chapters : await resolveBookChapters(store.book)
+  const startIndex = count === 0 ? 0 : store.currentIndex
 
-  try {
-    const chapters = store.chapters.length ? store.chapters : await resolveBookChapters(store.book)
-    const startIndex = count === 0 ? 0 : store.currentIndex
+  // 移交全局单例下载 Store，后台静默下载，不绑定当前侧边栏 UI 生命周期
+  void offlineStore.startDownload({
+    book: store.book,
+    chapters,
+    count,
+    startIndex,
+  }).then(() => {
+    refreshStats()
+  })
 
-    appLog('缓存', `用户触发离线下载: ${count === 0 ? '全本离线' : `后续 ${count} 章`}`, {
-      bookName: store.book.name,
-      totalChapters: chapters.length,
-      startIndex,
-      requestedCount: count,
-    })
-
-    const result = await cacheBookToBrowser({
-      book: store.book,
-      chapters,
-      startIndex,
-      count: count || undefined,
-      signal: browserSignal,
-      onProgress: ({ completed, total, chapterTitle }) => {
-        currentChapterName.value = chapterTitle
-        currentStatus.value = `下载到本机中 (${completed}/${total})`
-        progress.value = total > 0 ? Math.round((completed / total) * 100) : 100
-      },
-    })
-    if (!browserSignal.cancelled) {
-      progress.value = 100
-      if (result.newlyCached === 0) {
-        currentStatus.value = '所选章节已全部就绪'
-        appStore.showToast('已全部离线，无需重复下载', 'success')
-      } else {
-        currentStatus.value = `本机离线完成，新增 ${result.newlyCached} 章`
-        appStore.showToast(`已下载 ${result.newlyCached} 章到本机`, 'success')
-      }
-    }
-  } catch (error) {
-    currentStatus.value = '下载到本机失败'
-    appLog('缓存', `下载到本机失败: ${(error as Error).message}`)
-    appStore.showToast((error as Error).message || '下载到本机失败', 'error')
-  } finally {
-    await refreshStats()
-    window.setTimeout(() => {
-      working.value = false
-    }, 800)
-  }
+  appStore.showToast('已转入后台静默下载，可收起面板继续阅读')
 }
 
 async function clearServerCache() {
@@ -287,9 +280,13 @@ function closeSSE() {
 }
 
 function stopWorking() {
-  browserSignal.cancelled = true
-  closeSSE()
-  working.value = false
+  if (isBrowserDownloading.value) {
+    offlineStore.cancelDownload()
+  }
+  if (isServerCaching.value) {
+    closeSSE()
+    isServerCaching.value = false
+  }
 }
 </script>
 
