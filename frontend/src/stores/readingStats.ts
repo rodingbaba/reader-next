@@ -41,7 +41,7 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
   })
 
   const totalBooks = computed(() => {
-    return summary.value?.totalBooks || bookStats.value.length
+    return Math.max(summary.value?.totalBooks || 0, bookStats.value.length)
   })
 
   const focusedBookUrl = ref<string | null>(null)
@@ -56,19 +56,17 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
     try {
       const [remoteSummary, remoteBooks] = await Promise.all([
         getReadingStatsSummary(today, focusedBookUrl.value || undefined).catch(() => null),
-        bookStats.value.length === 0
-          ? getReadingBookStats().catch(() => [] as BookReadingStatItem[])
-          : Promise.resolve(bookStats.value),
+        getReadingBookStats().catch(() => null),
       ])
 
       if (remoteSummary) {
         summary.value = remoteSummary
       }
-      if (remoteBooks && remoteBooks.length > 0) {
+      if (remoteBooks) {
         bookStats.value = remoteBooks
       }
 
-      // 若远端不可用或离线，从本地缓存补充降级数据
+      // 若远端不可用或离线，从本地缓存补充降级数据并智能融合
       mergeWithLocalStats(today)
     } finally {
       loading.value = false
@@ -88,6 +86,18 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
       ).catch(() => null)
       if (remoteSummary) {
         summary.value = remoteSummary
+        // 若当前聚焦了具体单书，将该单书的权威聚合时长同步回列表项中，防止两者出现脱节
+        if (bookUrl) {
+          const item = bookStats.value.find((b) => b.bookUrl === bookUrl)
+          if (item) {
+            if (remoteSummary.totalDurationSecs > item.totalDurationSecs) {
+              item.totalDurationSecs = remoteSummary.totalDurationSecs
+            }
+            if (remoteSummary.totalListenSecs > item.totalListenSecs) {
+              item.totalListenSecs = remoteSummary.totalListenSecs
+            }
+          }
+        }
       }
     } finally {
       loading.value = false
@@ -126,19 +136,41 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
       }
     }
 
-    if (bookStats.value.length === 0 && Object.keys(local.books).length > 0) {
-      bookStats.value = Object.values(local.books).map((b) => ({
-        bookUrl: b.bookUrl,
-        bookName: b.bookName,
-        author: b.author,
-        coverUrl: b.coverUrl,
-        totalDurationSecs: b.totalDurationSecs,
-        totalListenSecs: b.totalListenSecs,
-        firstReadDate: b.lastReadDate,
-        lastReadDate: b.lastReadDate,
-        totalDays: 1,
-        totalChaptersRead: 0,
-      }))
+    // 智能双向融合本地书籍记录与服务端列表
+    const bookMap = new Map(bookStats.value.map((b) => [b.bookUrl, b]))
+    for (const [url, lb] of Object.entries(local.books)) {
+      const existing = bookMap.get(url)
+      if (existing) {
+        if (lb.totalDurationSecs > existing.totalDurationSecs) {
+          existing.totalDurationSecs = lb.totalDurationSecs
+        }
+        if (lb.totalListenSecs > existing.totalListenSecs) {
+          existing.totalListenSecs = lb.totalListenSecs
+        }
+        if (lb.lastReadAt) {
+          const prevTime = existing.lastReadTime ? Number(existing.lastReadTime) : 0
+          if (lb.lastReadAt > prevTime) {
+            existing.lastReadTime = lb.lastReadAt
+          }
+        }
+      } else {
+        // 本地有此书，但远端尚未收录（如离线时新读的书），将本地书目平滑并入列表
+        const newBook: BookReadingStatItem = {
+          bookUrl: lb.bookUrl,
+          bookName: lb.bookName,
+          author: lb.author,
+          coverUrl: lb.coverUrl,
+          totalDurationSecs: lb.totalDurationSecs,
+          totalListenSecs: lb.totalListenSecs,
+          firstReadDate: lb.lastReadDate,
+          lastReadDate: lb.lastReadDate,
+          lastReadTime: lb.lastReadAt,
+          totalDays: 1,
+          totalChaptersRead: 0,
+        }
+        bookStats.value.push(newBook)
+        bookMap.set(url, newBook)
+      }
     }
   }
 

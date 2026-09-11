@@ -276,6 +276,8 @@ impl ReadingStatService {
 
         let mut list = Vec::new();
         for row in rows {
+            let last_read_sec: Option<i64> = row.try_get("last_read_time").ok();
+            let last_read_time = last_read_sec.map(|s| s * 1000);
             list.push(BookReadingStatItem {
                 book_url: row.try_get("book_url").unwrap_or_default(),
                 book_name: row.try_get("book_name").unwrap_or_default(),
@@ -285,7 +287,7 @@ impl ReadingStatService {
                 total_listen_secs: row.try_get("total_listen_secs").unwrap_or(0),
                 first_read_date: row.try_get("first_read_date").unwrap_or_default(),
                 last_read_date: row.try_get("last_read_date").unwrap_or_default(),
-                last_read_time: row.try_get("last_read_time").ok(),
+                last_read_time,
                 total_days: row.try_get("total_days").unwrap_or(0),
                 total_chapters_read: row.try_get("total_chapters_read").unwrap_or(0),
             });

@@ -75,5 +75,35 @@ describe('readingTracker utility', () => {
 
     tracker.destroy()
   })
+
+  it('settles and records short reading sessions (e.g. 10s) upon flush/destroy', () => {
+    vi.useFakeTimers()
+    const tracker = new ReadingTracker({
+      getBook: () => ({
+        name: '育种方式公式版',
+        author: '张三',
+        bookUrl: 'book://breeding-10s',
+        origin: 'local',
+      }),
+      isSpeaking: () => false,
+      isPaused: () => false,
+    })
+
+    // 推进 10 秒（未达到 15 秒的心跳定时器）
+    vi.advanceTimersByTime(10 * 1000)
+
+    // 用户退出，触发 destroy
+    tracker.destroy()
+
+    const local = loadLocalReadingStats()
+    const today = getTodayDateString()
+
+    expect(local.daily[today]?.durationSecs).toBe(10)
+    expect(local.books['book://breeding-10s']).toBeDefined()
+    expect(local.books['book://breeding-10s'].totalDurationSecs).toBe(10)
+    expect(local.books['book://breeding-10s'].bookName).toBe('育种方式公式版')
+
+    vi.useRealTimers()
+  })
 })
 

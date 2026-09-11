@@ -27,7 +27,7 @@ export interface BookReadingStatItem {
   totalListenSecs: number
   firstReadDate: string
   lastReadDate: string
-  lastReadTime?: string
+  lastReadTime?: number | string
   totalDays: number
   totalChaptersRead: number
 }

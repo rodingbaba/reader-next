@@ -49,7 +49,7 @@ pub struct BookReadingStatItem {
     pub total_listen_secs: i64,
     pub first_read_date: String,
     pub last_read_date: String,
-    pub last_read_time: Option<String>,
+    pub last_read_time: Option<i64>,
     pub total_days: i64,
     pub total_chapters_read: i64,
 }

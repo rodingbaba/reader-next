@@ -68,6 +68,7 @@ export class ReadingTracker {
   private options: TrackerOptions
   private timer: number | null = null
   private lastActiveAt: number = Date.now()
+  private lastTickAt: number = Date.now()
   private unsyncedSecs: number = 0
   private unsyncedListenSecs: number = 0
   private currentChapterDelta: number = 0
@@ -75,6 +76,8 @@ export class ReadingTracker {
 
   constructor(options: TrackerOptions) {
     this.options = options
+    this.lastActiveAt = Date.now()
+    this.lastTickAt = Date.now()
     this.initActivityListeners()
     this.initBridgeListener()
     this.startHeartbeat()
@@ -111,6 +114,7 @@ export class ReadingTracker {
         }
       } else {
         this.lastActiveAt = Date.now()
+        this.lastTickAt = Date.now()
       }
     })
 
@@ -212,26 +216,40 @@ export class ReadingTracker {
     }, HEARTBEAT_STEP_SEC * 1000)
   }
 
-  private tick() {
-    const book = this.options.getBook()
-    if (!book || !book.bookUrl) return
+  /**
+   * 精确结算自上次 tick 到现在的流逝时间（即使只读了 3~10 秒，在退出或切换时也能被准确捕获）
+   */
+  private settleElapsed(isFlushing: boolean = false): number {
+    if (this.isDestroyed && !isFlushing) return 0
+    const now = Date.now()
+    const elapsed = Math.round((now - this.lastTickAt) / 1000)
+    this.lastTickAt = now
+
+    if (elapsed <= 0) return 0
 
     const isListening = this.isListeningActive()
-    const isUserActive = Date.now() - this.lastActiveAt < IDLE_TIMEOUT_MS
+    const isUserActive = now - this.lastActiveAt < IDLE_TIMEOUT_MS
 
     // 必须处于活跃状态 或 正在听书
     if (!isListening && !isUserActive) {
-      return
+      return 0
     }
 
-    const step = HEARTBEAT_STEP_SEC
-    this.unsyncedSecs += step
+    const book = this.options.getBook()
+    if (!book || !book.bookUrl) return 0
+
+    this.unsyncedSecs += elapsed
     if (isListening) {
-      this.unsyncedListenSecs += step
+      this.unsyncedListenSecs += elapsed
     }
 
-    // 更新本地聚合缓存
-    this.accumulateLocalStats(book, step, isListening)
+    // 立即累计到本地聚合缓存
+    this.accumulateLocalStats(book, elapsed, isListening)
+    return elapsed
+  }
+
+  private tick() {
+    this.settleElapsed(false)
 
     // 达到同步周期即触发网络上报
     if (this.unsyncedSecs >= SYNC_INTERVAL_SEC) {
@@ -283,6 +301,9 @@ export class ReadingTracker {
   }
 
   public flushNow() {
+    // 离开或销毁时立即结算自上次以来的流逝秒数（即使只读了 3~10 秒也能被捕获）
+    this.settleElapsed(true)
+
     if (this.unsyncedSecs <= 0) return
 
     const book = this.options.getBook()

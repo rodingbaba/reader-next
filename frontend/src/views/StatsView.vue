@@ -277,48 +277,60 @@
               :key="item.bookUrl"
               class="book-stat-item"
               :class="{ 'active-focus': statsStore.focusedBookUrl === item.bookUrl }"
-              @click="handleToggleFocus(item.bookUrl)"
             >
-              <div class="item-cover">
-                <img
-                  v-if="item.coverUrl"
-                  :src="item.coverUrl"
-                  :alt="item.bookName"
-                  loading="lazy"
-                  @error="handleCoverError($event)"
-                />
-                <div v-else class="item-cover-fallback">
-                  {{ item.bookName.slice(0, 1) }}
+              <!-- 左侧主内容区：点击切换单书聚焦（与右侧继续阅读按钮为平级兄弟节点） -->
+              <div
+                class="item-main"
+                :title="statsStore.focusedBookUrl === item.bookUrl ? '点击取消聚焦' : '点击聚焦此书统计'"
+                @click="handleToggleFocus(item.bookUrl)"
+              >
+                <div class="item-cover">
+                  <img
+                    v-if="item.coverUrl"
+                    :src="item.coverUrl"
+                    :alt="item.bookName"
+                    loading="lazy"
+                    @error="handleCoverError($event)"
+                  />
+                  <div v-else class="item-cover-fallback">
+                    {{ item.bookName.slice(0, 1) }}
+                  </div>
+                </div>
+
+                <div class="item-info">
+                  <div class="item-name-row">
+                    <span class="item-name">{{ item.bookName }}</span>
+                    <span v-if="statsStore.focusedBookUrl === item.bookUrl" class="focused-pill">
+                      已聚焦
+                    </span>
+                    <span v-if="item.shelfBook?.durChapterTitle" class="item-progress-badge">
+                      {{ item.shelfBook.durChapterTitle }}
+                    </span>
+                  </div>
+                  <div class="item-author">{{ item.author || '未知作者' }}</div>
+                  <div class="item-meta">
+                    <span class="meta-tag duration">
+                      总计 {{ formatHoursMinutes(Math.round(item.totalDurationSecs / 60), item.totalDurationSecs) }}
+                    </span>
+                    <span v-if="item.totalListenSecs > 0" class="meta-tag listen">
+                      听书 {{ formatHoursMinutes(Math.round(item.totalListenSecs / 60), item.totalListenSecs) }}
+                    </span>
+                    <span class="meta-date">
+                      最后阅读: {{ formatLastReadText(item) }}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div class="item-info">
-                <div class="item-name-row">
-                  <span class="item-name">{{ item.bookName }}</span>
-                  <span v-if="statsStore.focusedBookUrl === item.bookUrl" class="focused-pill">
-                    已聚焦
-                  </span>
-                  <span v-if="item.shelfBook?.durChapterTitle" class="item-progress-badge">
-                    {{ item.shelfBook.durChapterTitle }}
-                  </span>
-                </div>
-                <div class="item-author">{{ item.author || '未知作者' }}</div>
-                <div class="item-meta">
-                  <span class="meta-tag duration">
-                    总计 {{ formatHoursMinutes(Math.round(item.totalDurationSecs / 60)) }}
-                  </span>
-                  <span v-if="item.totalListenSecs > 0" class="meta-tag listen">
-                    听书 {{ formatHoursMinutes(Math.round(item.totalListenSecs / 60)) }}
-                  </span>
-                  <span class="meta-date">
-                    最后阅读: {{ formatLastReadText(item) }}
-                  </span>
-                </div>
-              </div>
-
+              <!-- 右侧独立操作区：完全独立兄弟节点，点击打开阅读器，绝不触发聚焦 -->
               <div class="item-action">
-                <button class="continue-btn" @click.stop="handleContinueRead(item.bookUrl)">
-                  继续阅读
+                <button
+                  type="button"
+                  class="continue-btn"
+                  :disabled="openingBookUrl === item.bookUrl"
+                  @click="handleContinueRead(item.bookUrl)"
+                >
+                  {{ openingBookUrl === item.bookUrl ? '打开中...' : '继续阅读' }}
                 </button>
               </div>
             </div>
@@ -355,6 +367,7 @@ const readerStore = useReaderStore()
 const sortBy = ref<'duration' | 'recent'>('duration')
 const searchKeyword = ref('')
 const selectedDateDetail = ref<any>(null)
+const openingBookUrl = ref('')
 const heatmapContainerRef = ref<HTMLElement | null>(null)
 const scrollAreaRef = ref<HTMLElement | null>(null)
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -419,7 +432,10 @@ function scrollToHeatmapEnd() {
   }, 100)
 }
 
-function formatHoursMinutes(totalMinutes: number): string {
+function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string {
+  if (totalSeconds !== undefined && totalSeconds > 0 && totalSeconds < 60) {
+    return '< 1 分钟'
+  }
   if (totalMinutes <= 0) return '0 分钟'
   const hours = Math.floor(totalMinutes / 60)
   const mins = totalMinutes % 60
@@ -605,15 +621,27 @@ const last7DaysTrend = computed(() => {
   return result
 })
 
+function parseRecentTimestamp(val: number | string | undefined): number {
+  if (!val) return 0
+  if (typeof val === 'number') {
+    return val > 1e11 ? val : val * 1000
+  }
+  const num = Number(val)
+  if (!isNaN(num) && num > 0) {
+    return num > 1e11 ? num : num * 1000
+  }
+  const parsed = new Date(val).getTime()
+  return isNaN(parsed) ? 0 : parsed
+}
+
 // ─── 格式化最后阅读时间 ───
 function formatLastReadText(item: { recentTimestamp?: number; lastReadDate?: string }): string {
   const ts = item.recentTimestamp
   if (!ts) return item.lastReadDate || '近期'
   const now = Date.now()
   const diff = now - ts
-  if (diff <= 0) return '刚刚'
-  if (diff < 60 * 1000) return '刚刚'
-  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))} 分钟前`
+  if (diff <= 60 * 1000 && diff >= -10000) return '刚刚'
+  if (diff < 60 * 60 * 1000 && diff > 0) return `${Math.floor(diff / (60 * 1000))} 分钟前`
   const targetDate = new Date(ts)
   const todayDate = new Date(now)
   if (
@@ -638,34 +666,75 @@ const filteredBookList = computed(() => {
   )
   const localStats = loadLocalReadingStats()
 
-  let list = statsStore.bookStats.map((item) => {
+  // 1. 初始化聚合 Map，优先以服务端 bookStats 为基底
+  const mergedMap = new Map<string, any>()
+  for (const item of statsStore.bookStats) {
+    mergedMap.set(item.bookUrl, { ...item })
+  }
+
+  // 2. 将书架中在读书籍纳入（durChapterTime 或 durChapterIndex 有记录，防短读丢失）
+  for (const b of shelfStore.books) {
+    if ((b.durChapterTime && b.durChapterTime > 0) || (b.durChapterIndex && b.durChapterIndex > 0)) {
+      if (!mergedMap.has(b.bookUrl)) {
+        mergedMap.set(b.bookUrl, {
+          bookUrl: b.bookUrl,
+          bookName: b.name,
+          author: b.author || '',
+          coverUrl: b.coverUrl || b.customCoverUrl,
+          totalDurationSecs: 0,
+          totalListenSecs: 0,
+          firstReadDate: '',
+          lastReadDate: '',
+          lastReadTime: b.durChapterTime,
+          totalDays: 1,
+          totalChaptersRead: 0,
+        })
+      }
+    }
+  }
+
+  // 3. 将本地最近阅读足迹纳入（仅限当前书架上的在读书目，防止已删历史书籍渗入）
+  for (const r of recentList) {
+    if (r.bookUrl && !mergedMap.has(r.bookUrl) && shelfMap.has(r.bookUrl)) {
+      mergedMap.set(r.bookUrl, {
+        bookUrl: r.bookUrl,
+        bookName: r.name,
+        author: r.author || '',
+        coverUrl: r.coverUrl || r.customCoverUrl,
+        totalDurationSecs: 0,
+        totalListenSecs: 0,
+        firstReadDate: '',
+        lastReadDate: '',
+        lastReadTime: r.recentReadAt || r.durChapterTime,
+        totalDays: 1,
+        totalChaptersRead: 0,
+      })
+    }
+  }
+
+  // 4. 仲裁每本书的高精度毫秒阅读时间戳
+  let list = Array.from(mergedMap.values()).map((item) => {
     const shelfBook = shelfMap.get(item.bookUrl)
     const shelfIndex = shelfOrderMap.get(item.bookUrl)
 
     // 综合仲裁毫秒级最新阅读时间戳
     let recentTimestamp = 0
     if (shelfBook?.durChapterTime) {
-      recentTimestamp = Math.max(recentTimestamp, shelfBook.durChapterTime)
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(shelfBook.durChapterTime))
     }
     const rTime = recentMap.get(item.bookUrl)
     if (rTime) {
-      recentTimestamp = Math.max(recentTimestamp, rTime)
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(rTime))
     }
     const localBook = localStats.books[item.bookUrl]
     if (localBook?.lastReadAt) {
-      recentTimestamp = Math.max(recentTimestamp, localBook.lastReadAt)
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(localBook.lastReadAt))
     }
     if (item.lastReadTime) {
-      const parsedTime = new Date(item.lastReadTime).getTime()
-      if (!isNaN(parsedTime)) {
-        recentTimestamp = Math.max(recentTimestamp, parsedTime)
-      }
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadTime))
     }
     if (!recentTimestamp && item.lastReadDate) {
-      const parsedDate = new Date(item.lastReadDate).getTime()
-      if (!isNaN(parsedDate)) {
-        recentTimestamp = parsedDate
-      }
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadDate))
     }
 
     return {
@@ -676,7 +745,14 @@ const filteredBookList = computed(() => {
     }
   })
 
-  // 1. 搜索
+  // 5. 严格过滤：若书籍已不在书架上且无有效阅读时长（<=0），一律排除（杜绝幽灵书籍）
+  list = list.filter((b) => {
+    const onShelf = shelfMap.has(b.bookUrl)
+    const hasValidDuration = b.totalDurationSecs > 0
+    return onShelf || hasValidDuration
+  })
+
+  // 6. 搜索
   const kw = searchKeyword.value.toLowerCase().trim()
   if (kw) {
     list = list.filter(
@@ -686,7 +762,7 @@ const filteredBookList = computed(() => {
     )
   }
 
-  // 2. 排序
+  // 7. 排序
   if (sortBy.value === 'duration') {
     list.sort((a, b) => b.totalDurationSecs - a.totalDurationSecs)
   } else {
@@ -705,26 +781,41 @@ const filteredBookList = computed(() => {
 
 // ─── 继续阅读操作 ───
 async function handleContinueRead(bookUrl: string) {
-  let book = shelfStore.books.find((b) => b.bookUrl === bookUrl)
-  if (!book) {
-    const rawStat = statsStore.bookStats.find((b) => b.bookUrl === bookUrl)
-    if (rawStat) {
-      book = {
-        name: rawStat.bookName,
-        author: rawStat.author,
-        bookUrl: rawStat.bookUrl,
-        origin: 'local',
-        coverUrl: rawStat.coverUrl,
+  if (openingBookUrl.value) return
+  openingBookUrl.value = bookUrl
+
+  try {
+    let book = shelfStore.books.find((b) => b.bookUrl === bookUrl)
+    if (!book) {
+      const recent = loadRecentReadBooks().find((b) => b.bookUrl === bookUrl)
+      if (recent) {
+        book = recent
       }
     }
-  }
-  if (!book) return
+    if (!book) {
+      const rawStat = statsStore.bookStats.find((b) => b.bookUrl === bookUrl)
+      if (rawStat) {
+        book = {
+          name: rawStat.bookName,
+          author: rawStat.author,
+          bookUrl: rawStat.bookUrl,
+          origin: 'local',
+          coverUrl: rawStat.coverUrl,
+        }
+      }
+    }
+    if (!book) return
 
-  void shelfStore.moveBookToFront(book.bookUrl).catch(() => undefined)
-  const loadTask = readerStore.loadBook(book)
-  await router.push('/reader')
-  await loadTask
-  await readerStore.loadChapter(readerStore.currentIndex)
+    void shelfStore.moveBookToFront(book.bookUrl).catch(() => undefined)
+    const loadTask = readerStore.loadBook(book)
+    await router.push('/reader')
+    await loadTask
+    await readerStore.loadChapter(readerStore.currentIndex)
+  } catch (err) {
+    console.error('[StatsView] Failed to open book:', err)
+  } finally {
+    openingBookUrl.value = ''
+  }
 }
 </script>
 
@@ -1334,24 +1425,40 @@ async function handleContinueRead(bookUrl: string) {
 .book-stat-item {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   padding: 12px;
   border-radius: var(--radius-lg);
   background: var(--color-bg);
   border: 1px solid var(--color-border-light);
-  cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
 .book-stat-item:hover {
   border-color: var(--color-primary-border);
-  transform: translateX(2px);
 }
 
 .book-stat-item.active-focus {
   border-color: var(--color-primary);
   background: var(--color-primary-bg);
   box-shadow: 0 0 0 1px var(--color-primary-border), var(--shadow-sm);
+}
+
+/* 左侧主体：点击触发单书聚焦 */
+.item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: opacity var(--duration-fast);
+}
+
+.item-main:active {
+  opacity: 0.8;
 }
 
 .focused-pill {
@@ -1461,12 +1568,17 @@ async function handleContinueRead(bookUrl: string) {
   color: var(--color-text-tertiary);
 }
 
+/* 右侧独立操作区 */
 .item-action {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
 }
 
 .continue-btn {
-  padding: 6px 14px;
+  padding: 7px 16px;
+  min-height: 34px;
   border-radius: var(--radius-full);
   border: 1px solid var(--color-primary-border);
   background: var(--color-primary-bg);
@@ -1474,12 +1586,24 @@ async function handleContinueRead(bookUrl: string) {
   font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  touch-action: manipulation;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
-.continue-btn:hover {
+.continue-btn:hover:not(:disabled) {
   background: var(--color-primary);
   color: #ffffff;
+}
+
+.continue-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.continue-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .empty-state {
