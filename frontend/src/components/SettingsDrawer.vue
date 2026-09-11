@@ -172,10 +172,6 @@
               &#24212;&#29992;
             </h3>
             <div class="status-card">
-              <span>{{ appStore.isOnline ? '\u5728\u7ebf' : '\u79bb\u7ebf' }}</span>
-              <small>{{ appStore.pwaReady ? '\u5df2\u542f\u7528\u79bb\u7ebf\u5916\u58f3\u7f13\u5b58' : '\u79bb\u7ebf\u5916\u58f3\u672a\u542f\u7528' }}</small>
-            </div>
-            <div class="status-card">
               <span>{{ appVersion }}</span>
               <small>当前应用版本</small>
             </div>
@@ -206,18 +202,8 @@
                 </button>
               </div>
             </template>
-            <div v-if="appStore.pwaUpdateAvailable" class="status-card accent frontend-update-card">
-              <span>发现前端缓存更新</span>
-              <small>仅刷新浏览器里的前端资源，不会更新 Docker 或服务端。</small>
-            </div>
-            <div class="btn-group">
-              <button class="action-btn" :disabled="!appStore.deferredInstallPrompt" @click="handleInstallPwa">
-                &#23433;&#35013;&#21040;&#20027;&#23631;&#24149;
-              </button>
-              <button class="action-btn" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
-                应用前端更新
-              </button>
-              <button class="action-btn" v-if="isNativeApp()" @click="handleExportLogs">
+            <div v-if="isNativeApp()" class="btn-group">
+              <button class="action-btn" @click="handleExportLogs">
                 导出 App 日志
               </button>
             </div>
@@ -246,33 +232,7 @@
             </div>
           </section>
 
-          <section class="drawer-section">
-            <h3 class="section-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <path d="M12 8v4l3 3" />
-                <circle cx="12" cy="12" r="9" />
-              </svg>
-              &#38405;&#35835;&#32479;&#35745;
-            </h3>
-            <div class="stats-grid">
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.totalTimeText }}</span>
-                <small>&#32047;&#35745;&#38405;&#35835;&#26102;&#38271;</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.openedBooks }}</span>
-                <small>&#25171;&#24320;&#36807;&#30340;&#20070;&#31821;</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.readChapters }}</span>
-                <small>&#38405;&#35835;&#31456;&#33410;&#25968;</small>
-              </div>
-              <div class="status-card">
-                <span>{{ appStore.readingStatsSummary.completedBooks }}</span>
-                <small>&#35835;&#23436;&#20070;&#31821;&#25968;</small>
-              </div>
-            </div>
-          </section>
+
 
           <section class="drawer-section">
             <h3 class="section-title">
@@ -498,21 +458,7 @@ function setTheme(t: 'light' | 'dark') {
   appStore.setTheme(t)
 }
 
-async function handleInstallPwa() {
-  const accepted = await appStore.installPwa()
-  if (!accepted) {
-    appStore.showToast('\u5f53\u524d\u73af\u5883\u6682\u4e0d\u652f\u6301\u5b89\u88c5\uff0c\u6216\u7528\u6237\u5df2\u53d6\u6d88', 'warning')
-    return
-  }
-  appStore.showToast('\u5b89\u88c5\u8bf7\u6c42\u5df2\u63d0\u4ea4', 'success')
-}
 
-function handleApplyUpdate() {
-  const ok = appStore.applyPwaUpdate()
-  if (!ok) {
-    appStore.showToast('当前没有可应用的前端缓存更新', 'warning')
-  }
-}
 
 function handleExportLogs() {
   invokeSync('exportLogs')
@@ -858,11 +804,7 @@ async function handleCheckVersionUpdate() {
   cursor: not-allowed;
 }
 
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
-}
+
 
 .theme-option {
   flex: 1;

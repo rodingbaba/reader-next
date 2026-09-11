@@ -77,7 +77,7 @@ describe('SettingsDrawer update copy', () => {
     shelfStoreMock.fetchBooks.mockReset()
   })
 
-  it('separates server deployment updates from browser-side frontend updates', async () => {
+  it('displays server deployment updates and hides unused pwa/online cards', async () => {
     const wrapper = mount(await import('./SettingsDrawer.vue').then((mod) => mod.default), {
       props: { modelValue: true },
       global: {
@@ -91,10 +91,9 @@ describe('SettingsDrawer update copy', () => {
     const text = wrapper.text()
 
     expect(wrapper.find('.deploy-status-card').exists()).toBe(true)
-    expect(wrapper.find('.frontend-update-card').exists()).toBe(true)
     expect(text).toContain('需手动部署')
     expect(text).toContain('请查看 Release 并手动更新 Docker / 服务端。')
-    expect(text).toContain('仅刷新浏览器里的前端资源，不会更新 Docker 或服务端。')
-    expect(text).toContain('应用前端更新')
+    expect(text).not.toContain('安装到主屏幕')
+    expect(text).not.toContain('应用前端更新')
   })
 })
