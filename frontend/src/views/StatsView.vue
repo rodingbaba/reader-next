@@ -666,26 +666,42 @@ const filteredBookList = computed(() => {
   )
   const localStats = loadLocalReadingStats()
 
-  // 1. 初始化聚合 Map，优先以服务端 bookStats 为基底
+  // 1. 初始化聚合 Map，优先以服务端实际读过（时长>0）的 bookStats 为基底
   const mergedMap = new Map<string, any>()
   for (const item of statsStore.bookStats) {
-    mergedMap.set(item.bookUrl, { ...item })
+    if (item.totalDurationSecs > 0) {
+      mergedMap.set(item.bookUrl, { ...item })
+    }
   }
 
-  // 2. 将书架中在读书籍纳入（durChapterTime 或 durChapterIndex 有记录，防短读丢失）
-  for (const b of shelfStore.books) {
-    if ((b.durChapterTime && b.durChapterTime > 0) || (b.durChapterIndex && b.durChapterIndex > 0)) {
-      if (!mergedMap.has(b.bookUrl)) {
-        mergedMap.set(b.bookUrl, {
-          bookUrl: b.bookUrl,
-          bookName: b.name,
-          author: b.author || '',
-          coverUrl: b.coverUrl || b.customCoverUrl,
-          totalDurationSecs: 0,
-          totalListenSecs: 0,
-          firstReadDate: '',
-          lastReadDate: '',
-          lastReadTime: b.durChapterTime,
+  // 2. 本地缓存中若有产生有效阅读时长（>0秒）的书目（如刚短读退出但尚未拉取全量列表），平滑并入
+  for (const [url, lb] of Object.entries(localStats.books)) {
+    if (lb.totalDurationSecs > 0) {
+      const existing = mergedMap.get(url)
+      if (existing) {
+        if (lb.totalDurationSecs > existing.totalDurationSecs) {
+          existing.totalDurationSecs = lb.totalDurationSecs
+        }
+        if (lb.totalListenSecs > existing.totalListenSecs) {
+          existing.totalListenSecs = lb.totalListenSecs
+        }
+        if (lb.lastReadAt) {
+          existing.lastReadTime = Math.max(
+            parseRecentTimestamp(existing.lastReadTime),
+            lb.lastReadAt,
+          )
+        }
+      } else {
+        mergedMap.set(url, {
+          bookUrl: lb.bookUrl,
+          bookName: lb.bookName,
+          author: lb.author || '',
+          coverUrl: lb.coverUrl,
+          totalDurationSecs: lb.totalDurationSecs,
+          totalListenSecs: lb.totalListenSecs,
+          firstReadDate: lb.lastReadDate,
+          lastReadDate: lb.lastReadDate,
+          lastReadTime: lb.lastReadAt,
           totalDays: 1,
           totalChaptersRead: 0,
         })
@@ -693,26 +709,7 @@ const filteredBookList = computed(() => {
     }
   }
 
-  // 3. 将本地最近阅读足迹纳入（仅限当前书架上的在读书目，防止已删历史书籍渗入）
-  for (const r of recentList) {
-    if (r.bookUrl && !mergedMap.has(r.bookUrl) && shelfMap.has(r.bookUrl)) {
-      mergedMap.set(r.bookUrl, {
-        bookUrl: r.bookUrl,
-        bookName: r.name,
-        author: r.author || '',
-        coverUrl: r.coverUrl || r.customCoverUrl,
-        totalDurationSecs: 0,
-        totalListenSecs: 0,
-        firstReadDate: '',
-        lastReadDate: '',
-        lastReadTime: r.recentReadAt || r.durChapterTime,
-        totalDays: 1,
-        totalChaptersRead: 0,
-      })
-    }
-  }
-
-  // 4. 仲裁每本书的高精度毫秒阅读时间戳
+  // 3. 仲裁每本书的高精度毫秒阅读时间戳
   let list = Array.from(mergedMap.values()).map((item) => {
     const shelfBook = shelfMap.get(item.bookUrl)
     const shelfIndex = shelfOrderMap.get(item.bookUrl)
@@ -745,14 +742,10 @@ const filteredBookList = computed(() => {
     }
   })
 
-  // 5. 严格过滤：若书籍已不在书架上且无有效阅读时长（<=0），一律排除（杜绝幽灵书籍）
-  list = list.filter((b) => {
-    const onShelf = shelfMap.has(b.bookUrl)
-    const hasValidDuration = b.totalDurationSecs > 0
-    return onShelf || hasValidDuration
-  })
+  // 4. 核心准则：阅读时长档案必须且仅须保留实际产生过阅读时长（>0秒）的书籍，未读图书坚决不予展示
+  list = list.filter((b) => b.totalDurationSecs > 0)
 
-  // 6. 搜索
+  // 5. 搜索
   const kw = searchKeyword.value.toLowerCase().trim()
   if (kw) {
     list = list.filter(
@@ -762,7 +755,7 @@ const filteredBookList = computed(() => {
     )
   }
 
-  // 7. 排序
+  // 6. 排序
   if (sortBy.value === 'duration') {
     list.sort((a, b) => b.totalDurationSecs - a.totalDurationSecs)
   } else {

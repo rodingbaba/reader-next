@@ -41,7 +41,10 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
   })
 
   const totalBooks = computed(() => {
-    return Math.max(summary.value?.totalBooks || 0, bookStats.value.length)
+    return Math.max(
+      summary.value?.totalBooks || 0,
+      bookStats.value.filter((b) => b.totalDurationSecs > 0).length,
+    )
   })
 
   const focusedBookUrl = ref<string | null>(null)
@@ -139,6 +142,8 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
     // 智能双向融合本地书籍记录与服务端列表
     const bookMap = new Map(bookStats.value.map((b) => [b.bookUrl, b]))
     for (const [url, lb] of Object.entries(local.books)) {
+      if (!lb || lb.totalDurationSecs <= 0) continue
+
       const existing = bookMap.get(url)
       if (existing) {
         if (lb.totalDurationSecs > existing.totalDurationSecs) {
