@@ -205,13 +205,25 @@
 
         <!-- 3. 近7天阅读走势柱状图 -->
         <div class="section-card trend-section">
-          <div class="section-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="20" x2="18" y2="10" />
-              <line x1="12" y1="20" x2="12" y2="4" />
-              <line x1="6" y1="20" x2="6" y2="14" />
-            </svg>
-            最近 7 天阅读时长走势
+          <div class="section-title-row">
+            <div class="section-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="20" x2="18" y2="10" />
+                <line x1="12" y1="20" x2="12" y2="4" />
+                <line x1="6" y1="20" x2="6" y2="14" />
+              </svg>
+              最近 7 天阅读时长走势
+            </div>
+            <div class="trend-legend">
+              <span class="legend-item">
+                <span class="legend-dot read-dot"></span>
+                看书
+              </span>
+              <span class="legend-item">
+                <span class="legend-dot listen-dot"></span>
+                听书
+              </span>
+            </div>
           </div>
           <div class="chart-container">
             <div
@@ -286,14 +298,14 @@
               >
                 <div class="item-cover">
                   <img
-                    v-if="item.coverUrl"
-                    :src="item.coverUrl"
+                    v-if="item.coverUrl && !failedCovers[item.bookUrl]"
+                    :src="getCoverUrl(item.coverUrl)"
                     :alt="item.bookName"
                     loading="lazy"
-                    @error="handleCoverError($event)"
+                    @error="handleCoverError(item.bookUrl)"
                   />
                   <div v-else class="item-cover-fallback">
-                    {{ item.bookName.slice(0, 1) }}
+                    {{ item.bookName ? item.bookName.slice(0, 1) : '书' }}
                   </div>
                 </div>
 
@@ -358,6 +370,7 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { getTodayDateString, loadLocalReadingStats } from '../utils/readingTracker'
 import { loadRecentReadBooks } from '../utils/recentBooks'
+import { getCoverUrl } from '../api/bookshelf'
 
 const router = useRouter()
 const statsStore = useReadingStatsStore()
@@ -368,6 +381,7 @@ const sortBy = ref<'duration' | 'recent'>('duration')
 const searchKeyword = ref('')
 const selectedDateDetail = ref<any>(null)
 const openingBookUrl = ref('')
+const failedCovers = ref<Record<string, boolean>>({})
 const heatmapContainerRef = ref<HTMLElement | null>(null)
 const scrollAreaRef = ref<HTMLElement | null>(null)
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -444,9 +458,10 @@ function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string
   return `${mins} 分钟`
 }
 
-function handleCoverError(event: Event) {
-  const target = event.target as HTMLElement
-  target.style.display = 'none'
+function handleCoverError(bookUrl: string) {
+  if (bookUrl) {
+    failedCovers.value[bookUrl] = true
+  }
 }
 
 const weeksCount = computed(() => {
@@ -1298,6 +1313,35 @@ async function handleContinueRead(bookUrl: string) {
   height: 14px;
 }
 
+.trend-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.trend-legend .legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trend-legend .legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.trend-legend .legend-dot.read-dot {
+  background: var(--color-primary);
+}
+
+.trend-legend .legend-dot.listen-dot {
+  background: #3b82f6;
+}
+
 .bar-track {
   width: 18px;
   flex: 1;
@@ -1316,7 +1360,7 @@ async function handleContinueRead(bookUrl: string) {
 }
 
 .bar-fill.listen-fill {
-  background: rgba(212, 129, 42, 0.45);
+  background: #3b82f6;
   width: 100%;
   transition: height 300ms ease;
 }
