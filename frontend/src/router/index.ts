@@ -24,9 +24,13 @@ const router = createRouter({
       component: () => import('../views/ExploreView.vue'),
     },
     {
+      path: '/stats',
+      name: 'stats',
+      component: () => import('../views/StatsView.vue'),
+    },
+    {
       path: '/recent',
-      name: 'recent',
-      component: () => import('../views/RecentView.vue'),
+      redirect: '/stats',
     },
     {
       path: '/rss',

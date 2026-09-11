@@ -15,7 +15,8 @@ use crate::service::{
     chapter_summary_service::ChapterSummaryService, json_document_service::JsonDocumentService,
     local_epub_book::LocalEpubBookService, local_mobi_book::LocalMobiBookService,
     local_pdf_book::LocalPdfBookService, local_txt_book::LocalTxtBookService,
-    update_service::UpdateService, user_service::UserService,
+    reading_stat_service::ReadingStatService, update_service::UpdateService,
+    user_service::UserService,
 };
 use crate::storage::{cache::file_cache::FileCache, db, fs::storage_fs::StorageFs};
 
@@ -74,6 +75,7 @@ pub async fn run() -> anyhow::Result<()> {
         cfg.request_timeout_secs,
         format!("v{}", env!("CARGO_PKG_VERSION")),
     )?);
+    let reading_stat_service = Arc::new(ReadingStatService::new(pool.clone()));
 
     let state = AppState {
         config: cfg.clone(),
@@ -92,6 +94,7 @@ pub async fn run() -> anyhow::Result<()> {
         ai_model_service,
         chapter_summary_service,
         update_service,
+        reading_stat_service,
     };
 
     let app: Router = api::router::build_router(state);

@@ -92,7 +92,7 @@ const theme = computed(() => appStore.theme)
 const isLoggedIn = computed(() => appStore.isLoggedIn)
 const userInfo = computed(() => appStore.userInfo)
 const hasVersionUpdateReminder = computed(() => appStore.hasVersionUpdateReminder)
-const showGlobalSearch = computed(() => !route.path.startsWith('/rss') && route.path !== '/recent')
+const showGlobalSearch = computed(() => !route.path.startsWith('/rss') && route.path !== '/recent' && route.path !== '/stats')
 const canSearch = computed(() => searchValue.value.trim().length > 0)
 
 function goHome() {

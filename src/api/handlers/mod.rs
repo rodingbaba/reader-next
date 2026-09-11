@@ -12,8 +12,10 @@ mod update;
 mod user;
 mod webdav;
 mod speech_config;
+mod reading_stat;
 
 pub use ai_book::*;
+pub use reading_stat::*;
 pub use ai_model::*;
 pub use ai_proxy::*;
 pub use speech_config::*;

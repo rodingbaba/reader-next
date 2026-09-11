@@ -1128,6 +1128,7 @@ import { isReaderInteractiveClickTarget } from '../utils/readerClick'
 import { isNativeApp } from '../utils/nativeBridge'
 import { resolveNativeAssetUrl } from '../utils/secureAccess'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
+import { ReadingTracker } from '../utils/readingTracker'
 import { buildChapterSummaryIdentity, isCurrentChapterSummaryIdentity } from '../utils/chapterSummaryState'
 import { buildSummaryRelationshipGraph } from '../utils/summaryRelationshipGraph'
 import { chooseChapterSummaryPlacement, clampChapterSummarySiderWidth, getChapterSummaryFontSize } from '../utils/chapterSummaryLayout'
@@ -1209,6 +1210,7 @@ let suppressPositionSaveUntil = 0
 let suppressContinuousScrollSyncUntil = 0
 let suppressContinuousAutoLoadUntil = 0
 const restoreStabilizeTimers: number[] = []
+let readingTracker: ReadingTracker | null = null
 const serverProgressAutoSaveScheduler = createReaderProgressAutoSaveScheduler({
   intervalMs: SERVER_PROGRESS_AUTOSAVE_MS,
   flush: () => store.flushProgressToServer(),
@@ -2998,11 +3000,19 @@ const aiModelStatusMessage = computed(() => {
 onBeforeRouteLeave(() => {
   clearChapterSummaryTimer()
   stopAiPanelSiderResize()
+  if (readingTracker) {
+    readingTracker.flushNow()
+  }
   persistReadingProgressKeepalive()
   return true
 })
 
 onMounted(async () => {
+  readingTracker = new ReadingTracker({
+    getBook: () => store.book,
+    isSpeaking: () => store.isSpeaking,
+    isPaused: () => store.isPaused,
+  });
   (window as any).__nativeBridgeTTSStateChange = (state: string) => {
     if (state === 'playing') {
       store.isSpeaking = true
@@ -3070,6 +3080,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (readingTracker) {
+    readingTracker.destroy()
+    readingTracker = null
+  }
   delete (window as any).__nativeBridgeTTSProgress
   delete (window as any).__nativeBridgeTTSStateChange
   delete (window as any).__nativeBridgeTTSChapterChange

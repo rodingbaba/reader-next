@@ -234,6 +234,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/saveBookmarks", post(handlers::save_bookmarks))
         .route("/reader3/deleteBookmark", post(handlers::delete_bookmark))
         .route("/reader3/deleteBookmarks", post(handlers::delete_bookmarks))
+        .route("/reader3/stats/record", post(handlers::record_reading_heartbeat))
+        .route("/reader3/stats/summary", get(handlers::get_reading_summary))
+        .route("/reader3/stats/books", get(handlers::get_reading_book_stats))
         .route(AI_BOOK_MEMORY_ROUTE, get(handlers::get_ai_book_memory))
         .route(
             AI_BOOK_CHAPTER_MEMORY_ROUTE,

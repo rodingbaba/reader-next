@@ -124,6 +124,12 @@ struct HybridWebView: UIViewRepresentable {
                 name: NSNotification.Name("TTSStateChanged"),
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(onTTSListeningDuration(_:)),
+                name: NSNotification.Name("TTSListeningDurationSync"),
+                object: nil
+            )
         }
         
         deinit {
@@ -150,6 +156,15 @@ struct HybridWebView: UIViewRepresentable {
             guard let state = notification.userInfo?["state"] as? String else { return }
             DispatchQueue.main.async { [weak self] in
                 self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSStateChange && window.__nativeBridgeTTSStateChange('\(state)')")
+            }
+        }
+
+        @objc private func onTTSListeningDuration(_ notification: Notification) {
+            guard let bookUrl = notification.userInfo?["bookUrl"] as? String,
+                  let duration = notification.userInfo?["durationSeconds"] as? Double else { return }
+            let escapedBookUrl = bookUrl.replacingOccurrences(of: "'", with: "\\'")
+            DispatchQueue.main.async { [weak self] in
+                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSDurationSync && window.__nativeBridgeTTSDurationSync({ bookUrl: '\(escapedBookUrl)', durationSeconds: \(duration) })")
             }
         }
         

@@ -10,6 +10,7 @@ pub mod book_source;
 pub mod bookmark;
 pub mod chapter_summary;
 pub mod replace_rule;
+pub mod reading_session;
 pub mod rss;
 pub mod rule;
 pub mod search;

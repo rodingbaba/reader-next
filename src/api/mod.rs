@@ -11,7 +11,8 @@ use crate::service::{
     chapter_summary_service::ChapterSummaryService, json_document_service::JsonDocumentService,
     local_epub_book::LocalEpubBookService, local_mobi_book::LocalMobiBookService,
     local_pdf_book::LocalPdfBookService, local_txt_book::LocalTxtBookService,
-    update_service::UpdateService, user_service::UserService,
+    reading_stat_service::ReadingStatService, update_service::UpdateService,
+    user_service::UserService,
 };
 use std::sync::Arc;
 
@@ -33,4 +34,5 @@ pub struct AppState {
     pub ai_model_service: Arc<AiModelService>,
     pub chapter_summary_service: Arc<ChapterSummaryService>,
     pub update_service: Arc<UpdateService>,
+    pub reading_stat_service: Arc<ReadingStatService>,
 }

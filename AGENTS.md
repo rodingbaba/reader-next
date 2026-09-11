@@ -72,11 +72,12 @@ cargo test --lib <test_name> # Single test
 ```
 
 ### Local Dev
-- Default to single-port mode: build the frontend, run the Rust server, and open `http://localhost:18080`.
+- **WSL 监听与跨端联调规则 (🚨 必须监听 0.0.0.0 🚨)**：由于开发环境运行在 WSL，本地启动测试**必须显式监听 `0.0.0.0`**（严禁只监听 `127.0.0.1`），以确保 Windows 宿主机浏览器与同一局域网下的手机（iOS App / 移动网页端）能够正常连通访问。
+- Default to single-port mode: build the frontend, run the Rust server, and open `http://localhost:18080`（或 `http://<WSL-IP>:18080`）。
 - Do not start the Vite dev server (`5173`) unless the user explicitly asks for frontend hot reload/debugging.
 - Default backend port is `18080`; check it before starting: `lsof -i :18080`.
 - If `18080` is occupied, use the next available port instead of reclaiming the process blindly.
-- Prefer explicit port override for local runs: `SERVER_PORT=18080 cargo run`.
+- Prefer explicit host and port override for local runs: `SERVER_HOST=0.0.0.0 SERVER_PORT=18080 cargo run`.
 
 ### Frontend
 ```bash

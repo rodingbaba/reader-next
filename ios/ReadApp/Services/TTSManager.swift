@@ -21,11 +21,45 @@ class TTSManager: NSObject, ObservableObject {
                 lastReportedSliceIndex = firstSlice.sliceIndex
             }
             NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: userInfo)
+            flushListeningDuration(force: false)
         }
     }
     @Published var totalSentences = 0
     @Published var isLoading = false
     @Published var preloadedIndices: Set<Int> = []  // 已预载成功的段落索引
+
+    // 后台听书时长统计
+    private var listeningStartTime: Date?
+    private var accumulatedListeningSeconds: Double = 0.0
+
+    func markListeningStarted() {
+        if listeningStartTime == nil {
+            listeningStartTime = Date()
+        }
+    }
+
+    func flushListeningDuration(force: Bool = false) {
+        guard let start = listeningStartTime else { return }
+        let now = Date()
+        let delta = now.timeIntervalSince(start)
+        listeningStartTime = now
+        accumulatedListeningSeconds += delta
+
+        if (force && accumulatedListeningSeconds >= 1.0) || accumulatedListeningSeconds >= 15.0 {
+            let duration = accumulatedListeningSeconds
+            accumulatedListeningSeconds = 0.0
+            if !bookUrl.isEmpty {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TTSListeningDurationSync"),
+                    object: nil,
+                    userInfo: [
+                        "bookUrl": bookUrl,
+                        "durationSeconds": duration
+                    ]
+                )
+            }
+        }
+    }
     
     private var audioPlayer: AVAudioPlayer?
     private var sentences: [TTSSentence] = []
@@ -418,6 +452,8 @@ class TTSManager: NSObject, ObservableObject {
         self.currentChapterIndex = currentIndex
         self.bookUrl = bookUrl
         self.bookSourceUrl = bookSourceUrl
+        flushListeningDuration(force: true)
+        markListeningStarted()
         self.bookTitle = bookTitle
         self.bookCoverUrl = coverUrl
         self.onChapterChange = onChapterChange
@@ -1159,6 +1195,8 @@ class TTSManager: NSObject, ObservableObject {
             if let player = audioPlayer {
                 player.pause()
                 isPaused = true
+                flushListeningDuration(force: true)
+                listeningStartTime = nil
                 logger.log("✅ TTS 暂停", category: "TTS")
                 
                 // 暂停时启动保活，防止 App 被挂起
@@ -1184,12 +1222,14 @@ class TTSManager: NSObject, ObservableObject {
             if let player = audioPlayer {
                 player.play()
                 isPaused = false
+                markListeningStarted()
                 logger.log("✅ TTS 恢复播放", category: "TTS")
                 updatePlaybackRate()
             } else {
                 // audioPlayer 不存在，重新播放当前句子
                 logger.log("⚠️ audioPlayer 不存在，重新播放当前句子", category: "TTS")
                 isPaused = false
+                markListeningStarted()
                 speakNextSentence()
             }
         } else if !isPlaying {
@@ -1348,6 +1388,8 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 停止
     func stop() {
+        flushListeningDuration(force: true)
+        listeningStartTime = nil
         if !bookUrl.isEmpty {
             let safeSentenceIndex = max(currentSentenceIndex, 0)
             UserPreferences.shared.saveTTSProgress(
