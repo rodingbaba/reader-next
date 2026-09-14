@@ -17,12 +17,98 @@
             class="swatch"
             :class="{ active: store.themeIndex === i && !store.isNight }"
             :style="{ background: t.body }"
+            :title="t.name"
             @click="store.setThemeIndex(i)"
           >
             <svg v-if="store.themeIndex === i && !store.isNight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
           </button>
+          <button
+            class="swatch custom-swatch"
+            :class="{ active: store.themeIndex === CUSTOM_THEME_INDEX && !store.isNight }"
+            :style="{ background: config.customTheme.body }"
+            :title="store.themeIndex === CUSTOM_THEME_INDEX && !store.isNight ? (showCustomPanel ? '点击收起自定义配色' : '点击展开自定义配色') : '自定义配色'"
+            @click="handleCustomSwatchClick"
+          >
+            <svg v-if="store.themeIndex === CUSTOM_THEME_INDEX && !store.isNight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
+            <span v-else class="custom-badge-icon">🎨</span>
+          </button>
         </div>
       </div>
+
+      <!-- 自定义配色调节面板 -->
+      <Transition name="fade">
+        <div v-if="store.themeIndex === CUSTOM_THEME_INDEX && !store.isNight && showCustomPanel" class="custom-theme-card">
+          <div class="custom-theme-header">
+            <span class="custom-card-title">自定义配色</span>
+            <button type="button" class="custom-collapse-btn" title="收起自定义设置" @click="setCustomPanelVisible(false)">
+              收起
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+          </div>
+
+          <!-- 背景色单行/折行 -->
+          <div class="custom-row">
+            <span class="custom-row-label">背景色</span>
+            <div class="custom-row-options">
+              <button
+                v-for="c in quickBgColors"
+                :key="c.value"
+                type="button"
+                class="quick-color-pill"
+                :class="{ selected: config.customTheme.body.toLowerCase() === c.value.toLowerCase() }"
+                :style="{ background: c.value, color: c.textColor }"
+                :title="c.name"
+                @click="store.updateCustomTheme({ body: c.value })"
+              >
+                {{ c.name }}
+              </button>
+              <label class="color-picker-btn" :style="{ backgroundColor: config.customTheme.body }" title="自定义取色">
+                <input
+                  type="color"
+                  class="native-color-input"
+                  :value="config.customTheme.body"
+                  @input="handleBodyColorChange(($event.target as HTMLInputElement).value)"
+                />
+                <span class="picker-hex-tag" :style="{ color: config.customTheme.fontColor }">{{ config.customTheme.body.toUpperCase() }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 文字色单行/折行 -->
+          <div class="custom-row">
+            <span class="custom-row-label">文字色</span>
+            <div class="custom-row-options">
+              <button
+                v-for="c in quickFontColors"
+                :key="c.value"
+                type="button"
+                class="quick-color-pill font-pill"
+                :class="{ selected: config.customTheme.fontColor.toLowerCase() === c.value.toLowerCase() }"
+                :style="{ background: c.chipColor, color: '#ffffff' }"
+                :title="c.name"
+                @click="store.updateCustomTheme({ fontColor: c.value })"
+              >
+                {{ c.name }}
+              </button>
+              <label class="color-picker-btn" :style="{ backgroundColor: config.customTheme.fontColor }" title="自定义取色">
+                <input
+                  type="color"
+                  class="native-color-input"
+                  :value="config.customTheme.fontColor"
+                  @input="handleFontColorChange(($event.target as HTMLInputElement).value)"
+                />
+                <span class="picker-hex-tag" :style="{ color: '#ffffff' }">{{ config.customTheme.fontColor.toUpperCase() }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="custom-theme-footer">
+            <button type="button" class="custom-reset-btn" @click="resetCustomColors">
+              恢复默认配色
+            </button>
+          </div>
+        </div>
+      </Transition>
 
       <!-- 正文字体 -->
       <div class="setting-row">
@@ -463,7 +549,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import CustomSelect from "../CustomSelect.vue"
-import { useReaderStore, themePresets, fontPresets } from '../../stores/reader'
+import { useReaderStore, themePresets, fontPresets, CUSTOM_THEME_INDEX } from '../../stores/reader'
 import { useAiBookStore } from '../../stores/aiBook'
 import { useAppStore } from '../../stores/app'
 
@@ -472,6 +558,68 @@ const aiBookStore = useAiBookStore()
 const appStore = useAppStore()
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
+
+const quickBgColors = [
+  { name: '羊皮纸', value: '#dbcfb6', textColor: '#2c2219' },
+  { name: '暖杏黄', value: '#f5e6ce', textColor: '#5b4636' },
+  { name: '豆沙绿', value: '#e0f0e8', textColor: '#2d4a3e' },
+]
+
+const quickFontColors = [
+  { name: '羊皮纸墨', value: '#2c2219', chipColor: '#2c2219' },
+  { name: '炭灰黑', value: '#222222', chipColor: '#222222' },
+  { name: '复古泛棕', value: '#5b4636', chipColor: '#5b4636' },
+]
+
+const CUSTOM_THEME_PANEL_KEY = 'reader_custom_theme_panel_expanded'
+
+function getInitialCustomPanelState(): boolean {
+  try {
+    const saved = localStorage.getItem(CUSTOM_THEME_PANEL_KEY)
+    if (saved !== null) {
+      return saved === 'true'
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+const showCustomPanel = ref(getInitialCustomPanelState())
+
+function setCustomPanelVisible(visible: boolean) {
+  showCustomPanel.value = visible
+  try {
+    localStorage.setItem(CUSTOM_THEME_PANEL_KEY, String(visible))
+  } catch {
+    // ignore
+  }
+}
+
+function handleCustomSwatchClick() {
+  if (store.themeIndex === CUSTOM_THEME_INDEX && !store.isNight) {
+    setCustomPanelVisible(!showCustomPanel.value)
+  } else {
+    store.setThemeIndex(CUSTOM_THEME_INDEX)
+    setCustomPanelVisible(true)
+  }
+}
+
+function handleBodyColorChange(color: string) {
+  store.updateCustomTheme({ body: color })
+}
+
+function handleFontColorChange(color: string) {
+  store.updateCustomTheme({ fontColor: color })
+}
+
+function resetCustomColors() {
+  store.updateCustomTheme({
+    body: '#dbcfb6',
+    fontColor: '#2c2219',
+  })
+}
+
 const serverModelLoaded = ref(false)
 const canUseServerModel = computed(() => Boolean(aiBookStore.serverModelConfig?.canUseServerModel))
 
@@ -738,6 +886,177 @@ textarea.voice-select {
   width: 16px;
   height: 16px;
   color: var(--color-primary, #c97f3a);
+}
+
+.custom-swatch {
+  position: relative;
+}
+
+.custom-badge-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Custom theme panel (Responsive wrap layout) */
+.custom-theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.custom-theme-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 2px;
+}
+
+.custom-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.65;
+}
+
+.custom-collapse-btn {
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--color-primary, #c97f3a);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.custom-collapse-btn:hover {
+  opacity: 1;
+}
+
+.custom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.custom-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.75;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+.custom-row-options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-color-pill {
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 2px solid transparent;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.quick-color-pill:hover {
+  transform: translateY(-1px);
+}
+
+.quick-color-pill.selected {
+  border-color: var(--color-primary, #c97f3a);
+  font-weight: 700;
+  box-shadow: 0 0 0 1px var(--color-primary, #c97f3a);
+}
+
+.quick-color-pill.font-pill {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.quick-color-pill.font-pill.selected {
+  border-color: var(--color-primary, #c97f3a);
+  box-shadow: 0 0 0 2px var(--color-primary, #c97f3a);
+}
+
+.color-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s ease;
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.color-picker-btn:hover {
+  transform: scale(1.04);
+}
+
+.native-color-input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  left: 0;
+  top: 0;
+  cursor: pointer;
+}
+
+.picker-hex-tag {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.custom-theme-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.custom-reset-btn {
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--color-primary, #c97f3a);
+  cursor: pointer;
+  padding: 2px 4px;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.custom-reset-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 /* Button groups */

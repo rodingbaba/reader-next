@@ -50,6 +50,13 @@ interface PersistedReaderSession {
 }
 
 /* ─── Reading config type ─── */
+export interface CustomColorTheme {
+  body: string
+  fontColor: string
+}
+
+export const CUSTOM_THEME_INDEX = 99
+
 export interface ReadConfig {
   fontSize: number
   fontWeight: number
@@ -58,6 +65,7 @@ export interface ReadConfig {
   paragraphSpacing: number
   firstLineIndent: boolean
   fontColor: string
+  customTheme: CustomColorTheme
   pageWidth: number
   pageMode: 'auto' | 'mobile'
   readMethod: '上下滑动' | '左右翻页' | '上下滚动' | '上下滚动2'
@@ -91,6 +99,10 @@ const defaultConfig: ReadConfig = {
   paragraphSpacing: 0.2,
   firstLineIndent: true,
   fontColor: '',
+  customTheme: {
+    body: '#dbcfb6',
+    fontColor: '#2c2219',
+  },
   pageWidth: 800,
   pageMode: 'auto',
   readMethod: '上下滑动',
@@ -164,6 +176,14 @@ function migrateLegacyReadConfig(saved: Partial<ReadConfig> & Record<string, unk
   merged.marginBottom = normalizeNumber(merged.marginBottom, defaultConfig.marginBottom, 0)
   merged.marginLeft = normalizeNumber(merged.marginLeft, defaultConfig.marginLeft, 0)
   merged.marginRight = normalizeNumber(merged.marginRight, defaultConfig.marginRight, 0)
+  if (!merged.customTheme || typeof merged.customTheme !== 'object') {
+    merged.customTheme = { ...defaultConfig.customTheme }
+  } else {
+    merged.customTheme = {
+      body: typeof merged.customTheme.body === 'string' && merged.customTheme.body ? merged.customTheme.body : defaultConfig.customTheme.body,
+      fontColor: typeof merged.customTheme.fontColor === 'string' && merged.customTheme.fontColor ? merged.customTheme.fontColor : defaultConfig.customTheme.fontColor,
+    }
+  }
   return merged
 }
 
@@ -182,6 +202,7 @@ export interface ThemePreset {
 
 export const themePresets: ThemePreset[] = [
   { name: '默认', body: '#f5ede4', content: '#fff9f0', fontColor: '#333', popup: '#fff' },
+  { name: '羊皮纸', body: '#dbcfb6', content: '#e2d6be', fontColor: '#2c2219', popup: '#fff' },
   { name: '纯白', body: '#ffffff', content: '#ffffff', fontColor: '#333', popup: '#fff' },
   { name: '琥珀', body: '#f5e6ce', content: '#faf0e4', fontColor: '#5b4636', popup: '#faf0e4' },
   { name: '薄荷', body: '#e0f0e8', content: '#eaf5ef', fontColor: '#2d4a3e', popup: '#eaf5ef' },
@@ -589,10 +610,28 @@ export const useReaderStore = defineStore('reader', () => {
     },
   })
 
-  const currentTheme = computed(() => {
+  const currentTheme = computed<ThemePreset>(() => {
     if (isNight.value) return themePresets[themePresets.length - 1]
+    if (themeIndex.value === CUSTOM_THEME_INDEX) {
+      const custom = config.customTheme || defaultConfig.customTheme
+      return {
+        name: '自定义',
+        body: custom.body || '#f5ede4',
+        content: custom.body || '#f5ede4',
+        fontColor: custom.fontColor || '#333333',
+        popup: '#ffffff',
+      }
+    }
     return themePresets[themeIndex.value] || themePresets[0]
   })
+
+  function updateCustomTheme(partial: Partial<CustomColorTheme>) {
+    config.customTheme = {
+      ...config.customTheme,
+      ...partial,
+    }
+    saveConfig()
+  }
 
   function setThemeIndex(idx: number) {
     themeIndex.value = idx
@@ -2511,8 +2550,8 @@ export const useReaderStore = defineStore('reader', () => {
     chapterScrollProgress, setChapterScrollProgress,
     getPersistedReaderSession, restorePersistedSession,
     persistProgress, flushProgressToServer, flushProgressToServerKeepalive, flushProgressOutbox, triggerOpportunisticOutboxSync,
-    config, updateConfig, resetConfig, saveConfig,
-    themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
+    config, updateConfig, resetConfig, saveConfig, updateCustomTheme,
+    themeIndex, isNight, currentTheme, setThemeIndex, toggleNight, CUSTOM_THEME_INDEX,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
     activePanel, openPanel, togglePanel, backPanel, closePanel,
     bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
