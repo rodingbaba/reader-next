@@ -128,7 +128,7 @@ const touchDragMetrics = ref({
   itemHeight: 0,
   gap: 16,
 })
-const flipAnimationDurationMs = 680
+const flipAnimationDurationMs = 320
 const edgeScrollThresholdPx = 140
 const maxAutoScrollStepPx = 24
 
@@ -517,10 +517,7 @@ const ghostStyle = computed(() => {
   width: 100%;
   max-width: 420px;
   height: 100%;
-  transition:
-    transform 820ms cubic-bezier(0.16, 0.84, 0.2, 1),
-    filter 700ms ease,
-    opacity 700ms ease;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: center center;
 }
 
@@ -610,21 +607,25 @@ const ghostStyle = computed(() => {
 
 /* Card transition group */
 .card-enter-active {
-  transition: all 820ms cubic-bezier(0.16, 0.84, 0.2, 1);
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .card-leave-active {
-  transition: all 360ms ease-out;
+  transition:
+    opacity 120ms ease-in,
+    transform 120ms ease-in;
 }
 .card-enter-from {
   opacity: 0;
-  transform: scale(0.95) translateY(8px);
+  transform: scale(0.98) translateY(4px);
 }
 .card-leave-to {
   opacity: 0;
-  transform: scale(0.95);
+  transform: scale(0.98);
 }
 .card-move {
-  transition: transform 820ms cubic-bezier(0.16, 0.84, 0.2, 1);
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .touch-drag-ghost {
