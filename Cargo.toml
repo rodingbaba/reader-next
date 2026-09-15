@@ -1,7 +1,6 @@
 [package]
 name = "reader-next"
-version = "1.7.4"
-edition = "2021"
+version = "1.7.5"
 
 [dependencies]
 axum = { version = "0.7", features = ["macros", "json", "multipart"] }
