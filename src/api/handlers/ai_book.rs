@@ -855,6 +855,9 @@ mod tests {
             )
             .unwrap(),
         );
+        let reading_stat_service = Arc::new(
+            crate::service::reading_stat_service::ReadingStatService::new(pool.clone()),
+        );
         let state = AppState {
             config: cfg,
             book_service,
@@ -872,6 +875,7 @@ mod tests {
             ai_model_service,
             chapter_summary_service,
             update_service,
+            reading_stat_service,
         };
         (state, dir)
     }

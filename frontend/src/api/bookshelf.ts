@@ -146,11 +146,40 @@ export function setBookSource(params: {
   return http.post<Book>('setBookSource', params).then((r) => r.data)
 }
 
+export function uploadBookCover(bookUrl: string, file: File) {
+  const formData = new FormData()
+  formData.append('bookUrl', bookUrl)
+  formData.append('file', file)
+  return http.post<Book>('uploadBookCover', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((r) => r.data)
+}
+
+export function resetBookCover(bookUrl: string) {
+  return http.post<Book>('resetBookCover', { bookUrl }).then((r) => r.data)
+}
+
 // ─── Cover helper ───
 export function getCoverUrl(coverUrl?: string) {
   if (!coverUrl) return ''
-  if (coverUrl.startsWith('http') || coverUrl.startsWith('/')) {
-    return `/reader3/cover?path=${encodeURIComponent(coverUrl)}`
+  let path = coverUrl
+  if (
+    coverUrl.startsWith('http://') ||
+    coverUrl.startsWith('https://') ||
+    coverUrl.startsWith('/') ||
+    coverUrl.startsWith('local-epub-cover:') ||
+    coverUrl.startsWith('custom-cover:')
+  ) {
+    path = `/reader3/cover?path=${encodeURIComponent(coverUrl)}`
   }
-  return coverUrl
+  if (isNativeApp()) {
+    const serverBase = (localStorage.getItem('server_base_url') || '').replace(/\/+$/, '')
+    if (serverBase) {
+      const originBase = serverBase.endsWith('/reader3')
+        ? serverBase.slice(0, -'/reader3'.length)
+        : serverBase
+      return `${originBase}${path}`
+    }
+  }
+  return path
 }

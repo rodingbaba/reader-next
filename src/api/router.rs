@@ -140,6 +140,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/reader3/uploadTxtBook", post(handlers::upload_txt_book))
         .route("/reader3/uploadEpubBook", post(handlers::upload_epub_book))
+        .route("/reader3/uploadBookCover", post(handlers::upload_book_cover))
+        .route("/reader3/resetBookCover", post(handlers::reset_book_cover))
         .route("/api/local-book/epub/asset/:hash", axum::routing::get(handlers::get_epub_asset))
         .route("/reader3/uploadMobiBook", post(handlers::upload_mobi_book))
         .route("/reader3/uploadPdfBook", post(handlers::upload_pdf_book))
@@ -451,6 +453,9 @@ mod tests {
             )
             .unwrap(),
         );
+        let reading_stat_service = Arc::new(
+            crate::service::reading_stat_service::ReadingStatService::new(pool.clone()),
+        );
         let state = AppState {
             config: cfg,
             book_service,
@@ -468,6 +473,7 @@ mod tests {
             ai_model_service,
             chapter_summary_service,
             update_service,
+            reading_stat_service,
         };
         (state, dir)
     }

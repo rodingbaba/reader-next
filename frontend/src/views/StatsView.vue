@@ -297,15 +297,8 @@
                 @click="handleToggleFocus(item.bookUrl)"
               >
                 <div class="item-cover">
-                  <img
-                    v-if="item.coverUrl && !failedCovers[item.bookUrl]"
-                    :src="getCoverUrl(item.coverUrl)"
-                    :alt="item.bookName"
-                    loading="lazy"
-                    @error="handleCoverError(item.bookUrl)"
-                  />
-                  <div v-else class="item-cover-fallback">
-                    {{ item.bookName ? item.bookName.slice(0, 1) : '书' }}
+                  <div class="item-cover-fallback">
+                    {{ getBookInitial(item.bookName) }}
                   </div>
                 </div>
 
@@ -370,7 +363,7 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { getTodayDateString, loadLocalReadingStats } from '../utils/readingTracker'
 import { loadRecentReadBooks } from '../utils/recentBooks'
-import { getCoverUrl } from '../api/bookshelf'
+import { getBookInitial } from '../utils/bookCoverFallback'
 
 const router = useRouter()
 const statsStore = useReadingStatsStore()
@@ -381,7 +374,6 @@ const sortBy = ref<'duration' | 'recent'>('duration')
 const searchKeyword = ref('')
 const selectedDateDetail = ref<any>(null)
 const openingBookUrl = ref('')
-const failedCovers = ref<Record<string, boolean>>({})
 const heatmapContainerRef = ref<HTMLElement | null>(null)
 const scrollAreaRef = ref<HTMLElement | null>(null)
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -456,12 +448,6 @@ function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string
   if (hours > 0 && mins > 0) return `${hours} 小时 ${mins} 分钟`
   if (hours > 0) return `${hours} 小时`
   return `${mins} 分钟`
-}
-
-function handleCoverError(bookUrl: string) {
-  if (bookUrl) {
-    failedCovers.value[bookUrl] = true
-  }
 }
 
 const weeksCount = computed(() => {
@@ -1517,22 +1503,19 @@ async function handleContinueRead(bookUrl: string) {
   background: var(--color-bg-sunken);
 }
 
-.item-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 .item-cover-fallback {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
-  font-size: 16px;
+  font-weight: 700;
+  font-size: 18px;
   color: var(--color-primary);
   background: var(--color-primary-bg);
+  border: 1px solid rgba(var(--color-primary-rgb, 196, 138, 59), 0.12);
+  box-sizing: border-box;
+  user-select: none;
 }
 
 .item-info {

@@ -602,6 +602,30 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     }
   }
 
+  /**
+   * 实时更新书籍自定义封面，并同步写回本地离线持久化与最近阅读
+   */
+  function updateBookCover(bookUrl: string, customCoverUrl?: string) {
+    if (!bookUrl) return
+    let changed = false
+    books.value = books.value.map((b) => {
+      if (b.bookUrl === bookUrl) {
+        changed = true
+        return { ...b, customCoverUrl }
+      }
+      return b
+    })
+    recentBooks.value = recentBooks.value.map((b) => {
+      if (b.bookUrl === bookUrl) {
+        return { ...b, customCoverUrl }
+      }
+      return b
+    })
+    if (changed) {
+      saveCachedBookshelf(books.value)
+    }
+  }
+
   return {
     books, recentBooks, loading, refreshing, sorting,
     fetchBooks, refreshBooks, removeBook,
@@ -614,6 +638,6 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     editMode,
     selectedBookUrls, toggleSelection, selectAll, clearSelection,
     bulkDelete, bulkSetGroup, reorderBooks, moveBookToFront,
-    updateBookProgress,
+    updateBookProgress, updateBookCover,
   }
 })

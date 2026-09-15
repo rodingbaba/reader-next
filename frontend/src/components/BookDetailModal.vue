@@ -14,7 +14,12 @@
 
           <!-- Book Header -->
           <div class="book-header">
-            <div class="book-cover-lg">
+            <div
+              class="book-cover-lg"
+              :class="{ uploading: uploadingCover }"
+              @click="triggerCoverUpload"
+              title="点击更换封面"
+            >
               <img
                 v-if="coverSrc"
                 :src="coverSrc"
@@ -24,7 +29,25 @@
               <div v-else class="cover-placeholder-lg">
                 <span>{{ book.name }}</span>
               </div>
+              <div class="cover-upload-overlay">
+                <div v-if="uploadingCover" class="spinner-sm"></div>
+                <template v-else>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="camera-icon">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>
+                  <span class="upload-tip">更换封面</span>
+                </template>
+              </div>
             </div>
+
+            <input
+              ref="coverFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              style="display: none"
+              @change="handleCoverFileChange"
+            />
             <div class="book-header-info">
               <div v-if="!isEditingInfo" class="title-row">
                 <h2>{{ book.name }}</h2>
@@ -58,6 +81,15 @@
               <p v-if="(book as Book).durChapterTitle && !isEditingInfo" class="progress">
                 已读至：{{ (book as Book).durChapterTitle }}
               </p>
+              <div v-if="(book as Book).customCoverUrl && !isEditingInfo" class="cover-actions-row">
+                <button class="reset-cover-btn" @click="handleResetCover" :disabled="uploadingCover" title="恢复为原书自带封面">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                  恢复原版封面
+                </button>
+              </div>
             </div>
           </div>
 
@@ -143,14 +175,15 @@
 <script setup lang="ts">
 import { ref, watch, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getCoverUrl, getChapterList, saveBook } from '../api/bookshelf'
-import { getBrowserCachedChapterList } from '../utils/browserCache'
+import { getCoverUrl, getChapterList, saveBook, uploadBookCover, resetBookCover } from '../api/bookshelf'
+import { getBrowserCachedChapterList, getCoverCache, saveCoverCache, removeCoverCache } from '../utils/browserCache'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
 import type { Book, SearchBook, BookChapter } from '../types'
 
 const appStore = useAppStore()
+const shelfStore = useBookshelfStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -164,7 +197,110 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const readerStore = useReaderStore()
-const shelfStore = useBookshelfStore()
+
+const coverFileInput = ref<HTMLInputElement | null>(null)
+const uploadingCover = ref(false)
+const localCoverData = ref('')
+
+function triggerCoverUpload() {
+  if (uploadingCover.value) return
+  coverFileInput.value?.click()
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleCoverFileChange(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file || !props.book) return
+
+  uploadingCover.value = true
+  try {
+    const updatedBook = await uploadBookCover(props.book.bookUrl, file)
+
+    // 1. 先将图片以 Base64 Data URL 形式写入 IndexedDB 离线封面池，确保本地秒显
+    let base64 = ''
+    try {
+      base64 = await fileToDataUrl(file)
+      localCoverData.value = base64
+      await saveCoverCache(props.book.bookUrl, base64)
+    } catch (cacheErr) {
+      console.warn('缓存封面至本地 IndexedDB 异常', cacheErr)
+    }
+
+    const b = props.book as Book
+    b.customCoverUrl = updatedBook.customCoverUrl
+    emit('update:book', { ...b })
+
+    // 2. 响应式更新 shelfStore 并同步写回 localStorage 书架缓存
+    shelfStore.updateBookCover(b.bookUrl, updatedBook.customCoverUrl)
+
+    // 3. 发出全局封面变更广播，通知所有挂载的卡片组件瞬时更新
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('reader-cover-updated', {
+          detail: {
+            bookUrl: b.bookUrl,
+            coverData: base64,
+            customCoverUrl: updatedBook.customCoverUrl,
+          },
+        }),
+      )
+    }
+
+    coverFailed.value = false
+    appStore.showToast('封面更换成功', 'success')
+  } catch (err: any) {
+    appStore.showToast(err?.message || '封面上传失败', 'error')
+  } finally {
+    uploadingCover.value = false
+    if (target) target.value = ''
+  }
+}
+
+async function handleResetCover() {
+  if (!props.book || uploadingCover.value) return
+  uploadingCover.value = true
+  try {
+    await resetBookCover(props.book.bookUrl)
+    await removeCoverCache(props.book.bookUrl)
+    localCoverData.value = ''
+
+    const b = props.book as Book
+    b.customCoverUrl = undefined
+    emit('update:book', { ...b })
+
+    // 响应式更新 shelfStore 并写回本地持久化
+    shelfStore.updateBookCover(b.bookUrl, undefined)
+
+    // 发出全局封面变更广播
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('reader-cover-updated', {
+          detail: {
+            bookUrl: b.bookUrl,
+            coverData: '',
+            customCoverUrl: undefined,
+          },
+        }),
+      )
+    }
+
+    coverFailed.value = false
+    appStore.showToast('已恢复原版封面', 'success')
+  } catch (err: any) {
+    appStore.showToast(err?.message || '恢复封面失败', 'error')
+  } finally {
+    uploadingCover.value = false
+  }
+}
 
 const coverFailed = ref(false)
 const chapters = ref<BookChapter[]>([])
@@ -219,6 +355,7 @@ async function saveBookInfo() {
 
 const coverSrc = computed(() => {
   if (coverFailed.value || !props.book) return ''
+  if (localCoverData.value) return localCoverData.value
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
   return url ? getCoverUrl(url) : ''
 })
@@ -231,6 +368,12 @@ const displayChapters = computed(() => {
 watch(() => props.modelValue, async (visible) => {
   if (visible && props.book) {
     coverFailed.value = false
+    localCoverData.value = ''
+    if (props.book?.bookUrl) {
+      getCoverCache(props.book.bookUrl).then((cached) => {
+        if (cached) localCoverData.value = cached
+      })
+    }
     showAllChapters.value = false
     chapters.value = []
     chaptersLoading.value = true
@@ -374,6 +517,7 @@ function openAiBook() {
 }
 
 .book-cover-lg {
+  position: relative;
   width: 120px;
   height: 160px;
   flex-shrink: 0;
@@ -381,6 +525,81 @@ function openAiBook() {
   overflow: hidden;
   background: var(--color-bg-sunken);
   box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+
+.cover-upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.book-cover-lg:hover .cover-upload-overlay,
+.book-cover-lg.uploading .cover-upload-overlay {
+  opacity: 1;
+}
+
+.camera-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.upload-tip {
+  letter-spacing: 0.5px;
+}
+
+.cover-actions-row {
+  margin-top: var(--space-2);
+}
+
+.reset-cover-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reset-cover-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.reset-cover-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.spinner-sm {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .book-cover-lg img {

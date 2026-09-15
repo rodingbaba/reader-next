@@ -22,6 +22,7 @@
         :alt="book.name"
         class="cover-img"
         loading="lazy"
+        @load="onCoverLoad"
         @error="coverFailed = true"
       />
       <div v-else class="cover-placeholder">
@@ -100,9 +101,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
 import { isLocalTxtBook } from '../utils/localBook'
+import { getCoverCache, cacheCoverFromUrl } from '../utils/browserCache'
 import type { Book, SearchBook } from '../types'
 import { useAppStore } from '../stores/app'
 const appStore = useAppStore()
@@ -126,31 +128,88 @@ const emit = defineEmits<{
 }>()
 
 function handleCardClick() {
-  if (props.editMode) {
-    emit('select', props.book)
-  } else {
-    emit('click', props.book)
-  }
+  if (props.editMode) return
+  emit('click', props.book)
 }
 
 function handleCoverClick() {
-  if (props.editMode) {
-    emit('select', props.book)
+  if (props.editMode) return
+  if (props.isSearch) {
+    emit('click', props.book)
   } else {
     emit('info', props.book)
   }
 }
 
 const coverFailed = ref(false)
+const cachedCoverSrc = ref('')
+
+async function resolveCover() {
+  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  if (!url) {
+    cachedCoverSrc.value = ''
+    return
+  }
+  // 1. 优先瞬间读取本地 IndexedDB 离线封面池（0ms 秒开）
+  const localData = await getCoverCache(props.book.bookUrl)
+  if (localData) {
+    cachedCoverSrc.value = localData
+    coverFailed.value = false
+    return
+  }
+  // 2. 本地尚未缓存时，使用远程代理 URL 渲染
+  const remote = getCoverUrl(url)
+  cachedCoverSrc.value = remote
+  coverFailed.value = false
+}
+
+function handleCoverUpdated(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail || detail.bookUrl !== props.book.bookUrl) return
+  if (detail.coverData) {
+    cachedCoverSrc.value = detail.coverData
+    coverFailed.value = false
+  } else {
+    cachedCoverSrc.value = ''
+    void resolveCover()
+  }
+}
+
+onMounted(() => {
+  resolveCover()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('reader-cover-updated', handleCoverUpdated)
+  }
+})
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('reader-cover-updated', handleCoverUpdated)
+  }
+})
+
+watch(
+  () => [(props.book as Book).customCoverUrl, props.book.coverUrl, props.book.bookUrl],
+  () => {
+    resolveCover()
+  },
+)
+
+function onCoverLoad() {
+  coverFailed.value = false
+  // 封面成功渲染后，若当前展示的为远程 URL，异步在后台持久化到 IndexedDB
+  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
+    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value)
+  }
+}
 
 const asBook = computed(() => props.book as Book)
 const asSearchBook = computed(() => props.book as SearchBook)
 
 const coverSrc = computed(() => {
   if (coverFailed.value) return ''
-  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
-  if (!url) return ''
-  return getCoverUrl(url)
+  return cachedCoverSrc.value
 })
 
 const unreadCount = computed(() => {

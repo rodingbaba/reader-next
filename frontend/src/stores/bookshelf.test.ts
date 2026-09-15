@@ -210,4 +210,28 @@ describe('bookshelf search state', () => {
     expect(book.durChapterIndex).toBe(8)
     expect(book.durChapterPos).toBe(500)
   })
+
+  it('updateBookCover updates bookshelf and cache reactively', async () => {
+    const store = useBookshelfStore()
+    store.books = [
+      {
+        name: '测试书',
+        author: '测试作者',
+        origin: 'source-1',
+        bookUrl: 'test-book-url',
+      } as any,
+    ]
+
+    store.updateBookCover('test-book-url', 'custom-cover:new-hash')
+
+    expect(store.books[0].customCoverUrl).toBe('custom-cover:new-hash')
+    const raw = localStorage.getItem('reader_bookshelf_cache')
+    expect(raw).toBeTruthy()
+    const cached = JSON.parse(raw!)
+    expect(cached[0].customCoverUrl).toBe('custom-cover:new-hash')
+
+    // 重置封面
+    store.updateBookCover('test-book-url', undefined)
+    expect(store.books[0].customCoverUrl).toBeUndefined()
+  })
 })

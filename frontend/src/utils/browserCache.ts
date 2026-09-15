@@ -3,10 +3,17 @@ import { appLog } from './appLogger'
 import type { BookChapter } from '../types'
 
 const DB_NAME = 'reader-browser-cache'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_NAME = 'chapters'
 const CHAPTER_LIST_STORE = 'chapter_lists'
+const COVER_CACHE_STORE = 'covers'
 let dbPromise: Promise<IDBDatabase> | null = null
+
+export interface BrowserCoverCacheRecord {
+  key: string
+  dataUrl: string
+  updatedAt: number
+}
 
 export interface BrowserChapterCacheRecord {
   key: string
@@ -62,6 +69,10 @@ function openDb(): Promise<IDBDatabase> {
         // v2: chapter_lists 表（目录离线持久化）
         if (!db.objectStoreNames.contains(CHAPTER_LIST_STORE)) {
           db.createObjectStore(CHAPTER_LIST_STORE, { keyPath: 'bookUrl' })
+        }
+        // v3: covers 表（封面离线持久化）
+        if (!db.objectStoreNames.contains(COVER_CACHE_STORE)) {
+          db.createObjectStore(COVER_CACHE_STORE, { keyPath: 'key' })
         }
       }
     }).catch((error: unknown) => {
@@ -275,4 +286,92 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
       .filter((record) => !validChapterUrls.has(record.chapterUrl))
     await Promise.all(staleRecords.map((record) => requestToPromise(store.delete(record.key))))
   }, STORE_NAME)
+}
+
+const coverMemoryCache = new Map<string, string>()
+
+/** 从 IndexedDB 或内存缓存中读取离线封面 Base64 Data URL */
+export async function getCoverCache(key: string): Promise<string | null> {
+  if (!key) return null
+  if (coverMemoryCache.has(key)) {
+    return coverMemoryCache.get(key)!
+  }
+  try {
+    const record = await withStore<BrowserCoverCacheRecord | undefined>(
+      'readonly',
+      (store) => requestToPromise(store.get(key)),
+      COVER_CACHE_STORE,
+    )
+    if (record?.dataUrl) {
+      coverMemoryCache.set(key, record.dataUrl)
+      return record.dataUrl
+    }
+  } catch {
+    // 忽略异常
+  }
+  return null
+}
+
+/** 将封面写入本地 IndexedDB 离线封面库 */
+export async function saveCoverCache(key: string, dataUrl: string): Promise<void> {
+  if (!key || !dataUrl) return
+  coverMemoryCache.set(key, dataUrl)
+  try {
+    const record: BrowserCoverCacheRecord = {
+      key,
+      dataUrl,
+      updatedAt: Date.now(),
+    }
+    await withStore(
+      'readwrite',
+      (store) => requestToPromise(store.put(record)),
+      COVER_CACHE_STORE,
+    )
+  } catch (err) {
+    console.warn('saveCoverCache 失败', err)
+  }
+}
+
+/** 清理指定书籍的离线封面 */
+export async function removeCoverCache(key: string): Promise<void> {
+  if (!key) return
+  coverMemoryCache.delete(key)
+  try {
+    await withStore(
+      'readwrite',
+      (store) => requestToPromise(store.delete(key)),
+      COVER_CACHE_STORE,
+    )
+  } catch {
+    // 忽略异常
+  }
+}
+
+/**
+ * 将远程/代理图片 URL 异步抓取并转为 DataURL 缓存至 IndexedDB。
+ * 供后续离线时秒开渲染。
+ */
+export async function cacheCoverFromUrl(key: string, url: string): Promise<string | null> {
+  if (!key || !url || url.startsWith('data:')) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = async () => {
+        const dataUrl = reader.result as string
+        if (dataUrl) {
+          await saveCoverCache(key, dataUrl)
+          resolve(dataUrl)
+        } else {
+          resolve('')
+        }
+      }
+      reader.onerror = () => resolve('')
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
 }

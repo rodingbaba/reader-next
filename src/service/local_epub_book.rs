@@ -260,12 +260,70 @@ impl LocalEpubBookService {
         Ok(content)
     }
 
-    pub async fn get_cover(&self, user_ns: &str, book_url: &str) -> Result<Vec<u8>, AppError> {
+    pub async fn get_cover(&self, user_ns: &str, book_url: &str) -> Result<(Vec<u8>, String), AppError> {
         let hash = epub_hash_from_url(book_url)?;
-        let cover_path = self.local_root(user_ns).join(hash).join("cover.jpg");
-        fs::read(&cover_path)
+        let book_dir = self.local_root(user_ns).join(hash);
+        let cover_path = book_dir.join("cover.jpg");
+        if cover_path.exists() {
+            let bytes = fs::read(&cover_path)
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            let ct = detect_image_content_type(&bytes);
+            return Ok((bytes, ct));
+        }
+
+        // 动态自愈：若 cover.jpg 尚未提取，实时尝试从 book.epub 提取并落盘缓存
+        let epub_path = book_dir.join("book.epub");
+        if epub_path.exists() {
+            let epub_path_cloned = epub_path.clone();
+            let cover_opt = tokio::task::spawn_blocking(move || {
+                extract_cover_from_epub_file(&epub_path_cloned)
+            })
             .await
-            .map_err(|e| AppError::Internal(e.into()))
+            .map_err(|e| AppError::Internal(e.into()))?;
+
+            if let Some(bytes) = cover_opt {
+                let _ = fs::write(&cover_path, &bytes).await;
+                let ct = detect_image_content_type(&bytes);
+                return Ok((bytes, ct));
+            }
+        }
+
+        Err(AppError::NotFound("Cover not found".to_string()))
+    }
+
+    /// 根据 md5 hash 在所有用户的 local_books 中检索并提取封面（供公开代理接口使用）
+    pub async fn get_cover_by_hash(&self, hash: &str) -> Result<(Vec<u8>, String), AppError> {
+        let data_root = self.storage_dir.join("data");
+        if let Ok(mut entries) = tokio::fs::read_dir(&data_root).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let book_dir = entry.path().join("local_books").join(hash);
+                if book_dir.exists() {
+                    let cover_path = book_dir.join("cover.jpg");
+                    if cover_path.exists() {
+                        if let Ok(bytes) = fs::read(&cover_path).await {
+                            let ct = detect_image_content_type(&bytes);
+                            return Ok((bytes, ct));
+                        }
+                    }
+                    let epub_path = book_dir.join("book.epub");
+                    if epub_path.exists() {
+                        let cover_opt = tokio::task::spawn_blocking(move || {
+                            extract_cover_from_epub_file(&epub_path)
+                        })
+                        .await
+                        .map_err(|e| AppError::Internal(e.into()))?;
+
+                        if let Some(bytes) = cover_opt {
+                            let _ = fs::write(&cover_path, &bytes).await;
+                            let ct = detect_image_content_type(&bytes);
+                            return Ok((bytes, ct));
+                        }
+                    }
+                }
+            }
+        }
+        Err(AppError::NotFound("Cover not found".to_string()))
     }
 
     pub async fn get_asset(&self, user_ns: &str, book_url: &str, path: &str) -> Result<(Vec<u8>, String), AppError> {
@@ -380,6 +438,231 @@ fn local_name(name: quick_xml::name::QName) -> String {
     }
 }
 
+pub fn detect_image_content_type(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg".to_string()
+    } else if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        "image/png".to_string()
+    } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp".to_string()
+    } else if bytes.starts_with(b"GIF8") {
+        "image/gif".to_string()
+    } else {
+        "image/jpeg".to_string()
+    }
+}
+
+fn find_and_read_zip_entry<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    path: &str,
+) -> Option<Vec<u8>> {
+    // 1. 直接路径尝试
+    if let Ok(bytes) = read_zip_entry_to_bytes(archive, path) {
+        if !bytes.is_empty() {
+            return Some(bytes);
+        }
+    }
+    // 2. URL 解码后路径尝试
+    if let Ok(decoded) = urlencoding::decode(path) {
+        let dec_str = decoded.to_string();
+        if dec_str != path {
+            if let Ok(bytes) = read_zip_entry_to_bytes(archive, &dec_str) {
+                if !bytes.is_empty() {
+                    return Some(bytes);
+                }
+            }
+        }
+    }
+    // 3. 忽略大小写及前导/后置斜杠宽松匹配
+    let clean_path = path.trim_start_matches('/').to_lowercase();
+    let file_stem_name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    let count = archive.len();
+    let mut matched_index = None;
+    for i in 0..count {
+        if let Ok(file) = archive.by_index(i) {
+            let entry_name = file.name().trim_start_matches('/').to_lowercase();
+            if entry_name == clean_path || entry_name.ends_with(&format!("/{}", file_stem_name)) {
+                matched_index = Some(i);
+                break;
+            }
+        }
+    }
+    if let Some(i) = matched_index {
+        if let Ok(mut f) = archive.by_index(i) {
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                return Some(buf);
+            }
+        }
+    }
+    None
+}
+
+pub fn extract_cover_from_epub_archive<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Option<Vec<u8>> {
+    let container_str = read_zip_entry_to_string(archive, "META-INF/container.xml").ok()?;
+    let mut reader = Reader::from_str(&container_str);
+    let mut rootfile_path = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                if local_name(e.name()) == "rootfile" {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"full-path" {
+                            rootfile_path = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    let rootfile_path = rootfile_path?;
+    let opf_dir = rootfile_path
+        .rsplit_once('/')
+        .map(|(d, _)| format!("{}/", d))
+        .unwrap_or_default();
+
+    let opf_str = read_zip_entry_to_string(archive, &rootfile_path).ok()?;
+    let mut opf_reader = Reader::from_str(&opf_str);
+    let mut in_manifest = false;
+    let mut in_metadata = false;
+
+    let mut meta_cover_id = None;
+    let mut manifest_items: Vec<(String, String, String, String)> = Vec::new(); // (id, href, media-type, properties)
+
+    loop {
+        match opf_reader.read_event() {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match local_name(e.name()).as_str() {
+                "metadata" => in_metadata = true,
+                "manifest" => in_manifest = true,
+                "meta" if in_metadata => {
+                    let mut name = String::new();
+                    let mut content = String::new();
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"name" => name = String::from_utf8_lossy(&attr.value).into_owned(),
+                            b"content" => content = String::from_utf8_lossy(&attr.value).into_owned(),
+                            _ => {}
+                        }
+                    }
+                    if name == "cover" && !content.is_empty() {
+                        meta_cover_id = Some(content);
+                    }
+                }
+                "item" if in_manifest => {
+                    let mut id = String::new();
+                    let mut href = String::new();
+                    let mut media_type = String::new();
+                    let mut properties = String::new();
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"id" => id = String::from_utf8_lossy(&attr.value).into_owned(),
+                            b"href" => href = String::from_utf8_lossy(&attr.value).into_owned(),
+                            b"media-type" => media_type = String::from_utf8_lossy(&attr.value).into_owned(),
+                            b"properties" => properties = String::from_utf8_lossy(&attr.value).into_owned(),
+                            _ => {}
+                        }
+                    }
+                    if !href.is_empty() {
+                        manifest_items.push((id, href, media_type, properties));
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(ref e)) => match local_name(e.name()).as_str() {
+                "metadata" => in_metadata = false,
+                "manifest" => in_manifest = false,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    // 1. EPUB 2 标准：<meta name="cover" content="{id}">
+    if let Some(ref cover_id) = meta_cover_id {
+        if let Some((_, href, _, _)) = manifest_items.iter().find(|(id, _, _, _)| id == cover_id) {
+            let full_path = format!("{}{}", opf_dir, href);
+            if let Some(buf) = find_and_read_zip_entry(archive, &full_path) {
+                return Some(buf);
+            }
+        }
+    }
+
+    // 2. EPUB 3 标准：item 带有 properties="cover-image"
+    for (_, href, _, props) in &manifest_items {
+        if props.split_whitespace().any(|p| p == "cover-image") {
+            let full_path = format!("{}{}", opf_dir, href);
+            if let Some(buf) = find_and_read_zip_entry(archive, &full_path) {
+                return Some(buf);
+            }
+        }
+    }
+
+    // 3. 启发式：manifest item id 包含 cover 且类型为图片
+    for (id, href, media_type, _) in &manifest_items {
+        let id_lower = id.to_lowercase();
+        if (id_lower == "cover" || id_lower == "cover-image" || id_lower.contains("cover"))
+            && (media_type.starts_with("image/")
+                || href.ends_with(".jpg")
+                || href.ends_with(".jpeg")
+                || href.ends_with(".png")
+                || href.ends_with(".webp"))
+        {
+            let full_path = format!("{}{}", opf_dir, href);
+            if let Some(buf) = find_and_read_zip_entry(archive, &full_path) {
+                return Some(buf);
+            }
+        }
+    }
+
+    // 4. 启发式：manifest item href 包含 cover 且类型为图片
+    for (_, href, media_type, _) in &manifest_items {
+        let href_lower = href.to_lowercase();
+        if (href_lower.contains("cover.") || href_lower.ends_with("cover.jpg") || href_lower.ends_with("cover.png") || href_lower.ends_with("cover.jpeg") || href_lower.ends_with("cover.webp"))
+            && (media_type.starts_with("image/") || media_type.is_empty())
+        {
+            let full_path = format!("{}{}", opf_dir, href);
+            if let Some(buf) = find_and_read_zip_entry(archive, &full_path) {
+                return Some(buf);
+            }
+        }
+    }
+
+    // 5. 兜底策略：遍历 Zip 中所有文件，寻找 cover.jpg / cover.png
+    let count = archive.len();
+    let mut matched_index = None;
+    for i in 0..count {
+        if let Ok(file) = archive.by_index(i) {
+            let name = file.name().to_lowercase();
+            if name.ends_with("cover.jpg") || name.ends_with("cover.jpeg") || name.ends_with("cover.png") || name.ends_with("cover.webp") {
+                matched_index = Some(i);
+                break;
+            }
+        }
+    }
+    if let Some(i) = matched_index {
+        if let Ok(mut f) = archive.by_index(i) {
+            let mut buf = Vec::new();
+            if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                return Some(buf);
+            }
+        }
+    }
+
+    None
+}
+
+pub fn extract_cover_from_epub_file(path: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    extract_cover_from_epub_archive(&mut archive)
+}
+
 fn parse_epub(bytes: &[u8], hash: Option<&str>) -> Result<ParsedEpubData, String> {
     let cursor = std::io::Cursor::new(bytes);
     let archive = ZipArchive::new(cursor).map_err(|e| format!("EPUB 解析失败: {}", e))?;
@@ -400,7 +683,7 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
 
     let mut title = String::new();
     let mut author = String::new();
-    let mut cover: Option<Vec<u8>> = None;
+    let cover: Option<Vec<u8>> = extract_cover_from_epub_archive(&mut archive);
     let mut nav_content = None;
     let mut spine_hrefs: Vec<String> = Vec::new();
 
@@ -486,29 +769,6 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                             .read_text(e.name())
                             .unwrap_or_default()
                             .to_string();
-                    }
-                    "meta" if in_metadata => {
-                        let mut name = String::new();
-                        let mut content = String::new();
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"name" => name = String::from_utf8_lossy(&attr.value).into_owned(),
-                                b"content" => {
-                                    content = String::from_utf8_lossy(&attr.value).into_owned()
-                                }
-                                _ => {}
-                            }
-                        }
-                        if name == "cover" {
-                            if let Some(href) = manifest_items.get(&content) {
-                                let full_path = format!("{}{}", opf_dir, href);
-                                if let Ok(buf) = read_zip_entry_to_bytes(&mut archive, &full_path) {
-                                    if !buf.is_empty() {
-                                        cover = Some(buf);
-                                    }
-                                }
-                            }
-                        }
                     }
                     _ => {}
                 },

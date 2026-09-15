@@ -759,6 +759,12 @@ impl BookService {
             if book.group.is_none() {
                 book.group = exist.group;
             }
+            if book.cover_url.is_none() {
+                book.cover_url = exist.cover_url;
+            }
+            if book.custom_cover_url.is_none() {
+                book.custom_cover_url = exist.custom_cover_url;
+            }
             list[i] = book.clone();
         } else {
             list.push(book.clone());
@@ -786,6 +792,12 @@ impl BookService {
                 .collect::<Vec<_>>();
             for existing_book in &matching_existing {
                 preserve_newer_reading_progress(existing_book, &mut book);
+                if book.cover_url.is_none() {
+                    book.cover_url = existing_book.cover_url.clone();
+                }
+                if book.custom_cover_url.is_none() {
+                    book.custom_cover_url = existing_book.custom_cover_url.clone();
+                }
             }
             if let Some(existing_index) = normalized
                 .iter()
@@ -1031,6 +1043,14 @@ impl BookService {
         };
         for book in &mut list {
             sanitize_book_urls(book);
+            if book.cover_url.is_none() && (book.origin == "local-epub" || book.book_url.starts_with("local-epub:")) {
+                if let Some(hash) = book.book_url.strip_prefix("local-epub:") {
+                    let clean_hash = hash.split('#').next().unwrap_or(hash).trim();
+                    if !clean_hash.is_empty() {
+                        book.cover_url = Some(format!("local-epub-cover:{}", clean_hash));
+                    }
+                }
+            }
         }
         Ok(list)
     }

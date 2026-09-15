@@ -11,7 +11,9 @@ use crate::service::local_mobi_book::{is_local_mobi_origin, is_local_mobi_url};
 use crate::service::local_pdf_book::{is_local_pdf_origin, is_local_pdf_url};
 use crate::service::local_txt_book::{is_local_txt_origin, is_local_txt_url, LOCAL_TXT_ORIGIN};
 use crate::service::search_relevance::{filter_strong_search_results, score_search_book};
+use crate::util::hash::md5_hex;
 use crate::util::text::{normalize_source_url, repair_encoded_url};
+use std::path::Path;
 use axum::body::Body;
 use axum::body::Bytes;
 use axum::http::{header, StatusCode};
@@ -2102,6 +2104,12 @@ pub async fn get_shelf_book_with_cache_info(
     )))
 }
 
+#[derive(Deserialize)]
+pub struct ResetCoverRequest {
+    #[serde(rename = "bookUrl")]
+    pub book_url: String,
+}
+
 pub async fn get_book_cover(
     State(state): State<AppState>,
     Query(q): Query<CoverQuery>,
@@ -2110,7 +2118,60 @@ pub async fn get_book_cover(
         Some(u) if !u.trim().is_empty() => u,
         _ => return Ok(StatusCode::NOT_FOUND.into_response()),
     };
-    // Use "public" namespace for unauthenticated cover requests
+
+    // 1. 本地 EPUB 封面处理: local-epub-cover:{hash}
+    if let Some(hash) = url.strip_prefix("local-epub-cover:") {
+        let clean_hash = hash.split('#').next().unwrap_or(hash).trim();
+        match state.local_epub_book_service.get_cover_by_hash(clean_hash).await {
+            Ok((bytes, content_type)) => {
+                let mut resp = Response::new(Body::from(bytes));
+                let headers = resp.headers_mut();
+                headers.insert(
+                    header::CACHE_CONTROL,
+                    header::HeaderValue::from_static("86400"),
+                );
+                if let Ok(v) = header::HeaderValue::from_str(&content_type) {
+                    headers.insert(header::CONTENT_TYPE, v);
+                }
+                return Ok(resp);
+            }
+            Err(_) => return Ok(StatusCode::NOT_FOUND.into_response()),
+        }
+    }
+
+    // 2. 自定义封面处理: custom-cover:{hash}
+    if let Some(hash) = url.strip_prefix("custom-cover:") {
+        let clean_hash = hash.split('#').next().unwrap_or(hash).trim();
+        let data_dir = std::path::PathBuf::from(&state.config.storage_dir).join("data");
+        if let Ok(mut entries) = tokio::fs::read_dir(&data_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let covers_dir = entry.path().join("covers");
+                if covers_dir.exists() {
+                    for ext in &["jpg", "jpeg", "png", "webp", "gif"] {
+                        let candidate = covers_dir.join(format!("{}.{}", clean_hash, ext));
+                        if candidate.exists() {
+                            if let Ok(bytes) = tokio::fs::read(&candidate).await {
+                                let content_type = crate::service::local_epub_book::detect_image_content_type(&bytes);
+                                let mut resp = Response::new(Body::from(bytes));
+                                let headers = resp.headers_mut();
+                                headers.insert(
+                                    header::CACHE_CONTROL,
+                                    header::HeaderValue::from_static("86400"),
+                                );
+                                if let Ok(v) = header::HeaderValue::from_str(&content_type) {
+                                    headers.insert(header::CONTENT_TYPE, v);
+                                }
+                                return Ok(resp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    // 3. 外部网络 URL 代理与缓存
     match state.book_service.get_cover("public", &url).await {
         Ok((bytes, content_type)) => {
             let mut resp = Response::new(Body::from(bytes));
@@ -2126,6 +2187,127 @@ pub async fn get_book_cover(
         }
         Err(_) => Ok(StatusCode::NOT_FOUND.into_response()),
     }
+}
+
+pub async fn upload_book_cover(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    mut multipart: Multipart,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state
+        .user_service
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
+        .await
+        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+
+    let mut book_url: Option<String> = None;
+    let mut file_bytes: Option<Bytes> = None;
+    let mut file_ext = "jpg".to_string();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        let name = field.name().unwrap_or_default().to_string();
+        if name == "bookUrl" {
+            let val = field
+                .text()
+                .await
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            if !val.trim().is_empty() {
+                book_url = Some(val.trim().to_string());
+            }
+        } else if name == "file" {
+            if let Some(fname) = field.file_name() {
+                if let Some(ext) = Path::new(fname).extension().and_then(|e| e.to_str()) {
+                    let ext_low = ext.to_lowercase();
+                    if ["jpg", "jpeg", "png", "webp", "gif"].contains(&ext_low.as_str()) {
+                        file_ext = ext_low;
+                    }
+                }
+            }
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            file_bytes = Some(bytes);
+        }
+    }
+
+    let url = book_url.ok_or_else(|| AppError::BadRequest("bookUrl required".to_string()))?;
+    let bytes = file_bytes.ok_or_else(|| AppError::BadRequest("file required".to_string()))?;
+
+    if bytes.is_empty() {
+        return Err(AppError::BadRequest("图片不能为空".to_string()));
+    }
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err(AppError::BadRequest("图片大小不能超过 10MB".to_string()));
+    }
+
+    let mut book = state
+        .book_service
+        .get_shelf_book(&user_ns, &url)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
+
+    let hash = md5_hex(&url);
+    let covers_dir = std::path::PathBuf::from(&state.config.storage_dir)
+        .join("data")
+        .join(&user_ns)
+        .join("covers");
+    tokio::fs::create_dir_all(&covers_dir)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let file_path = covers_dir.join(format!("{}.{}", hash, file_ext));
+    tokio::fs::write(&file_path, &bytes)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    book.custom_cover_url = Some(format!("custom-cover:{}", hash));
+    let saved = state.book_service.save_book(&user_ns, book).await?;
+
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(saved).unwrap_or_default(),
+    )))
+}
+
+pub async fn reset_book_cover(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(req): Json<ResetCoverRequest>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state
+        .user_service
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
+        .await
+        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+
+    let mut book = state
+        .book_service
+        .get_shelf_book(&user_ns, &req.book_url)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
+
+    let hash = md5_hex(&req.book_url);
+    let covers_dir = std::path::PathBuf::from(&state.config.storage_dir)
+        .join("data")
+        .join(&user_ns)
+        .join("covers");
+    for ext in &["jpg", "jpeg", "png", "webp", "gif"] {
+        let path = covers_dir.join(format!("{}.{}", hash, ext));
+        if path.exists() {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+
+    book.custom_cover_url = None;
+    let saved = state.book_service.save_book(&user_ns, book).await?;
+
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(saved).unwrap_or_default(),
+    )))
 }
 
 pub async fn get_invalid_book_sources(
