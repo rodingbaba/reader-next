@@ -2139,9 +2139,10 @@ pub async fn get_book_cover(
         }
     }
 
-    // 2. 自定义封面处理: custom-cover:{hash}
+    // 2. 自定义封面处理: custom-cover:{hash} 或 custom-cover:{hash}-{tag}
     if let Some(hash) = url.strip_prefix("custom-cover:") {
         let clean_hash = hash.split('#').next().unwrap_or(hash).trim();
+        let base_hash = clean_hash.split('-').next().unwrap_or(clean_hash);
         let data_dir = std::path::PathBuf::from(&state.config.storage_dir).join("data");
         if let Ok(mut entries) = tokio::fs::read_dir(&data_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
@@ -2149,14 +2150,24 @@ pub async fn get_book_cover(
                 if covers_dir.exists() {
                     for ext in &["jpg", "jpeg", "png", "webp", "gif"] {
                         let candidate = covers_dir.join(format!("{}.{}", clean_hash, ext));
-                        if candidate.exists() {
-                            if let Ok(bytes) = tokio::fs::read(&candidate).await {
+                        let target = if candidate.exists() {
+                            Some(candidate)
+                        } else {
+                            let fallback = covers_dir.join(format!("{}.{}", base_hash, ext));
+                            if fallback.exists() {
+                                Some(fallback)
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(target_path) = target {
+                            if let Ok(bytes) = tokio::fs::read(&target_path).await {
                                 let content_type = crate::service::local_epub_book::detect_image_content_type(&bytes);
                                 let mut resp = Response::new(Body::from(bytes));
                                 let headers = resp.headers_mut();
                                 headers.insert(
                                     header::CACHE_CONTROL,
-                                    header::HeaderValue::from_static("86400"),
+                                    header::HeaderValue::from_static("public, max-age=86400"),
                                 );
                                 if let Ok(v) = header::HeaderValue::from_str(&content_type) {
                                     headers.insert(header::CONTENT_TYPE, v);
@@ -2252,6 +2263,8 @@ pub async fn upload_book_cover(
         .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
 
     let hash = md5_hex(&url);
+    let file_hash = crate::util::hash::md5_bytes(&bytes);
+    let file_tag = &file_hash[..8];
     let covers_dir = std::path::PathBuf::from(&state.config.storage_dir)
         .join("data")
         .join(&user_ns)
@@ -2260,12 +2273,17 @@ pub async fn upload_book_cover(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    let file_path = covers_dir.join(format!("{}.{}", hash, file_ext));
+    let versioned_name = format!("{}-{}.{}", hash, file_tag, file_ext);
+    let file_path = covers_dir.join(&versioned_name);
     tokio::fs::write(&file_path, &bytes)
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    book.custom_cover_url = Some(format!("custom-cover:{}", hash));
+    // 兼容落盘一份不带版本号的基线文件
+    let legacy_file_path = covers_dir.join(format!("{}.{}", hash, file_ext));
+    let _ = tokio::fs::write(&legacy_file_path, &bytes).await;
+
+    book.custom_cover_url = Some(format!("custom-cover:{}-{}", hash, file_tag));
     let saved = state.book_service.save_book(&user_ns, book).await?;
 
     Ok(Json(ApiResponse::ok(

@@ -11,6 +11,7 @@ let dbPromise: Promise<IDBDatabase> | null = null
 
 export interface BrowserCoverCacheRecord {
   key: string
+  coverUrl?: string
   dataUrl: string
   updatedAt: number
 }
@@ -288,13 +289,26 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
   }, STORE_NAME)
 }
 
-const coverMemoryCache = new Map<string, string>()
+interface MemoryCoverEntry {
+  dataUrl: string
+  coverUrl?: string
+}
+const coverMemoryCache = new Map<string, MemoryCoverEntry>()
 
-/** 从 IndexedDB 或内存缓存中读取离线封面 Base64 Data URL */
-export async function getCoverCache(key: string): Promise<string | null> {
+/**
+ * 从 IndexedDB 或内存缓存中读取离线封面 Base64 Data URL。
+ * @param key 书籍标识 (bookUrl)
+ * @param expectedCoverUrl 期望匹配的当前封面标识/版本。若传入且与本地缓存不一致，判定缓存失效并淘汰旧图。
+ */
+export async function getCoverCache(key: string, expectedCoverUrl?: string): Promise<string | null> {
   if (!key) return null
   if (coverMemoryCache.has(key)) {
-    return coverMemoryCache.get(key)!
+    const mem = coverMemoryCache.get(key)!
+    if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+      return mem.dataUrl
+    }
+    // 内存版本不匹配，淘汰
+    coverMemoryCache.delete(key)
   }
   try {
     const record = await withStore<BrowserCoverCacheRecord | undefined>(
@@ -303,7 +317,13 @@ export async function getCoverCache(key: string): Promise<string | null> {
       COVER_CACHE_STORE,
     )
     if (record?.dataUrl) {
-      coverMemoryCache.set(key, record.dataUrl)
+      // 若提供了期望封面版本，且本地记录已过时，淘汰本地旧缓存
+      if (expectedCoverUrl && record.coverUrl && record.coverUrl !== expectedCoverUrl) {
+        coverMemoryCache.delete(key)
+        void removeCoverCache(key)
+        return null
+      }
+      coverMemoryCache.set(key, { dataUrl: record.dataUrl, coverUrl: record.coverUrl })
       return record.dataUrl
     }
   } catch {
@@ -313,12 +333,13 @@ export async function getCoverCache(key: string): Promise<string | null> {
 }
 
 /** 将封面写入本地 IndexedDB 离线封面库 */
-export async function saveCoverCache(key: string, dataUrl: string): Promise<void> {
+export async function saveCoverCache(key: string, dataUrl: string, coverUrl?: string): Promise<void> {
   if (!key || !dataUrl) return
-  coverMemoryCache.set(key, dataUrl)
+  coverMemoryCache.set(key, { dataUrl, coverUrl })
   try {
     const record: BrowserCoverCacheRecord = {
       key,
+      coverUrl,
       dataUrl,
       updatedAt: Date.now(),
     }
@@ -351,7 +372,7 @@ export async function removeCoverCache(key: string): Promise<void> {
  * 将远程/代理图片 URL 异步抓取并转为 DataURL 缓存至 IndexedDB。
  * 供后续离线时秒开渲染。
  */
-export async function cacheCoverFromUrl(key: string, url: string): Promise<string | null> {
+export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: string): Promise<string | null> {
   if (!key || !url || url.startsWith('data:')) return null
   try {
     const res = await fetch(url)
@@ -362,7 +383,7 @@ export async function cacheCoverFromUrl(key: string, url: string): Promise<strin
       reader.onloadend = async () => {
         const dataUrl = reader.result as string
         if (dataUrl) {
-          await saveCoverCache(key, dataUrl)
+          await saveCoverCache(key, dataUrl, coverUrl || url)
           resolve(dataUrl)
         } else {
           resolve('')

@@ -230,7 +230,7 @@ async function handleCoverFileChange(e: Event) {
     try {
       base64 = await fileToDataUrl(file)
       localCoverData.value = base64
-      await saveCoverCache(props.book.bookUrl, base64)
+      await saveCoverCache(props.book.bookUrl, base64, updatedBook.customCoverUrl)
     } catch (cacheErr) {
       console.warn('缓存封面至本地 IndexedDB 异常', cacheErr)
     }

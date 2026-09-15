@@ -15,8 +15,18 @@
         :class="{ current: book.bookUrl === readerStore.book?.bookUrl }"
         @click="openBook(book)"
       >
-        <img v-if="getCoverUrl(book.coverUrl)" :src="getCoverUrl(book.coverUrl)" class="book-cover" />
-        <div v-else class="book-cover placeholder">无封面</div>
+        <img
+          v-if="coverMap[book.bookUrl] && !coverFailedMap[book.bookUrl]"
+          :src="coverMap[book.bookUrl]"
+          :alt="book.name"
+          class="book-cover"
+          loading="lazy"
+          @load="onCoverImgLoad(book)"
+          @error="coverFailedMap[book.bookUrl] = true"
+        />
+        <div v-else class="book-cover placeholder">
+          {{ getBookInitial(book.name) }}
+        </div>
         
         <div class="book-info">
           <div class="book-title">{{ book.name }}</div>
@@ -31,14 +41,77 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useReaderStore } from '../../stores/reader'
 import { getCoverUrl } from '../../api/bookshelf'
+import { getCoverCache, cacheCoverFromUrl } from '../../utils/browserCache'
+import { getBookInitial } from '../../utils/bookCoverFallback'
 import type { Book } from '../../types'
 const store = useBookshelfStore()
 const readerStore = useReaderStore()
 const theme = computed(() => readerStore.currentTheme)
+
+const coverMap = ref<Record<string, string>>({})
+const coverFailedMap = ref<Record<string, boolean>>({})
+
+async function resolveBookCover(book: Book) {
+  const url = book.customCoverUrl || book.coverUrl
+  if (!url) {
+    coverMap.value[book.bookUrl] = ''
+    return
+  }
+  // 优先读取本地离线封面池
+  const local = await getCoverCache(book.bookUrl, url)
+  if (local) {
+    coverMap.value[book.bookUrl] = local
+    coverFailedMap.value[book.bookUrl] = false
+    return
+  }
+  coverMap.value[book.bookUrl] = getCoverUrl(url)
+  coverFailedMap.value[book.bookUrl] = false
+}
+
+function onCoverImgLoad(book: Book) {
+  coverFailedMap.value[book.bookUrl] = false
+  const current = coverMap.value[book.bookUrl]
+  const url = book.customCoverUrl || book.coverUrl
+  if (url && current && !current.startsWith('data:')) {
+    void cacheCoverFromUrl(book.bookUrl, current, url)
+  }
+}
+
+function handleCoverUpdated(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (!detail || !detail.bookUrl) return
+  if (detail.coverData) {
+    coverMap.value[detail.bookUrl] = detail.coverData
+    coverFailedMap.value[detail.bookUrl] = false
+  } else {
+    const b = store.books.find((item) => item.bookUrl === detail.bookUrl)
+    if (b) void resolveBookCover(b)
+  }
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('reader-cover-updated', handleCoverUpdated)
+  }
+})
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('reader-cover-updated', handleCoverUpdated)
+  }
+})
+
+watch(
+  () => store.books.map((b) => `${b.bookUrl}:${b.customCoverUrl || ''}:${b.coverUrl || ''}`),
+  () => {
+    store.books.forEach((b) => void resolveBookCover(b))
+  },
+  { immediate: true },
+)
 
 if (!store.books.length) {
   store.fetchBooks()
@@ -134,12 +207,14 @@ async function openBook(book: Book) {
 }
 
 .book-cover.placeholder {
-  background: rgba(0,0,0,0.1);
+  background: rgba(201, 127, 58, 0.12);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  color: rgba(0,0,0,0.4);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-primary, #c97f3a);
+  user-select: none;
 }
 
 .book-info {

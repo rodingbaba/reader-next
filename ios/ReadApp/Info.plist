@@ -17,7 +17,12 @@
 		<true/>
 	</dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>zh_CN</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+		<string>zh_CN</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>阅读</string>
 	<key>CFBundleExecutable</key>

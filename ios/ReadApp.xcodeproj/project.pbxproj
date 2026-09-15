@@ -160,11 +160,12 @@
 			};
 			buildConfigurationList = 1A000034000000000000001 /* Build configuration list for PBXProject "ReadApp" */;
 			compatibilityVersion = "Xcode 14.0";
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hans",
 			);
 			mainGroup = 1A000023000000000000001;
 			productRefGroup = 1A000025000000000000001 /* Products */;
@@ -352,7 +353,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7.5;
+				MARKETING_VERSION = 1.7.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.readapp.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -381,7 +382,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7.5;
+				MARKETING_VERSION = 1.7.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.readapp.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

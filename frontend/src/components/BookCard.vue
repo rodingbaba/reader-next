@@ -150,14 +150,14 @@ async function resolveCover() {
     cachedCoverSrc.value = ''
     return
   }
-  // 1. 优先瞬间读取本地 IndexedDB 离线封面池（0ms 秒开）
-  const localData = await getCoverCache(props.book.bookUrl)
+  // 1. 优先瞬间读取本地 IndexedDB 离线封面池（0ms 秒开），校验当前封面版本
+  const localData = await getCoverCache(props.book.bookUrl, url)
   if (localData) {
     cachedCoverSrc.value = localData
     coverFailed.value = false
     return
   }
-  // 2. 本地尚未缓存时，使用远程代理 URL 渲染
+  // 2. 本地尚未缓存或版本已过时时，使用远程代理 URL 渲染
   const remote = getCoverUrl(url)
   cachedCoverSrc.value = remote
   coverFailed.value = false
@@ -197,10 +197,10 @@ watch(
 
 function onCoverLoad() {
   coverFailed.value = false
-  // 封面成功渲染后，若当前展示的为远程 URL，异步在后台持久化到 IndexedDB
+  // 封面成功渲染后，若当前展示的为远程 URL，异步在后台持久化到 IndexedDB（附带版本）
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
   if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
-    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value)
+    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url)
   }
 }
 
