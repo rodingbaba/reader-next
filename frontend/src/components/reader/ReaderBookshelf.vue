@@ -22,7 +22,7 @@
           class="book-cover"
           loading="lazy"
           @load="onCoverImgLoad(book)"
-          @error="coverFailedMap[book.bookUrl] = true"
+          @error="onCoverImgError(book)"
         />
         <div v-else class="book-cover placeholder">
           {{ getBookInitial(book.name) }}
@@ -45,9 +45,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useBookshelfStore } from '../../stores/bookshelf'
 import { useReaderStore } from '../../stores/reader'
 import { getCoverUrl } from '../../api/bookshelf'
-import { getCoverCache, cacheCoverFromUrl } from '../../utils/browserCache'
+import { getCoverCache, cacheCoverFromUrl, getCoverMemoryCache } from '../../utils/browserCache'
 import { getBookInitial } from '../../utils/bookCoverFallback'
 import type { Book } from '../../types'
+
 const store = useBookshelfStore()
 const readerStore = useReaderStore()
 const theme = computed(() => readerStore.currentTheme)
@@ -61,7 +62,18 @@ async function resolveBookCover(book: Book) {
     coverMap.value[book.bookUrl] = ''
     return
   }
-  // 优先读取本地离线封面池
+  // 1. 同步内存直出（命中快照时 0ms）
+  const mem = getCoverMemoryCache(book.bookUrl, url)
+  if (mem) {
+    coverMap.value[book.bookUrl] = mem
+    coverFailedMap.value[book.bookUrl] = false
+    return
+  }
+  // 2. 首帧优先赋远程代理 URL，消除白屏占位
+  if (!coverMap.value[book.bookUrl]) {
+    coverMap.value[book.bookUrl] = getCoverUrl(url)
+  }
+  // 3. 异步读取本地离线封面池并校验版本
   const local = await getCoverCache(book.bookUrl, url)
   if (local) {
     coverMap.value[book.bookUrl] = local
@@ -79,6 +91,27 @@ function onCoverImgLoad(book: Book) {
   if (url && current && !current.startsWith('data:')) {
     void cacheCoverFromUrl(book.bookUrl, current, url)
   }
+}
+
+function onCoverImgError(book: Book) {
+  const url = book.customCoverUrl || book.coverUrl
+  const current = coverMap.value[book.bookUrl]
+  if (url && current && !current.startsWith('data:')) {
+    getCoverCache(book.bookUrl, url)
+      .then((local) => {
+        if (local) {
+          coverMap.value[book.bookUrl] = local
+          coverFailedMap.value[book.bookUrl] = false
+        } else {
+          coverFailedMap.value[book.bookUrl] = true
+        }
+      })
+      .catch(() => {
+        coverFailedMap.value[book.bookUrl] = true
+      })
+    return
+  }
+  coverFailedMap.value[book.bookUrl] = true
 }
 
 function handleCoverUpdated(e: Event) {

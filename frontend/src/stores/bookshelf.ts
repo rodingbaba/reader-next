@@ -11,7 +11,13 @@ import {
   saveBooks as apiSaveBooks,
 } from '../api/bookshelf'
 import type { Book, BookGroup, SearchBook } from '../types'
-import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
+import {
+  deleteBrowserBookCache,
+  listBrowserCacheSummary,
+  loadCoverSnapshots,
+  preloadCoversCache,
+  saveCoverSnapshots,
+} from '../utils/browserCache'
 import { isLocalTxtBook } from '../utils/localBook'
 import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook } from '../utils/recentBooks'
 import { isNetworkOnline } from '../utils/nativeBridge'
@@ -199,6 +205,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
    */
   async function fetchBooks() {
     const mySeq = ++fetchBooksSeq
+    loadCoverSnapshots()
     // 1. 优先读取本地持久化，实现 0ms 秒开书架
     if (books.value.length === 0) {
       let cached = loadCachedBookshelf()
@@ -238,6 +245,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
         appLog('书架', `优先加载本地离线书架成功，共 ${cached.length} 本书`)
         // 本地秒出后立即刷新最近阅读，不阻塞
         void refreshRecentBooks().catch(() => undefined)
+        // 本地秒出后，后台静默启动单事务批量预热全量封面至内存，并安全刷新前 6 本书快照
+        void preloadCoversCache(cached.map((b) => ({ key: b.bookUrl, expectedCoverUrl: b.customCoverUrl || b.coverUrl })))
+          .then(() => saveCoverSnapshots(cached))
+          .catch(() => undefined)
       } else {
         appLog('书架', '本地无离线书架缓存')
       }
@@ -266,8 +277,9 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
       // 合并服务端书架与本地进度（防回弹仲裁）
       books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
-      // 写回本地持久化
+      // 写回本地持久化并刷新前 6 本书封面快照池
       saveCachedBookshelf(books.value)
+      void saveCoverSnapshots(books.value)
       await refreshRecentBooks()
       appLog('书架', `远端书架同步完成，当前共 ${books.value.length} 本书`)
       if (typeof window !== 'undefined') {
@@ -298,6 +310,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
       books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
       saveCachedBookshelf(books.value)
+      void saveCoverSnapshots(books.value)
       await refreshRecentBooks()
       appLog('书架', `主动刷新书架成功，共 ${books.value.length} 本书`)
       if (typeof window !== 'undefined') {
@@ -623,6 +636,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     })
     if (changed) {
       saveCachedBookshelf(books.value)
+      void saveCoverSnapshots(books.value)
     }
   }
 

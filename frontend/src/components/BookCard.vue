@@ -23,7 +23,7 @@
         class="cover-img"
         loading="lazy"
         @load="onCoverLoad"
-        @error="coverFailed = true"
+        @error="handleCoverError"
       />
       <div v-else class="cover-placeholder">
         <span class="cover-title">{{ book.name }}</span>
@@ -104,7 +104,7 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
 import { isLocalTxtBook } from '../utils/localBook'
-import { getCoverCache, cacheCoverFromUrl } from '../utils/browserCache'
+import { getCoverCache, cacheCoverFromUrl, getCoverMemoryCache } from '../utils/browserCache'
 import type { Book, SearchBook } from '../types'
 import { useAppStore } from '../stores/app'
 const appStore = useAppStore()
@@ -141,8 +141,18 @@ function handleCoverClick() {
   }
 }
 
+function getInitialCoverSrc(): string {
+  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  if (!url) return ''
+  // 1. 若内存缓存（由前 6 本书快照池或单事务预热载入）命中，0ms 同步直出 Base64
+  const mem = getCoverMemoryCache(props.book.bookUrl, url)
+  if (mem) return mem
+  // 2. 否则首帧同步给出远程代理 URL，使 <img> 立即挂载并利用原生图片缓存秒显
+  return getCoverUrl(url)
+}
+
 const coverFailed = ref(false)
-const cachedCoverSrc = ref('')
+const cachedCoverSrc = ref(getInitialCoverSrc())
 
 async function resolveCover() {
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
@@ -150,17 +160,45 @@ async function resolveCover() {
     cachedCoverSrc.value = ''
     return
   }
-  // 1. 优先瞬间读取本地 IndexedDB 离线封面池（0ms 秒开），校验当前封面版本
+  // 1. 优先内存直取
+  const mem = getCoverMemoryCache(props.book.bookUrl, url)
+  if (mem) {
+    cachedCoverSrc.value = mem
+    coverFailed.value = false
+    return
+  }
+  // 2. 读取本地 IndexedDB 离线封面池，校验当前封面版本
   const localData = await getCoverCache(props.book.bookUrl, url)
   if (localData) {
     cachedCoverSrc.value = localData
     coverFailed.value = false
     return
   }
-  // 2. 本地尚未缓存或版本已过时时，使用远程代理 URL 渲染
+  // 3. 本地尚未缓存或版本已过时时，使用远程代理 URL 渲染
   const remote = getCoverUrl(url)
   cachedCoverSrc.value = remote
   coverFailed.value = false
+}
+
+function handleCoverError() {
+  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  // 若远程 URL 加载失败，先尝试一次 IndexedDB 离线库兜底自愈，避免离线时直接闪退
+  if (url && !cachedCoverSrc.value.startsWith('data:')) {
+    getCoverCache(props.book.bookUrl, url)
+      .then((local) => {
+        if (local) {
+          cachedCoverSrc.value = local
+          coverFailed.value = false
+        } else {
+          coverFailed.value = true
+        }
+      })
+      .catch(() => {
+        coverFailed.value = true
+      })
+    return
+  }
+  coverFailed.value = true
 }
 
 function handleCoverUpdated(e: Event) {

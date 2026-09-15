@@ -289,11 +289,163 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
   }, STORE_NAME)
 }
 
+const COVER_SNAPSHOTS_KEY = 'reader_cover_snapshots'
+const MAX_SNAPSHOTS_COUNT = 6
+const MAX_SINGLE_SNAPSHOT_CHARS = 60 * 1024 // 单张 Base64 长度 <= 60KB
+const MAX_TOTAL_SNAPSHOTS_CHARS = 250 * 1024 // 快照总长度 <= 250KB
+
+interface CoverSnapshotRecord {
+  key: string
+  dataUrl: string
+  coverUrl?: string
+  updatedAt: number
+}
+
 interface MemoryCoverEntry {
   dataUrl: string
   coverUrl?: string
 }
 const coverMemoryCache = new Map<string, MemoryCoverEntry>()
+
+/** 从 localStorage 同步预载首屏离线封面快照至内存池（0ms） */
+export function loadCoverSnapshots(): void {
+  try {
+    const raw = localStorage.getItem(COVER_SNAPSHOTS_KEY)
+    if (!raw) return
+    const list = JSON.parse(raw) as CoverSnapshotRecord[]
+    if (!Array.isArray(list)) return
+    for (const item of list) {
+      if (item.key && item.dataUrl && !coverMemoryCache.has(item.key)) {
+        coverMemoryCache.set(item.key, {
+          dataUrl: item.dataUrl,
+          coverUrl: item.coverUrl,
+        })
+      }
+    }
+  } catch (e) {
+    console.warn('loadCoverSnapshots 异常', e)
+  }
+}
+
+// 模块载入时立即同步尝试预载一次快照池
+try {
+  loadCoverSnapshots()
+} catch {
+  // ignore
+}
+
+/** 同步从内存缓存中获取封面 Base64（0ms 零等待） */
+export function getCoverMemoryCache(key: string, expectedCoverUrl?: string): string | null {
+  if (!key) return null
+  const mem = coverMemoryCache.get(key)
+  if (!mem) return null
+  if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+    return mem.dataUrl
+  }
+  // 版本不匹配，淘汰
+  coverMemoryCache.delete(key)
+  return null
+}
+
+/**
+ * 将书架前 6 本书的有效离线封面安全持久化到 localStorage 快照池中。
+ * 具备单张 60KB、总包 250KB 硬限制及 QuotaExceededError 异常隔离。
+ */
+export async function saveCoverSnapshots(
+  books: Array<{ bookUrl: string; customCoverUrl?: string; coverUrl?: string }>,
+): Promise<void> {
+  if (!Array.isArray(books) || books.length === 0) return
+  const targetBooks = books.slice(0, MAX_SNAPSHOTS_COUNT)
+  const snapshots: CoverSnapshotRecord[] = []
+  let totalChars = 0
+
+  for (const b of targetBooks) {
+    const key = b.bookUrl
+    if (!key) continue
+    const expected = b.customCoverUrl || b.coverUrl
+    // 优先取内存，内存没有尝试查一次 IndexedDB
+    let dataUrl: string | null = getCoverMemoryCache(key, expected)
+    if (!dataUrl) {
+      dataUrl = await getCoverCache(key, expected)
+    }
+    if (!dataUrl || !dataUrl.startsWith('data:')) continue
+    // 单张容量硬防线：超过 60KB 放弃加入 localStorage 快照
+    if (dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) continue
+    // 总容量硬防线：超过 250KB 停止追加后续书籍
+    if (totalChars + dataUrl.length > MAX_TOTAL_SNAPSHOTS_CHARS) break
+
+    totalChars += dataUrl.length
+    snapshots.push({
+      key,
+      dataUrl,
+      coverUrl: expected,
+      updatedAt: Date.now(),
+    })
+  }
+
+  try {
+    if (snapshots.length > 0) {
+      localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(snapshots))
+    }
+  } catch (err) {
+    // 异常安全自愈隔离：如果触发任何 Quota 异常，清空并移除快照，绝不破坏书架与设置
+    console.warn('saveCoverSnapshots 容量超限或写入失败，安全自愈清理', err)
+    try {
+      localStorage.removeItem(COVER_SNAPSHOTS_KEY)
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * 在单个 IndexedDB 只读事务中批量预热全量书籍的封面至内存。
+ * 将 30 个并发事务减少为 1 个快速事务（约 10~20ms）。
+ */
+export async function preloadCoversCache(
+  items: Array<{ key: string; expectedCoverUrl?: string }>,
+): Promise<void> {
+  if (!Array.isArray(items) || items.length === 0) return
+  // 过滤掉内存中已命中有效版本的条目，无待查项直接返回
+  const pendingItems = items.filter(({ key, expectedCoverUrl }) => {
+    if (!key) return false
+    if (coverMemoryCache.has(key)) {
+      const mem = coverMemoryCache.get(key)!
+      if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+        return false
+      }
+      coverMemoryCache.delete(key)
+    }
+    return true
+  })
+  if (pendingItems.length === 0) return
+
+  try {
+    await withStore(
+      'readonly',
+      async (store) => {
+        const promises = pendingItems.map(async ({ key, expectedCoverUrl }) => {
+          try {
+            const record = await requestToPromise<BrowserCoverCacheRecord | undefined>(store.get(key))
+            if (record?.dataUrl) {
+              if (expectedCoverUrl && record.coverUrl && record.coverUrl !== expectedCoverUrl) {
+                coverMemoryCache.delete(key)
+                return
+              }
+              coverMemoryCache.set(key, { dataUrl: record.dataUrl, coverUrl: record.coverUrl })
+            }
+          } catch {
+            // ignore
+          }
+        })
+        await Promise.all(promises)
+      },
+      COVER_CACHE_STORE,
+    )
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * 从 IndexedDB 或内存缓存中读取离线封面 Base64 Data URL。
