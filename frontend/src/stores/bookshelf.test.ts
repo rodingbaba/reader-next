@@ -18,6 +18,9 @@ vi.mock('../api/bookshelf', () => ({
 vi.mock('../utils/browserCache', () => ({
   deleteBrowserBookCache: vi.fn(),
   listBrowserCacheSummary: vi.fn(),
+  loadCoverSnapshots: vi.fn(),
+  preloadCoversCache: vi.fn().mockResolvedValue(undefined),
+  saveCoverSnapshots: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../utils/recentBooks', () => ({
