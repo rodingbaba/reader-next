@@ -308,7 +308,7 @@ interface MemoryCoverEntry {
 }
 const coverMemoryCache = new Map<string, MemoryCoverEntry>()
 
-/** 即时安全维护单个书籍的封面快照（写入内存并同步更新 localStorage 头部） */
+/** 即时安全维护单个书籍的封面快照（若已在快照池中则更新，未满员可安全追加） */
 export function updateCoverSnapshot(key: string, dataUrl: string, coverUrl?: string): void {
   if (!key || !dataUrl || !dataUrl.startsWith('data:') || dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) return
   try {
@@ -320,23 +320,27 @@ export function updateCoverSnapshot(key: string, dataUrl: string, coverUrl?: str
     const record: CoverSnapshotRecord = { key, dataUrl, coverUrl, updatedAt: Date.now() }
     if (existingIdx !== -1) {
       list[existingIdx] = record
+      appLog('封面', `快照池即时更新已存在条目: ${key}`)
+    } else if (list.length < MAX_SNAPSHOTS_COUNT) {
+      // 快照池尚未满员，安全追加至末尾，绝不 unshift 篡改破坏书架前列书籍的排位优先级
+      list.push(record)
+      appLog('封面', `快照池未满，安全追加新条目: ${key} (当前共 ${list.length}/${MAX_SNAPSHOTS_COUNT} 本)`)
     } else {
-      list.unshift(record)
-      if (list.length > MAX_SNAPSHOTS_COUNT) {
-        list = list.slice(0, MAX_SNAPSHOTS_COUNT)
-      }
+      // 快照池已满且该书不属于现有快照，由后续书架完整排序统筹调度，避免乱序挤掉首页书籍
+      return
     }
 
     // 检查总字符数是否超标，超标则从尾部淘汰较旧快照
     let totalChars = list.reduce((sum, item) => sum + (item.dataUrl?.length || 0), 0)
     while (totalChars > MAX_TOTAL_SNAPSHOTS_CHARS && list.length > 1) {
-      list.pop()
+      const removed = list.pop()
+      appLog('封面', `快照池容量超限，淘汰末位条目: ${removed?.key}`)
       totalChars = list.reduce((sum, item) => sum + (item.dataUrl?.length || 0), 0)
     }
 
     localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(list))
-  } catch {
-    // ignore
+  } catch (err) {
+    appLog('封面', `updateCoverSnapshot 异常: ${(err as Error).message}`, { key })
   }
 }
 
@@ -373,19 +377,25 @@ export function isCoverVersionMatch(cachedVersion?: string, expectedVersion?: st
 export function loadCoverSnapshots(): void {
   try {
     const raw = localStorage.getItem(COVER_SNAPSHOTS_KEY)
-    if (!raw) return
+    if (!raw) {
+      appLog('封面', '首屏快照池未发现本地记录 (首次启动或已清理)')
+      return
+    }
     const list = JSON.parse(raw) as CoverSnapshotRecord[]
     if (!Array.isArray(list)) return
+    let count = 0
     for (const item of list) {
       if (item.key && item.dataUrl && !coverMemoryCache.has(item.key)) {
         coverMemoryCache.set(item.key, {
           dataUrl: item.dataUrl,
           coverUrl: item.coverUrl,
         })
+        count++
       }
     }
+    appLog('封面', `首屏快照池预载入内存完成: 成功装载 ${count}/${list.length} 本封面, 总字符数 ${raw.length}`)
   } catch (e) {
-    console.warn('loadCoverSnapshots 异常', e)
+    appLog('封面', `loadCoverSnapshots 异常: ${(e as Error).message}`)
   }
 }
 
@@ -410,15 +420,16 @@ export function getCoverMemoryCache(key: string, expectedCoverUrl?: string): str
 }
 
 /**
- * 将书架前 6 本书的有效离线封面安全持久化到 localStorage 快照池中。
- * 具备单张 60KB、总包 250KB 硬限制及 QuotaExceededError 异常隔离。
+ * 将书架前 8 本书的有效离线封面安全持久化到 localStorage 快照池中。
+ * 具备单张 80KB、总包 360KB 硬限制及 QuotaExceededError 异常隔离。
  */
 export async function saveCoverSnapshots(
-  books: Array<{ bookUrl: string; customCoverUrl?: string; coverUrl?: string }>,
+  books: Array<{ bookUrl: string; name?: string; customCoverUrl?: string; coverUrl?: string }>,
 ): Promise<void> {
   if (!Array.isArray(books) || books.length === 0) {
     try {
       localStorage.removeItem(COVER_SNAPSHOTS_KEY)
+      appLog('封面', '书架为空，已清空首屏快照池')
     } catch {
       // ignore
     }
@@ -427,6 +438,7 @@ export async function saveCoverSnapshots(
   const targetBooks = books.slice(0, MAX_SNAPSHOTS_COUNT)
   const snapshots: CoverSnapshotRecord[] = []
   let totalChars = 0
+  const savedNames: string[] = []
 
   for (const b of targetBooks) {
     const key = b.bookUrl
@@ -439,9 +451,15 @@ export async function saveCoverSnapshots(
     }
     if (!dataUrl || !dataUrl.startsWith('data:')) continue
     // 单张容量硬防线：超过单张限制放弃加入快照
-    if (dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) continue
+    if (dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) {
+      appLog('封面', `快照单张超限放弃收录 (${(dataUrl.length / 1024).toFixed(1)}KB > ${MAX_SINGLE_SNAPSHOT_CHARS / 1024}KB): 《${b.name || key}》`)
+      continue
+    }
     // 总容量硬防线：超过总容量停止追加后续书籍
-    if (totalChars + dataUrl.length > MAX_TOTAL_SNAPSHOTS_CHARS) break
+    if (totalChars + dataUrl.length > MAX_TOTAL_SNAPSHOTS_CHARS) {
+      appLog('封面', `快照总包容量达到上限 (${(totalChars / 1024).toFixed(1)}KB)，停止收录后续书籍`)
+      break
+    }
 
     totalChars += dataUrl.length
     snapshots.push({
@@ -450,17 +468,20 @@ export async function saveCoverSnapshots(
       coverUrl: expected,
       updatedAt: Date.now(),
     })
+    savedNames.push(b.name || key)
   }
 
   try {
     if (snapshots.length > 0) {
       localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(snapshots))
+      appLog('封面', `已成功持久化首屏快照池: 收录 ${snapshots.length} 本书 [${savedNames.join(', ')}], 总大小: ${(totalChars / 1024).toFixed(1)}KB`)
     } else {
       localStorage.removeItem(COVER_SNAPSHOTS_KEY)
+      appLog('封面', '首屏前列书籍暂无有效 Base64 离线缓存，快照池暂空')
     }
   } catch (err) {
     // 异常安全自愈隔离：如果触发任何 Quota 异常，清空并移除快照，绝不破坏书架与设置
-    console.warn('saveCoverSnapshots 容量超限或写入失败，安全自愈清理', err)
+    appLog('封面', `saveCoverSnapshots 容量超限或写入失败，安全自愈清理: ${(err as Error).message}`)
     try {
       localStorage.removeItem(COVER_SNAPSHOTS_KEY)
     } catch {
@@ -492,6 +513,7 @@ export async function preloadCoversCache(
   if (pendingItems.length === 0) return
 
   try {
+    let hitCount = 0
     await withStore(
       'readonly',
       async (store) => {
@@ -504,6 +526,7 @@ export async function preloadCoversCache(
                 return
               }
               coverMemoryCache.set(key, { dataUrl: record.dataUrl, coverUrl: record.coverUrl })
+              hitCount++
             }
           } catch {
             // ignore
@@ -513,8 +536,11 @@ export async function preloadCoversCache(
       },
       COVER_CACHE_STORE,
     )
-  } catch {
-    // ignore
+    if (hitCount > 0) {
+      appLog('封面', `批量单事务预热完成: 查询 ${pendingItems.length} 本，从 IndexedDB 成功装载 ${hitCount} 本封面到内存`)
+    }
+  } catch (err) {
+    appLog('封面', `preloadCoversCache 异常: ${(err as Error).message}`)
   }
 }
 
@@ -574,7 +600,7 @@ export async function saveCoverCache(key: string, dataUrl: string, coverUrl?: st
       COVER_CACHE_STORE,
     )
   } catch (err) {
-    console.warn('saveCoverCache 失败', err)
+    appLog('封面', `saveCoverCache 写入 IndexedDB 失败: ${(err as Error).message}`, { key })
   }
 }
 
@@ -582,6 +608,7 @@ export async function saveCoverCache(key: string, dataUrl: string, coverUrl?: st
 export async function removeCoverCache(key: string): Promise<void> {
   if (!key) return
   coverMemoryCache.delete(key)
+  appLog('封面', `清理离线封面缓存: ${key}`)
   try {
     const raw = localStorage.getItem(COVER_SNAPSHOTS_KEY)
     if (raw) {
@@ -615,21 +642,28 @@ export async function removeCoverCache(key: string): Promise<void> {
  */
 export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: string): Promise<string | null> {
   if (!key || !url || url.startsWith('data:')) return null
+  const startTime = Date.now()
   try {
     const res = await fetch(url)
-    if (!res.ok) return null
+    if (!res.ok) {
+      appLog('封面', `下载封面网络响应异常: HTTP ${res.status}`, { key, url })
+      return null
+    }
     const blob = await res.blob()
+    const originalSizeKB = (blob.size / 1024).toFixed(1)
 
     // 若原图大于 40KB，在客户端进行等比轻量化压缩至标准规格（~25KB），确保 Base64 稳稳进入快照池
     if (blob.size > 40 * 1024) {
       try {
         const comp = await compressImageToThumbnail(blob)
         if (comp?.dataUrl) {
+          const compSizeKB = ((comp.dataUrl.length * 0.75) / 1024).toFixed(1)
           await saveCoverCache(key, comp.dataUrl, coverUrl || url)
+          appLog('封面', `封面压缩并落盘成功 (${originalSizeKB}KB -> ${compSizeKB}KB, 耗时 ${Date.now() - startTime}ms)`, { key })
           return comp.dataUrl
         }
-      } catch {
-        // 压缩失败则降级走原生 FileReader
+      } catch (cErr) {
+        appLog('封面', `封面轻量压缩失败，降级原生转码: ${(cErr as Error).message}`, { key })
       }
     }
 
@@ -639,15 +673,20 @@ export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: str
         const dataUrl = reader.result as string
         if (dataUrl) {
           await saveCoverCache(key, dataUrl, coverUrl || url)
+          appLog('封面', `封面原生转码落盘成功 (${originalSizeKB}KB, 耗时 ${Date.now() - startTime}ms)`, { key })
           resolve(dataUrl)
         } else {
           resolve('')
         }
       }
-      reader.onerror = () => resolve('')
+      reader.onerror = () => {
+        appLog('封面', 'FileReader 封面转码错误', { key })
+        resolve('')
+      }
       reader.readAsDataURL(blob)
     })
-  } catch {
+  } catch (err) {
+    appLog('封面', `cacheCoverFromUrl 异常: ${(err as Error).message}`, { key, url })
     return null
   }
 }

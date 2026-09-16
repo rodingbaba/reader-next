@@ -93,4 +93,27 @@ describe('BookCard selection and click handling', () => {
     // 验证 src 保持原样稳定，没有发生二次强制突变换源，杜绝白屏闪烁
     expect(img.attributes('src')).toBe(initialSrc)
   })
+
+  it('maintains absolute stability after mount without asynchronous cover mutation', async () => {
+    const bookWithCover: Book = {
+      ...dummyBook,
+      coverUrl: 'https://example.com/cover-mount.jpg',
+    }
+
+    const wrapper = mount(BookCard, {
+      props: {
+        book: bookWithCover,
+      },
+    })
+
+    const img = wrapper.find('img.cover-img')
+    expect(img.exists()).toBe(true)
+    const initialSrc = img.attributes('src')
+
+    // 等待异步微任务与宏任务
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // 验证无论后台状态如何，当前展示完全保持绝对静止
+    expect(img.attributes('src')).toBe(initialSrc)
+  })
 })

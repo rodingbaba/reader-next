@@ -105,6 +105,7 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
 import { isLocalTxtBook } from '../utils/localBook'
 import { getCoverCache, cacheCoverFromUrl, getCoverMemoryCache } from '../utils/browserCache'
+import { appLog } from '../utils/appLogger'
 import type { Book, SearchBook } from '../types'
 import { useAppStore } from '../stores/app'
 const appStore = useAppStore()
@@ -154,11 +155,16 @@ function getTargetCoverVersion(): string {
 function getInitialCoverSrc(): string {
   const url = getTargetCoverVersion()
   if (!url) return ''
-  // 1. 若内存缓存（由前 6 本书快照池或单事务预热载入）命中，0ms 同步直出 Base64
+  // 1. 若内存缓存（由前 8 本书快照池或单事务预热载入）命中，0ms 同步直出 Base64
   const mem = getCoverMemoryCache(props.book.bookUrl, url)
-  if (mem) return mem
+  if (mem) {
+    appLog('封面', `《${props.book.name}》首帧命中内存快照 (Base64 0ms 秒显)`, { bookUrl: props.book.bookUrl })
+    return mem
+  }
   // 2. 否则首帧同步给出远程代理 URL，使 <img> 立即挂载并利用原生图片缓存秒显
-  return getCoverUrl(url)
+  const serverUrl = getCoverUrl(url)
+  appLog('封面', `《${props.book.name}》首帧未命中快照，使用远程/代理 URL 挂载`, { bookUrl: props.book.bookUrl, serverUrl })
+  return serverUrl
 }
 
 const coverFailed = ref(false)
@@ -211,13 +217,16 @@ async function resolveCover(force = false) {
 
 function handleCoverError() {
   const url = getTargetCoverVersion()
+  appLog('封面', `《${props.book.name}》图片加载失败，尝试从 IndexedDB 兜底`, { bookUrl: props.book.bookUrl })
   if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
     getCoverCache(props.book.bookUrl, url).then((local) => {
       if (local) {
+        appLog('封面', `《${props.book.name}》IndexedDB 兜底成功，恢复离线封面`, { bookUrl: props.book.bookUrl })
         cachedCoverSrc.value = local
         coverFailed.value = false
         activeCoverVersion = url
       } else {
+        appLog('封面', `《${props.book.name}》IndexedDB 亦无离线数据，显示占位符`, { bookUrl: props.book.bookUrl })
         coverFailed.value = true
       }
     })
@@ -236,19 +245,8 @@ function handleCoverUpdated(e: Event) {
 
 onMounted(() => {
   window.addEventListener('reader-cover-updated', handleCoverUpdated)
-  // 若首帧未命中内存快照，异步检查本地 IndexedDB：若本地已有缓存且当前图片尚未完成网络渲染，可平滑补齐
-  if (!cachedCoverSrc.value.startsWith('data:')) {
-    const url = getTargetCoverVersion()
-    if (url) {
-      void getCoverCache(props.book.bookUrl, url).then((local) => {
-        if (local && !cachedCoverSrc.value.startsWith('data:')) {
-          cachedCoverSrc.value = local
-          activeCoverVersion = url
-          coverFailed.value = false
-        }
-      })
-    }
-  }
+  // 【绝对静止防闪原则】：挂载后严禁异步读取 IndexedDB 强行将正在显示的 HTTP URL 换成 Base64！
+  // 首帧定乾坤，避免任何挂载后换源引发的 WebKit 图像二次重新解码重绘闪烁。
 })
 
 onUnmounted(() => {
@@ -271,10 +269,12 @@ watch(
 
 function onCoverLoad() {
   coverFailed.value = false
+  const isData = cachedCoverSrc.value.startsWith('data:')
+  appLog('封面', `《${props.book.name}》图片渲染完成 (${isData ? '内存 Base64 快照' : 'HTTP/缓存 URL'})`)
   // 核心视觉防闪：图片既然已经通过 URL 成功在屏幕上渲染，后台静默写入本地缓存与快照池即可，
   // 严禁将当前已渲染的 cachedCoverSrc.value 替换为 dataUrl，彻底消除二次重绘闪烁！
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
-  if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
+  if (url && cachedCoverSrc.value && !isData) {
     void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url)
   }
 }
