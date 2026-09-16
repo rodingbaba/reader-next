@@ -552,6 +552,18 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   const currentChapter = computed(() => chapters.value[currentIndex.value] || null)
+  const currentChapterDisplayTitle = computed(() => {
+    const ch = currentChapter.value
+    if (!ch) return ''
+    if (ch.volume) {
+      const vol = ch.volume.trim()
+      const title = ch.title.trim()
+      if (vol && title && !title.includes(vol) && !vol.includes(title)) {
+        return `${vol} · ${title}`
+      }
+    }
+    return ch.title
+  })
   const hasNext = computed(() => currentIndex.value < chapters.value.length - 1)
   const hasPrev = computed(() => currentIndex.value > 0)
 
@@ -1002,7 +1014,7 @@ export const useReaderStore = defineStore('reader', () => {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
         artist: book.value?.name || 'Antigravity Reader',
-        album: chapters.value[currentIndex.value]?.title || '阅读',
+        album: currentChapterDisplayTitle.value || '阅读',
         artwork: book.value?.coverUrl ? [{ src: book.value.coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
       })
       navigator.mediaSession.setActionHandler('play', () => { pauseTTS() })
@@ -2312,7 +2324,20 @@ export const useReaderStore = defineStore('reader', () => {
       void setBrowserCachedChapterList(book.value.bookUrl, refreshed, refreshed.length)
         .then(() => cleanupOrphanChapters(book.value!.bookUrl, new Set(refreshed.map((c) => c.url).filter(Boolean))))
         .catch(() => undefined)
-      const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
+      // 智能匹配目标章节：优先按原章节 URL / 标题对齐，避免下标偏移导致跳章
+      const oldChapter = currentChapter.value
+      let targetIndex = -1
+      if (oldChapter) {
+        if (oldChapter.url) {
+          targetIndex = refreshed.findIndex((c) => c.url === oldChapter.url)
+        }
+        if (targetIndex < 0 && oldChapter.title) {
+          targetIndex = refreshed.findIndex((c) => c.title === oldChapter.title)
+        }
+      }
+      if (targetIndex < 0) {
+        targetIndex = Math.max(0, Math.min(refreshed.length - 1, currentIndex.value))
+      }
       if (chapters.value[targetIndex]) {
         await loadChapter(targetIndex, true)
       }
@@ -2551,7 +2576,7 @@ export const useReaderStore = defineStore('reader', () => {
 
   return {
     book, chapters, currentIndex, content, loading, chaptersLoading,
-    currentChapter, hasNext, hasPrev, readingProgress,
+    currentChapter, currentChapterDisplayTitle, hasNext, hasPrev, readingProgress,
     loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
     chapterScrollProgress, setChapterScrollProgress,
     getPersistedReaderSession, restorePersistedSession,

@@ -62,6 +62,8 @@ export interface BookChapter {
   title: string
   url: string
   index: number
+  isVolume?: boolean
+  volume?: string
 }
 
 // ─── 书源 ───

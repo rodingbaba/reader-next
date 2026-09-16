@@ -453,12 +453,13 @@ class APIService: ObservableObject {
     }
     
     // MARK: - 获取章节内容
-    func fetchChapterContent(bookUrl: String, bookSourceUrl: String?, index: Int, bookName: String? = nil) async throws -> String {
+    func fetchChapterContent(bookUrl: String, bookSourceUrl: String?, index: Int, chapterUrl: String? = nil, bookName: String? = nil) async throws -> String {
         let useSanitization = UserPreferences.shared.useReplaceRuleSanitization
         let cacheKey = buildChapterCacheKey(
             bookUrl: bookUrl,
             bookSourceUrl: bookSourceUrl,
             index: index,
+            chapterUrl: chapterUrl,
             useReplaceRuleSanitization: useSanitization
         )
         
@@ -476,9 +477,10 @@ class APIService: ObservableObject {
                     return cachedContent
                 }
                 
+                let effectiveUrl = (chapterUrl != nil && !chapterUrl!.isEmpty) ? chapterUrl! : bookUrl
                 var queryItems = [
                     URLQueryItem(name: "accessToken", value: self.accessToken),
-                    URLQueryItem(name: "url", value: bookUrl),
+                    URLQueryItem(name: "url", value: effectiveUrl),
                     URLQueryItem(name: "index", value: "\(index)"),
                     URLQueryItem(name: "type", value: "0")
                 ]
@@ -775,8 +777,9 @@ class APIService: ObservableObject {
         clearLocalCache()
     }
     
-    private func buildChapterCacheKey(bookUrl: String, bookSourceUrl: String?, index: Int, useReplaceRuleSanitization: Bool) -> String {
-        "\(bookUrl)|\(bookSourceUrl ?? "default")|\(index)|san:\(useReplaceRuleSanitization ? 1 : 0)"
+    private func buildChapterCacheKey(bookUrl: String, bookSourceUrl: String?, index: Int, chapterUrl: String? = nil, useReplaceRuleSanitization: Bool) -> String {
+        let chKey = (chapterUrl != nil && !chapterUrl!.isEmpty) ? chapterUrl! : "\(index)"
+        return "\(bookUrl)|\(bookSourceUrl ?? "default")|\(chKey)|san:\(useReplaceRuleSanitization ? 1 : 0)"
     }
     
     private func taskForChapterContent(cacheKey: String, create: () -> Task<String, Error>) -> (Task<String, Error>, Bool) {

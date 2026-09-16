@@ -2234,6 +2234,7 @@ fn build_chapter_from_json(
         is_vip,
         is_pay,
         is_volume,
+        volume: None,
     })
 }
 

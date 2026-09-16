@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="reader-catalog" :style="{ background: theme.popup, color: theme.fontColor }">
     <div class="catalog-header">
       <div class="tabs">
@@ -85,22 +85,54 @@
     <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
       <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
-      <div
-        v-else
-        v-for="chapter in filteredChapters"
-        :key="chapter.index"
-        class="list-item"
-        :class="{ active: chapter.index === store.currentIndex, read: store.isChapterRead(chapter.index) }"
-        @click="goToChapter(chapter.index)"
-      >
-        <span class="item-index">{{ chapter.index + 1 }}</span>
-        <span class="item-title">{{ chapter.title }}</span>
-        <div class="item-status">
-          <span v-if="chapter.index === store.currentIndex" class="status-badge current">当前</span>
-          <span v-else-if="store.isChapterRead(chapter.index)" class="status-badge read">已读</span>
-          <span v-if="isChapterCached(chapter.url)" class="status-badge cached">已缓存</span>
+
+      <!-- 分卷折叠模式 (有分卷且非搜索状态) -->
+      <template v-else-if="hasVolumes && !chapterSearch.trim()">
+        <div v-for="group in groupedVolumes" :key="group.volumeTitle" class="volume-group">
+          <div class="volume-header" @click="toggleVolume(group.volumeTitle)">
+            <span class="volume-arrow" :class="{ open: !isVolumeCollapsed(group.volumeTitle) }">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6" /></svg>
+            </span>
+            <span class="volume-title">{{ group.volumeTitle }}</span>
+            <span class="volume-count">{{ group.chapters.length }}章</span>
+          </div>
+          <div v-show="!isVolumeCollapsed(group.volumeTitle)" class="volume-chapters">
+            <div
+              v-for="chapter in group.chapters"
+              :key="chapter.index"
+              class="list-item indented"
+              :class="{ active: chapter.index === store.currentIndex, read: store.isChapterRead(chapter.index) }"
+              @click="goToChapter(chapter.index)"
+            >
+              <span class="item-title">{{ chapter.title }}</span>
+              <div class="item-status">
+                <span v-if="chapter.index === store.currentIndex" class="status-badge current">当前</span>
+                <span v-else-if="store.isChapterRead(chapter.index)" class="status-badge read">已读</span>
+                <span v-if="isChapterCached(chapter.url)" class="status-badge cached">已缓存</span>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      </template>
+
+      <!-- 普通平铺列表 (无分卷或搜索时) -->
+      <template v-else>
+        <div
+          v-for="chapter in filteredChapters"
+          :key="chapter.index"
+          class="list-item"
+          :class="{ active: chapter.index === store.currentIndex, read: store.isChapterRead(chapter.index) }"
+          @click="goToChapter(chapter.index)"
+        >
+          <span class="item-index">{{ chapter.index + 1 }}</span>
+          <span class="item-title">{{ chapter.volume ? `${chapter.volume} · ${chapter.title}` : chapter.title }}</span>
+          <div class="item-status">
+            <span v-if="chapter.index === store.currentIndex" class="status-badge current">当前</span>
+            <span v-else-if="store.isChapterRead(chapter.index)" class="status-badge read">已读</span>
+            <span v-if="isChapterCached(chapter.url)" class="status-badge cached">已缓存</span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- Bookmarks List -->
@@ -170,11 +202,66 @@ const filteredChapters = computed(() => {
   const searchTerm = chapterSearch.value.toLowerCase().trim()
   return store.chapters
     .map((chapter, index) => ({ ...chapter, index }))
-    .filter(chapter => chapter.title.toLowerCase().includes(searchTerm))
+    .filter(chapter => {
+      const titleMatch = chapter.title.toLowerCase().includes(searchTerm)
+      const volumeMatch = chapter.volume ? chapter.volume.toLowerCase().includes(searchTerm) : false
+      return titleMatch || volumeMatch
+    })
 })
+
+const hasVolumes = computed(() => {
+  return store.chapters.some(c => !!c.volume)
+})
+
+interface VolumeGroup {
+  volumeTitle: string
+  chapters: Array<any>
+}
+
+const collapsedVolumes = ref<Set<string>>(new Set())
+
+const groupedVolumes = computed<VolumeGroup[]>(() => {
+  if (!hasVolumes.value) return []
+  const groups: VolumeGroup[] = []
+  let currentGroup: VolumeGroup | null = null
+
+  store.chapters.forEach((chapter, index) => {
+    const volName = chapter.volume || '正文'
+    if (!currentGroup || currentGroup.volumeTitle !== volName) {
+      currentGroup = {
+        volumeTitle: volName,
+        chapters: [],
+      }
+      groups.push(currentGroup)
+    }
+    currentGroup.chapters.push({ ...chapter, index })
+  })
+
+  return groups
+})
+
+function isVolumeCollapsed(volumeTitle: string) {
+  return collapsedVolumes.value.has(volumeTitle)
+}
+
+function toggleVolume(volumeTitle: string) {
+  if (collapsedVolumes.value.has(volumeTitle)) {
+    collapsedVolumes.value.delete(volumeTitle)
+  } else {
+    collapsedVolumes.value.add(volumeTitle)
+  }
+}
+
+function ensureCurrentVolumeExpanded() {
+  const curChapter = store.chapters[store.currentIndex]
+  if (curChapter?.volume) {
+    collapsedVolumes.value.delete(curChapter.volume)
+  }
+}
 
 onMounted(() => {
   activeTab.value = props.initialTab
+  ensureCurrentVolumeExpanded()
   scrollToCurrent()
   store.fetchBookmarks()
   void refreshCachedChapterState()
@@ -188,18 +275,26 @@ watch(() => props.initialTab, (tab) => {
   }
   if (tab === 'chapters') {
     void refreshCachedChapterState()
+    scrollToCurrent()
   }
+})
+
+watch(() => store.currentIndex, () => {
+  ensureCurrentVolumeExpanded()
 })
 
 watch(() => store.book?.bookUrl, () => {
   void refreshCachedChapterState()
+  ensureCurrentVolumeExpanded()
 })
 
 watch(() => store.chapters, () => {
   void refreshCachedChapterState()
+  ensureCurrentVolumeExpanded()
 }, { deep: true })
 
 function scrollToCurrent() {
+  ensureCurrentVolumeExpanded()
   nextTick(() => {
     const activeEl = listRef.value?.querySelector('.list-item.active')
     if (activeEl) {
@@ -502,6 +597,62 @@ function formatDate(ts?: number) {
   text-align: center;
   opacity: 0.5;
   font-size: 14px;
+}
+
+/* Volume Groups (爱阅记同款折叠分卷样式) */
+.volume-group {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.volume-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 20px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.02);
+  transition: background 0.15s ease;
+}
+
+.volume-header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.volume-arrow {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  opacity: 0.5;
+  transition: transform 0.2s ease;
+}
+
+.volume-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+
+.volume-arrow.open {
+  transform: rotate(90deg);
+}
+
+.volume-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  letter-spacing: 0.5px;
+}
+
+.volume-count {
+  font-size: 11px;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-item.indented {
+  padding-left: 42px;
 }
 
 .list-item {

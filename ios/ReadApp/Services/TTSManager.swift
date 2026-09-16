@@ -1297,7 +1297,9 @@ class TTSManager: NSObject, ObservableObject {
         let preloadToken = UUID()
         nextChapterPreloadToken = preloadToken
         
-        logger.log("开始预载下一章: \(nextChapterIndex)", category: "TTS")
+        let nextChapterUrl: String? = (nextChapterIndex >= 0 && nextChapterIndex < chapters.count) ? chapters[nextChapterIndex].url : nil
+
+        logger.log("开始预载下一章: \(nextChapterIndex), url: \(nextChapterUrl ?? "nil")", category: "TTS")
         
         Task {
             do {
@@ -1305,6 +1307,7 @@ class TTSManager: NSObject, ObservableObject {
                     bookUrl: bookUrl,
                     bookSourceUrl: bookSourceUrl,
                     index: nextChapterIndex,
+                    chapterUrl: nextChapterUrl,
                     bookName: bookTitle
                 )
                 
@@ -1530,6 +1533,8 @@ class TTSManager: NSObject, ObservableObject {
         audioPlayer = nil
         playingIndex = nil
         
+        let currentChapterUrl: String? = (currentChapterIndex >= 0 && currentChapterIndex < chapters.count) ? chapters[currentChapterIndex].url : nil
+
         Task {
             do {
                 let startTime = Date()
@@ -1537,6 +1542,7 @@ class TTSManager: NSObject, ObservableObject {
                     bookUrl: bookUrl,
                     bookSourceUrl: bookSourceUrl,
                     index: currentChapterIndex,
+                    chapterUrl: currentChapterUrl,
                     bookName: bookTitle
                 )
                 let loadTime = Date().timeIntervalSince(startTime)

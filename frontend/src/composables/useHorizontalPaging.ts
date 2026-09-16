@@ -101,12 +101,14 @@ export function useHorizontalPaging(
     wrapper.innerHTML = paragraphHtml
     const paragraph = wrapper.querySelector('p')
     if (!paragraph) return null
+    const hasMedia = !!paragraph.querySelector('img, image, svg, picture, video')
     return {
       style: paragraph.getAttribute('style') || '',
       className: paragraph.getAttribute('class') || '',
       originalIndex: paragraph.getAttribute('data-original-index') || '',
       sliceIndex: parseInt(paragraph.getAttribute('data-slice-index') || '0', 10),
       text: (paragraph.textContent || '').trimEnd(),
+      isMedia: hasMedia,
     }
   }
 
@@ -170,6 +172,10 @@ export function useHorizontalPaging(
     const mergedPages: string[] = []
     for (let idx = 0; idx < pendingPages.length; idx += 1) {
       const page = pendingPages[idx]
+      if (/<(?:img|image|svg|picture)\b/i.test(page)) {
+        mergedPages.push(page)
+        continue
+      }
       const text = extractTextFromHtml(page)
       if (isPunctuationOnlyText(text)) {
         const punctuation = text.trim()
@@ -292,7 +298,7 @@ export function useHorizontalPaging(
       options: { isContinuation: boolean; minRemainingLines?: number; sliceIndex?: number },
     ) => {
       const parsed = parseParagraphHtml(blockHtml)
-      if (!parsed || parsed.text.length <= 1) return null
+      if (!parsed || parsed.isMedia || parsed.text.length <= 1) return null
 
       const { style, text, className, originalIndex } = parsed
       const currentSliceIndex = options.sliceIndex ?? parsed.sliceIndex ?? 0
@@ -334,7 +340,7 @@ export function useHorizontalPaging(
 
     const appendOversizedParagraph = (blockHtml: string, isContinuation = false, currentSliceIndex = 0) => {
       const parsed = parseParagraphHtml(blockHtml)
-      if (!parsed || parsed.text.length <= 1) {
+      if (!parsed || parsed.isMedia || parsed.text.length <= 1) {
         pages.push(blockHtml)
         return
       }
@@ -364,6 +370,23 @@ export function useHorizontalPaging(
     }
 
     const appendBlock = (blockHtml: string) => {
+      const parsed = parseParagraphHtml(blockHtml)
+      if (parsed?.isMedia) {
+        if (currentParts.length) {
+          if (!overflows([...currentParts, blockHtml])) {
+            currentParts = [...currentParts, blockHtml]
+            return
+          }
+          flushPage()
+        }
+        if (!overflows([blockHtml])) {
+          currentParts = [blockHtml]
+          return
+        }
+        pages.push(blockHtml)
+        return
+      }
+
       const withBlock = [...currentParts, blockHtml]
       if (!overflows(withBlock)) {
         currentParts = withBlock

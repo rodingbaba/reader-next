@@ -33,6 +33,8 @@ struct StoredEpubChapter {
     index: i32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volume: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +162,7 @@ impl LocalEpubBookService {
                 url: epub_chapter_url(&book_url, i),
                 index: i as i32,
                 files: ch.files.clone(),
+                volume: ch.volume.clone(),
             })
             .collect();
 
@@ -245,6 +248,7 @@ impl LocalEpubBookService {
                 title: ch.title,
                 url: ch.url,
                 index: ch.index,
+                volume: ch.volume,
                 ..BookChapter::default()
             })
             .collect())
@@ -472,6 +476,7 @@ struct EpubChapter {
     title: String,
     content: String,
     files: Vec<String>,
+    volume: Option<String>,
 }
 
 struct ParsedEpubData {
@@ -944,6 +949,7 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                 title: title_str,
                 content,
                 files: vec![full_path],
+                volume: None,
             });
         }
     } else {
@@ -952,11 +958,12 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
             let full_path = format!("{}{}", opf_dir, href);
             let filename = href.split('#').next().unwrap_or(href).rsplit('/').next().unwrap_or(href);
 
-            if let Some(title) = toc_map.get(filename) {
+            if let Some(toc_item) = toc_map.get(filename) {
                 chapters.push(EpubChapter {
-                    title: title.clone(),
+                    title: toc_item.title.clone(),
                     content: String::new(),
                     files: vec![full_path],
+                    volume: toc_item.volume.clone(),
                 });
             } else if let Some(last) = chapters.last_mut() {
                 // 当前物理分片不在 TOC 中，但前面已有章节：自动归并为上一章节的后续承接分卷
@@ -974,6 +981,7 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                     title: title_str,
                     content: String::new(),
                     files: vec![full_path],
+                    volume: None,
                 });
             }
         }
@@ -1136,31 +1144,138 @@ fn strip_html_tags(html: &str) -> String {
     RE_TAGS.replace_all(&s, "").trim().to_string()
 }
 
-fn extract_toc_map(nav: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    
-    static RE_NCX: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<navLabel>\s*<text>(.*?)</text>\s*</navLabel>.*?<content\s+src=['"]([^'"]+)['"]"#).unwrap());
-    for caps in RE_NCX.captures_iter(nav) {
-        let title = strip_html_tags(caps.get(1).map_or("", |m| m.as_str()));
-        let src = caps.get(2).map_or("", |m| m.as_str());
-        let href = src.split('#').next().unwrap_or(src);
-        let filename = href.rsplit('/').next().unwrap_or(href).to_string();
-        if !map.contains_key(&filename) {
-            map.insert(filename, title);
+#[derive(Debug, Clone)]
+struct TocItem {
+    pub title: String,
+    pub volume: Option<String>,
+}
+
+fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
+    let mut map: HashMap<String, TocItem> = HashMap::new();
+
+    // 1. 尝试使用 quick-xml 递归层次解析 NCX
+    let mut reader = Reader::from_str(nav);
+    reader.trim_text(true);
+
+    struct NavStackItem {
+        title: String,
+        src: Option<String>,
+        has_children: bool,
+    }
+
+    let mut stack: Vec<NavStackItem> = Vec::new();
+    let mut current_text = String::new();
+    let mut in_text = false;
+
+    let mut buf = Vec::new();
+
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        match event {
+            Event::Start(e) => {
+                let name = local_name(e.name());
+                if name.eq_ignore_ascii_case("navPoint") {
+                    if let Some(parent) = stack.last_mut() {
+                        parent.has_children = true;
+                    }
+                    stack.push(NavStackItem {
+                        title: String::new(),
+                        src: None,
+                        has_children: false,
+                    });
+                } else if name.eq_ignore_ascii_case("text") {
+                    in_text = true;
+                    current_text.clear();
+                }
+            }
+            Event::Empty(e) => {
+                let name = local_name(e.name());
+                if name.eq_ignore_ascii_case("content") {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref().eq_ignore_ascii_case(b"src") {
+                            if let Ok(src) = std::str::from_utf8(&attr.value) {
+                                if let Some(item) = stack.last_mut() {
+                                    item.src = Some(src.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Event::Text(e) => {
+                if in_text {
+                    if let Ok(s) = e.unescape() {
+                        current_text.push_str(&s);
+                    }
+                }
+            }
+            Event::End(e) => {
+                let name = local_name(e.name());
+                if name.eq_ignore_ascii_case("text") {
+                    in_text = false;
+                    let clean = strip_html_tags(&current_text);
+                    if let Some(item) = stack.last_mut() {
+                        if item.title.is_empty() {
+                            item.title = clean;
+                        }
+                    }
+                } else if name.eq_ignore_ascii_case("navPoint") {
+                    if let Some(item) = stack.pop() {
+                        if let Some(src) = item.src {
+                            let href = src.split('#').next().unwrap_or(&src);
+                            let filename = href.rsplit('/').next().unwrap_or(href).to_string();
+                            let outer_volume = stack.iter().rev().find(|p| p.has_children && !p.title.is_empty()).map(|p| p.title.clone());
+                            let volume = if item.has_children {
+                                outer_volume.or_else(|| Some(item.title.clone()))
+                            } else {
+                                outer_volume
+                            };
+                            if !map.contains_key(&filename) && !item.title.is_empty() {
+                                map.insert(filename, TocItem {
+                                    title: item.title,
+                                    volume,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // 2. 兜底回退：若 quick-xml 未能解析到树结构，使用正则回退
+    if map.is_empty() {
+        static RE_NCX: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<navLabel>\s*<text>(.*?)</text>\s*</navLabel>.*?<content\s+src=['"]([^'"]+)['"]"#).unwrap());
+        for caps in RE_NCX.captures_iter(nav) {
+            let title = strip_html_tags(caps.get(1).map_or("", |m| m.as_str()));
+            let src = caps.get(2).map_or("", |m| m.as_str());
+            let href = src.split('#').next().unwrap_or(src);
+            let filename = href.rsplit('/').next().unwrap_or(href).to_string();
+            if !map.contains_key(&filename) && !title.is_empty() {
+                map.insert(filename, TocItem {
+                    title,
+                    volume: None,
+                });
+            }
+        }
+
+        static RE_NAV: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<a[^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#).unwrap());
+        for caps in RE_NAV.captures_iter(nav) {
+            let src = caps.get(1).map_or("", |m| m.as_str());
+            let title = strip_html_tags(caps.get(2).map_or("", |m| m.as_str()));
+            let href = src.split('#').next().unwrap_or(src);
+            let filename = href.rsplit('/').next().unwrap_or(href).to_string();
+            if !map.contains_key(&filename) && !title.is_empty() {
+                map.insert(filename, TocItem {
+                    title,
+                    volume: None,
+                });
+            }
         }
     }
 
-    static RE_NAV: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| Regex::new(r#"(?si)<a[^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#).unwrap());
-    for caps in RE_NAV.captures_iter(nav) {
-        let src = caps.get(1).map_or("", |m| m.as_str());
-        let title = strip_html_tags(caps.get(2).map_or("", |m| m.as_str()));
-        let href = src.split('#').next().unwrap_or(src);
-        let filename = href.rsplit('/').next().unwrap_or(href).to_string();
-        if !map.contains_key(&filename) && !title.is_empty() {
-            map.insert(filename, title);
-        }
-    }
-    
     map
 }
 
@@ -1331,5 +1446,50 @@ mod tests {
         for ch in &parsed.chapters {
             assert!(!ch.files.is_empty());
         }
+    }
+
+    #[test]
+    fn test_jiangshan_volume_extraction() {
+        let path = std::path::Path::new("storage/data/admin/local_books/e418a9fd3cb3877b2a3eda5a3bdec055/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let parsed = parse_epub(&bytes, None, false).expect("parse jiangshan");
+        assert_eq!(parsed.title, "江山如此多娇");
+
+        let ch13_4 = parsed.chapters.iter().find(|c| c.files.iter().any(|f| f.ends_with("chapter_13_0004.xhtml"))).expect("find chapter 13-4");
+        assert_eq!(ch13_4.title, "第四章");
+        assert_eq!(ch13_4.volume.as_deref(), Some("第十三集"));
+
+        let ch14_5 = parsed.chapters.iter().find(|c| c.files.iter().any(|f| f.ends_with("chapter_14_0005.xhtml"))).expect("find chapter 14-5");
+        assert_eq!(ch14_5.title, "第五章");
+        assert_eq!(ch14_5.volume.as_deref(), Some("第十四集"));
+
+        // 验证第十三集的插图页 chapter_13.xhtml 独立成章
+        let ch13_cover = parsed.chapters.iter().find(|c| c.files.iter().any(|f| f.ends_with("chapter_13.xhtml"))).expect("find chapter 13 cover");
+        assert_eq!(ch13_cover.title, "第十三集");
+        assert_eq!(ch13_cover.volume.as_deref(), Some("第十三集"));
+    }
+
+    #[test]
+    fn test_chongsheng_volume_cover_extraction() {
+        let path = std::path::Path::new("storage/data/admin/local_books/a3b176e830a03324fe61efce55b852ea/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let parsed = parse_epub(&bytes, None, false).expect("parse chongsheng");
+        assert_eq!(parsed.title, "重生之官路商途");
+
+        // 验证【第一篇】宦海惊情 (chapter1201.html) 独立成卷首章节
+        let (p1_idx, p1_ch) = parsed.chapters.iter().enumerate().find(|(_, c)| c.files.iter().any(|f| f.ends_with("chapter1201.html"))).expect("find chapter1201");
+        assert_eq!(p1_ch.title, "【第一篇】宦海惊情");
+        assert_eq!(p1_ch.volume.as_deref(), Some("【第一篇】宦海惊情"));
+
+        // 验证下一章即为第1章
+        let next_ch = &parsed.chapters[p1_idx + 1];
+        assert_eq!(next_ch.title, "第1章 前世今生");
+        assert_eq!(next_ch.volume.as_deref(), Some("【第一篇】宦海惊情"));
     }
 }

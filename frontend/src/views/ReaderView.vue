@@ -81,7 +81,7 @@
     <ReaderTtsPanel
       :show="showTTSPanel"
       :theme="chromeTheme"
-      :chapter-title="store.currentChapter?.title"
+      :chapter-title="store.currentChapterDisplayTitle || store.currentChapter?.title"
       :provider="store.speechConfig.provider"
       :provider-label="store.speechProviderLabel"
       :is-speaking="store.isSpeaking || store.isSpeechTransitioning"
@@ -178,7 +178,7 @@
         </div>
 
         <div v-else>
-          <div class="chapter-title">{{ store.currentChapter?.title || '加载中...' }}</div>
+          <div class="chapter-title">{{ store.currentChapterDisplayTitle || store.currentChapter?.title || '加载中...' }}</div>
 
           <button
             v-if="showCollapsedAiPanel"
@@ -1696,19 +1696,36 @@ function formatChapterHtml(rawText: string) {
       // 将转换后的 HTML 写回 text，确保无 <p> 标签时走纯文本路径也能使用转换后的 URL
       text = wrapper.innerHTML
     }
+    // 检查是否有未包裹在 <p> 标签中的顶级 <img> / <image>，自动包装以统一块级结构
+    wrapper.querySelectorAll('img, image').forEach((img) => {
+      if (!img.closest('p')) {
+        const p = document.createElement('p')
+        p.className = 'reader-image-paragraph'
+        img.parentNode?.insertBefore(p, img)
+        p.appendChild(img)
+      }
+    })
+
     const paragraphs = Array.from(wrapper.querySelectorAll('p')) as HTMLParagraphElement[]
     if (paragraphs.length) {
       let logicalIndex = 0
       paragraphs.forEach((paragraph) => {
+        const hasMedia = !!paragraph.querySelector('img, svg, picture, video')
         const plainText = (paragraph.textContent || '').replace(/^[\u3000\u00A0 \t]+/, '').trim()
-        if (!plainText) {
+        if (!plainText && !hasMedia) {
           paragraph.remove()
           return
         }
-        paragraph.innerHTML = paragraph.innerHTML.replace(/^[\u3000\u00A0 \t]+/, '')
+        if (!hasMedia) {
+          paragraph.innerHTML = paragraph.innerHTML.replace(/^[\u3000\u00A0 \t]+/, '')
+          paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
+          paragraph.classList.remove('reader-image-paragraph')
+        } else {
+          paragraph.classList.add('reader-image-paragraph')
+          paragraph.classList.remove('reader-indent')
+        }
         paragraph.style.marginTop = '0'
         paragraph.style.marginBottom = `${config.value.paragraphSpacing}em`
-        paragraph.classList.toggle('reader-indent', config.value.firstLineIndent)
         paragraph.setAttribute('data-original-index', String(logicalIndex++))
       })
       return wrapper.innerHTML
@@ -1719,9 +1736,13 @@ function formatChapterHtml(rawText: string) {
     .split(/\n/)
     .filter((line: string) => line.trim())
     .map((line: string, index: number) => {
-      const shouldIndent = config.value.firstLineIndent
-      const content = stripLeadingIndent(line.trimEnd())
-      return `<p data-original-index="${index}"${shouldIndent ? ' class="reader-indent"' : ''} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
+      const hasMedia = /<(?:img|image|svg|picture|video)\b/i.test(line)
+      const shouldIndent = !hasMedia && config.value.firstLineIndent
+      const classAttr = hasMedia
+        ? ' class="reader-image-paragraph"'
+        : (shouldIndent ? ' class="reader-indent"' : '')
+      const content = hasMedia ? line.trim() : stripLeadingIndent(line.trimEnd())
+      return `<p data-original-index="${index}"${classAttr} style="margin-top: 0; margin-bottom: ${config.value.paragraphSpacing}em;">${content}</p>`
     })
     .join('')
 }
@@ -4096,6 +4117,28 @@ watch(
   text-indent: 0;
   user-select: text;
   -webkit-user-select: text;
+}
+
+:deep(.chapter-text img),
+:deep(.horizontal-page-content img) {
+  max-width: 100%;
+  max-height: 100%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+:deep(.chapter-text p.reader-image-paragraph),
+:deep(.horizontal-page-content p.reader-image-paragraph) {
+  text-indent: 0 !important;
+  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
 }
 
 .chapter-footer {
