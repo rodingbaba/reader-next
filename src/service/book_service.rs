@@ -774,6 +774,25 @@ impl BookService {
         Ok(book)
     }
 
+    pub async fn reset_book_custom_cover(
+        &self,
+        user_ns: &str,
+        book_url: &str,
+    ) -> Result<Book, AppError> {
+        let mut list = self.read_bookshelf(user_ns).await?;
+        let mut updated_book = None;
+        for b in list.iter_mut() {
+            if b.book_url == book_url {
+                b.custom_cover_url = None;
+                updated_book = Some(b.clone());
+                break;
+            }
+        }
+        let book = updated_book.ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
+        self.write_bookshelf(user_ns, &list).await?;
+        Ok(book)
+    }
+
     pub async fn save_books(&self, user_ns: &str, books: Vec<Book>) -> Result<Vec<Book>, AppError> {
         let existing = self.read_bookshelf(user_ns).await?;
         let mut normalized: Vec<Book> = Vec::with_capacity(books.len());

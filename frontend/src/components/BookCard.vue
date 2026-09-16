@@ -141,8 +141,12 @@ function handleCoverClick() {
   }
 }
 
+function getTargetCoverVersion(): string {
+  return (props.book as Book).customCoverUrl || props.book.coverUrl || ''
+}
+
 function getInitialCoverSrc(): string {
-  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+  const url = getTargetCoverVersion()
   if (!url) return ''
   // 1. 若内存缓存（由前 6 本书快照池或单事务预热载入）命中，0ms 同步直出 Base64
   const mem = getCoverMemoryCache(props.book.bookUrl, url)
@@ -153,30 +157,50 @@ function getInitialCoverSrc(): string {
 
 const coverFailed = ref(false)
 const cachedCoverSrc = ref(getInitialCoverSrc())
+// 记录当前生效展示的封面版本指纹，锁死无意义重复渲染
+let activeCoverVersion = getTargetCoverVersion()
 
-async function resolveCover() {
-  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
+async function resolveCover(force = false) {
+  const url = getTargetCoverVersion()
   if (!url) {
-    cachedCoverSrc.value = ''
+    if (cachedCoverSrc.value !== '') cachedCoverSrc.value = ''
+    activeCoverVersion = ''
     return
   }
+
+  // 核心视觉防闪锁：如果当前已有合法封面展示，且版本指纹完全一致，绝对保持静止，禁止同源二次替换
+  if (!force && cachedCoverSrc.value && activeCoverVersion === url && !coverFailed.value) {
+    return
+  }
+
   // 1. 优先内存直取
   const mem = getCoverMemoryCache(props.book.bookUrl, url)
   if (mem) {
-    cachedCoverSrc.value = mem
+    if (cachedCoverSrc.value !== mem) {
+      cachedCoverSrc.value = mem
+    }
+    activeCoverVersion = url
     coverFailed.value = false
     return
   }
+
   // 2. 读取本地 IndexedDB 离线封面池，校验当前封面版本
   const localData = await getCoverCache(props.book.bookUrl, url)
   if (localData) {
-    cachedCoverSrc.value = localData
+    if (cachedCoverSrc.value !== localData) {
+      cachedCoverSrc.value = localData
+    }
+    activeCoverVersion = url
     coverFailed.value = false
     return
   }
+
   // 3. 本地尚未缓存或版本已过时时，使用远程代理 URL 渲染
   const remote = getCoverUrl(url)
-  cachedCoverSrc.value = remote
+  if (cachedCoverSrc.value !== remote) {
+    cachedCoverSrc.value = remote
+  }
+  activeCoverVersion = url
   coverFailed.value = false
 }
 
@@ -188,6 +212,7 @@ function handleCoverError() {
       .then((local) => {
         if (local) {
           cachedCoverSrc.value = local
+          activeCoverVersion = url
           coverFailed.value = false
         } else {
           coverFailed.value = true
@@ -206,15 +231,17 @@ function handleCoverUpdated(e: Event) {
   if (!detail || detail.bookUrl !== props.book.bookUrl) return
   if (detail.coverData) {
     cachedCoverSrc.value = detail.coverData
+    activeCoverVersion = detail.customCoverUrl || getTargetCoverVersion()
     coverFailed.value = false
   } else {
     cachedCoverSrc.value = ''
-    void resolveCover()
+    activeCoverVersion = ''
+    void resolveCover(true)
   }
 }
 
 onMounted(() => {
-  resolveCover()
+  void resolveCover()
   if (typeof window !== 'undefined') {
     window.addEventListener('reader-cover-updated', handleCoverUpdated)
   }
@@ -226,10 +253,15 @@ onUnmounted(() => {
   }
 })
 
+// 精准监听版本指纹变化，消除数组引用引起的每次父级浅更新误触发
 watch(
-  () => [(props.book as Book).customCoverUrl, props.book.coverUrl, props.book.bookUrl],
-  () => {
-    resolveCover()
+  () => [getTargetCoverVersion(), props.book.bookUrl] as const,
+  ([newVersion, newBookUrl], oldVal) => {
+    const oldVersion = oldVal ? oldVal[0] : undefined
+    const oldBookUrl = oldVal ? oldVal[1] : undefined
+    if (newBookUrl !== oldBookUrl || newVersion !== oldVersion) {
+      void resolveCover(true)
+    }
   },
 )
 

@@ -1,5 +1,6 @@
 import { invokeData, isNativeApp } from './nativeBridge'
 import { appLog } from './appLogger'
+import { compressImageToThumbnail } from './imageCompress'
 import type { BookChapter } from '../types'
 
 const DB_NAME = 'reader-browser-cache'
@@ -291,8 +292,8 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
 
 const COVER_SNAPSHOTS_KEY = 'reader_cover_snapshots'
 const MAX_SNAPSHOTS_COUNT = 6
-const MAX_SINGLE_SNAPSHOT_CHARS = 60 * 1024 // 单张 Base64 长度 <= 60KB
-const MAX_TOTAL_SNAPSHOTS_CHARS = 250 * 1024 // 快照总长度 <= 250KB
+const MAX_SINGLE_SNAPSHOT_CHARS = 90 * 1024 // 单张 Base64 长度 <= 90KB
+const MAX_TOTAL_SNAPSHOTS_CHARS = 360 * 1024 // 快照总长度 <= 360KB
 
 interface CoverSnapshotRecord {
   key: string
@@ -306,6 +307,35 @@ interface MemoryCoverEntry {
   coverUrl?: string
 }
 const coverMemoryCache = new Map<string, MemoryCoverEntry>()
+
+/**
+ * 校验缓存中的封面版本是否与当前期望的封面标识匹配（具备宽松容错性与旧版本兼容性）
+ */
+export function isCoverVersionMatch(cachedVersion?: string, expectedVersion?: string): boolean {
+  if (!expectedVersion || !cachedVersion) return true
+  if (cachedVersion === expectedVersion) return true
+
+  const trimC = cachedVersion.trim().replace(/\/+$/, '')
+  const trimE = expectedVersion.trim().replace(/\/+$/, '')
+  if (trimC === trimE) return true
+
+  try {
+    const decC = decodeURIComponent(trimC)
+    const decE = decodeURIComponent(trimE)
+    if (decC === decE) return true
+    // 兼容历史老版本写入的代理路径格式 /reader3/cover?path=...
+    if (decC.includes('cover?path=')) {
+      const match = decC.match(/cover\?path=([^&]+)/)
+      if (match && (match[1] === trimE || decodeURIComponent(match[1]) === decE)) {
+        return true
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return false
+}
 
 /** 从 localStorage 同步预载首屏离线封面快照至内存池（0ms） */
 export function loadCoverSnapshots(): void {
@@ -339,7 +369,7 @@ export function getCoverMemoryCache(key: string, expectedCoverUrl?: string): str
   if (!key) return null
   const mem = coverMemoryCache.get(key)
   if (!mem) return null
-  if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+  if (isCoverVersionMatch(mem.coverUrl, expectedCoverUrl)) {
     return mem.dataUrl
   }
   // 版本不匹配，淘汰
@@ -411,7 +441,7 @@ export async function preloadCoversCache(
     if (!key) return false
     if (coverMemoryCache.has(key)) {
       const mem = coverMemoryCache.get(key)!
-      if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+      if (isCoverVersionMatch(mem.coverUrl, expectedCoverUrl)) {
         return false
       }
       coverMemoryCache.delete(key)
@@ -428,7 +458,7 @@ export async function preloadCoversCache(
           try {
             const record = await requestToPromise<BrowserCoverCacheRecord | undefined>(store.get(key))
             if (record?.dataUrl) {
-              if (expectedCoverUrl && record.coverUrl && record.coverUrl !== expectedCoverUrl) {
+              if (!isCoverVersionMatch(record.coverUrl, expectedCoverUrl)) {
                 coverMemoryCache.delete(key)
                 return
               }
@@ -456,7 +486,7 @@ export async function getCoverCache(key: string, expectedCoverUrl?: string): Pro
   if (!key) return null
   if (coverMemoryCache.has(key)) {
     const mem = coverMemoryCache.get(key)!
-    if (!expectedCoverUrl || !mem.coverUrl || mem.coverUrl === expectedCoverUrl) {
+    if (isCoverVersionMatch(mem.coverUrl, expectedCoverUrl)) {
       return mem.dataUrl
     }
     // 内存版本不匹配，淘汰
@@ -470,7 +500,7 @@ export async function getCoverCache(key: string, expectedCoverUrl?: string): Pro
     )
     if (record?.dataUrl) {
       // 若提供了期望封面版本，且本地记录已过时，淘汰本地旧缓存
-      if (expectedCoverUrl && record.coverUrl && record.coverUrl !== expectedCoverUrl) {
+      if (!isCoverVersionMatch(record.coverUrl, expectedCoverUrl)) {
         coverMemoryCache.delete(key)
         void removeCoverCache(key)
         return null
@@ -505,10 +535,22 @@ export async function saveCoverCache(key: string, dataUrl: string, coverUrl?: st
   }
 }
 
-/** 清理指定书籍的离线封面 */
+/** 清理指定书籍的离线封面（内存、IndexedDB 与首屏快照池一并同步清理） */
 export async function removeCoverCache(key: string): Promise<void> {
   if (!key) return
   coverMemoryCache.delete(key)
+  try {
+    const raw = localStorage.getItem(COVER_SNAPSHOTS_KEY)
+    if (raw) {
+      const list = JSON.parse(raw) as CoverSnapshotRecord[]
+      if (Array.isArray(list)) {
+        const filtered = list.filter((item) => item.key !== key)
+        localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(filtered))
+      }
+    }
+  } catch {
+    // 忽略异常
+  }
   try {
     await withStore(
       'readwrite',
@@ -530,6 +572,20 @@ export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: str
     const res = await fetch(url)
     if (!res.ok) return null
     const blob = await res.blob()
+
+    // 若原图大于 80KB，在客户端进行等比轻量化压缩至标准规格（~30KB），避免超大 Base64 塞入 IndexedDB 或被快照拒绝
+    if (blob.size > 80 * 1024) {
+      try {
+        const comp = await compressImageToThumbnail(blob)
+        if (comp?.dataUrl) {
+          await saveCoverCache(key, comp.dataUrl, coverUrl || url)
+          return comp.dataUrl
+        }
+      } catch {
+        // 压缩失败则降级走原生 FileReader
+      }
+    }
+
     return await new Promise<string>((resolve) => {
       const reader = new FileReader()
       reader.onloadend = async () => {

@@ -111,7 +111,7 @@ describe('browserCache cover versioning', () => {
     expect(getCoverMemoryCache(k2, 'ver-2')).toBe(v2)
   })
 
-  it('saveCoverSnapshots respects max 6 count, 60KB single cap, and 250KB total cap', async () => {
+  it('saveCoverSnapshots respects max 6 count, 90KB single cap, and 360KB total cap', async () => {
     const { saveCoverSnapshots } = await import('./browserCache')
 
     // 构造 8 本书
@@ -123,9 +123,9 @@ describe('browserCache cover versioning', () => {
     // 为每本书存入离线缓存
     for (let i = 0; i < books.length; i++) {
       // book 0: 正常 (1KB)
-      // book 1: 超大 (70KB，超过 60KB 单张上限，应当被跳过)
+      // book 1: 超大 (100KB，超过 90KB 单张上限，应当被跳过)
       // book 2..7: 正常 (1KB)
-      let content = 'A'.repeat(i === 1 ? 70 * 1024 : 1024)
+      let content = 'A'.repeat(i === 1 ? 100 * 1024 : 1024)
       const dataUrl = `data:image/jpeg;base64,${content}`
       await saveCoverCache(books[i].bookUrl, dataUrl, books[i].coverUrl)
     }
@@ -135,12 +135,22 @@ describe('browserCache cover versioning', () => {
     const raw = localStorage.getItem('reader_cover_snapshots')
     expect(raw).toBeTruthy()
     const saved = JSON.parse(raw!)
-    // 8 本中只截取前 6 本；其中 book 1 超过 60KB 被过滤，所以剩下 5 本
+    // 8 本中只截取前 6 本；其中 book 1 超过 90KB 被过滤，所以剩下 5 本
     expect(saved.length).toBe(5)
     expect(saved.some((s: any) => s.key === 'snapshot-book-1')).toBe(false)
     expect(saved.some((s: any) => s.key === 'snapshot-book-0')).toBe(true)
     expect(saved.some((s: any) => s.key === 'snapshot-book-5')).toBe(true)
     expect(saved.some((s: any) => s.key === 'snapshot-book-6')).toBe(false) // 超过第 6 本
+  })
+
+  it('isCoverVersionMatch handles URL normalization and proxy path fallback', async () => {
+    const { isCoverVersionMatch } = await import('./browserCache')
+
+    expect(isCoverVersionMatch('https://a.com/cover.jpg', 'https://a.com/cover.jpg')).toBe(true)
+    expect(isCoverVersionMatch('https://a.com/cover.jpg/', 'https://a.com/cover.jpg')).toBe(true)
+    expect(isCoverVersionMatch('https%3A%2F%2Fa.com%2Fcover.jpg', 'https://a.com/cover.jpg')).toBe(true)
+    expect(isCoverVersionMatch('/reader3/cover?path=https%3A%2F%2Fa.com%2Fcover.jpg', 'https://a.com/cover.jpg')).toBe(true)
+    expect(isCoverVersionMatch('custom-cover:hash-1', 'custom-cover:hash-2')).toBe(false)
   })
 
   it('saveCoverSnapshots catches QuotaExceededError and recovers safely', async () => {

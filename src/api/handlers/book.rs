@@ -2302,26 +2302,26 @@ pub async fn reset_book_cover(
         .await
         .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
-    let mut book = state
-        .book_service
-        .get_shelf_book(&user_ns, &req.book_url)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
-
     let hash = md5_hex(&req.book_url);
     let covers_dir = std::path::PathBuf::from(&state.config.storage_dir)
         .join("data")
         .join(&user_ns)
         .join("covers");
-    for ext in &["jpg", "jpeg", "png", "webp", "gif"] {
-        let path = covers_dir.join(format!("{}.{}", hash, ext));
-        if path.exists() {
-            let _ = tokio::fs::remove_file(path).await;
+    if covers_dir.exists() {
+        if let Ok(mut entries) = tokio::fs::read_dir(&covers_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.starts_with(&hash) {
+                    let _ = tokio::fs::remove_file(entry.path()).await;
+                }
+            }
         }
     }
 
-    book.custom_cover_url = None;
-    let saved = state.book_service.save_book(&user_ns, book).await?;
+    let saved = state
+        .book_service
+        .reset_book_custom_cover(&user_ns, &req.book_url)
+        .await?;
 
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(saved).unwrap_or_default(),

@@ -177,6 +177,7 @@ import { ref, watch, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCoverUrl, getChapterList, saveBook, uploadBookCover, resetBookCover } from '../api/bookshelf'
 import { getBrowserCachedChapterList, getCoverCache, saveCoverCache, removeCoverCache } from '../utils/browserCache'
+import { compressImageToThumbnail } from '../utils/imageCompress'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -223,13 +224,23 @@ async function handleCoverFileChange(e: Event) {
 
   uploadingCover.value = true
   try {
-    const updatedBook = await uploadBookCover(props.book.bookUrl, file)
-
-    // 1. 先将图片以 Base64 Data URL 形式写入 IndexedDB 离线封面池，确保本地秒显
+    // 客户端智能等比压缩（宽 ≤400px，质量 0.82，体积缩减至 20~40KB，使 Base64 稳稳进入快照池）
+    let compressedFile = file
     let base64 = ''
     try {
+      const comp = await compressImageToThumbnail(file)
+      compressedFile = comp.file
+      base64 = comp.dataUrl
+    } catch (compErr) {
+      console.warn('封面压缩异常，降级原图', compErr)
       base64 = await fileToDataUrl(file)
-      localCoverData.value = base64
+    }
+
+    const updatedBook = await uploadBookCover(props.book.bookUrl, compressedFile)
+
+    // 1. 先将轻量化图片以 Base64 Data URL 形式写入 IndexedDB 离线封面池，确保本地秒显
+    localCoverData.value = base64
+    try {
       await saveCoverCache(props.book.bookUrl, base64, updatedBook.customCoverUrl)
     } catch (cacheErr) {
       console.warn('缓存封面至本地 IndexedDB 异常', cacheErr)
