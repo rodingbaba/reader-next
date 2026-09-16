@@ -484,19 +484,23 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   const selectedBookUrls = ref<Set<string>>(new Set())
 
   function toggleSelection(url: string) {
-    if (selectedBookUrls.value.has(url)) {
-      selectedBookUrls.value.delete(url)
+    const next = new Set(selectedBookUrls.value)
+    if (next.has(url)) {
+      next.delete(url)
     } else {
-      selectedBookUrls.value.add(url)
+      next.add(url)
     }
+    selectedBookUrls.value = next
   }
 
   function selectAll() {
-    filteredBooks.value.forEach(b => selectedBookUrls.value.add(b.bookUrl))
+    const next = new Set<string>()
+    filteredBooks.value.forEach(b => next.add(b.bookUrl))
+    selectedBookUrls.value = next
   }
 
   function clearSelection() {
-    selectedBookUrls.value.clear()
+    selectedBookUrls.value = new Set()
   }
 
   async function bulkDelete() {

@@ -128,12 +128,18 @@ const emit = defineEmits<{
 }>()
 
 function handleCardClick() {
-  if (props.editMode) return
+  if (props.editMode) {
+    emit('select', props.book)
+    return
+  }
   emit('click', props.book)
 }
 
 function handleCoverClick() {
-  if (props.editMode) return
+  if (props.editMode) {
+    emit('select', props.book)
+    return
+  }
   if (props.isSearch) {
     emit('click', props.book)
   } else {
@@ -168,8 +174,8 @@ async function resolveCover(force = false) {
     return
   }
 
-  // 核心视觉防闪锁：如果当前已有合法封面展示，且版本指纹完全一致，绝对保持静止，禁止同源二次替换
-  if (!force && cachedCoverSrc.value && activeCoverVersion === url && !coverFailed.value) {
+  // 核心视觉防闪锁：若当前已是 Base64 离线图且版本指纹一致，绝对保持静止，禁止二次重复赋值
+  if (!force && cachedCoverSrc.value && cachedCoverSrc.value.startsWith('data:') && activeCoverVersion === url && !coverFailed.value) {
     return
   }
 
@@ -185,66 +191,51 @@ async function resolveCover(force = false) {
   }
 
   // 2. 读取本地 IndexedDB 离线封面池，校验当前封面版本
-  const localData = await getCoverCache(props.book.bookUrl, url)
-  if (localData) {
-    if (cachedCoverSrc.value !== localData) {
-      cachedCoverSrc.value = localData
+  const localCover = await getCoverCache(props.book.bookUrl, url)
+  if (localCover) {
+    if (cachedCoverSrc.value !== localCover) {
+      cachedCoverSrc.value = localCover
     }
     activeCoverVersion = url
     coverFailed.value = false
     return
   }
 
-  // 3. 本地尚未缓存或版本已过时时，使用远程代理 URL 渲染
-  const remote = getCoverUrl(url)
-  if (cachedCoverSrc.value !== remote) {
-    cachedCoverSrc.value = remote
+  // 3. 回退为服务端网络请求，并记录当前版本
+  const serverUrl = getCoverUrl(url)
+  if (cachedCoverSrc.value !== serverUrl) {
+    cachedCoverSrc.value = serverUrl
   }
   activeCoverVersion = url
-  coverFailed.value = false
 }
 
 function handleCoverError() {
-  const url = (props.book as Book).customCoverUrl || props.book.coverUrl
-  // 若远程 URL 加载失败，先尝试一次 IndexedDB 离线库兜底自愈，避免离线时直接闪退
-  if (url && !cachedCoverSrc.value.startsWith('data:')) {
-    getCoverCache(props.book.bookUrl, url)
-      .then((local) => {
-        if (local) {
-          cachedCoverSrc.value = local
-          activeCoverVersion = url
-          coverFailed.value = false
-        } else {
-          coverFailed.value = true
-        }
-      })
-      .catch(() => {
+  const url = getTargetCoverVersion()
+  if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
+    getCoverCache(props.book.bookUrl, url).then((local) => {
+      if (local) {
+        cachedCoverSrc.value = local
+        coverFailed.value = false
+        activeCoverVersion = url
+      } else {
         coverFailed.value = true
-      })
-    return
+      }
+    })
+  } else {
+    coverFailed.value = true
   }
-  coverFailed.value = true
 }
 
+// 监听全局封面更新广播
 function handleCoverUpdated(e: Event) {
-  const detail = (e as CustomEvent).detail
-  if (!detail || detail.bookUrl !== props.book.bookUrl) return
-  if (detail.coverData) {
-    cachedCoverSrc.value = detail.coverData
-    activeCoverVersion = detail.customCoverUrl || getTargetCoverVersion()
-    coverFailed.value = false
-  } else {
-    cachedCoverSrc.value = ''
-    activeCoverVersion = ''
+  const customEvent = e as CustomEvent<{ bookUrl?: string; coverUrl?: string }>
+  if (customEvent.detail?.bookUrl === props.book.bookUrl) {
     void resolveCover(true)
   }
 }
 
 onMounted(() => {
-  void resolveCover()
-  if (typeof window !== 'undefined') {
-    window.addEventListener('reader-cover-updated', handleCoverUpdated)
-  }
+  window.addEventListener('reader-cover-updated', handleCoverUpdated)
 })
 
 onUnmounted(() => {
@@ -270,7 +261,11 @@ function onCoverLoad() {
   // 封面成功渲染后，若当前展示的为远程 URL，异步在后台持久化到 IndexedDB（附带版本）
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
   if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
-    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url)
+    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url).then((dataUrl) => {
+      if (dataUrl && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
+        cachedCoverSrc.value = dataUrl
+      }
+    })
   }
 }
 

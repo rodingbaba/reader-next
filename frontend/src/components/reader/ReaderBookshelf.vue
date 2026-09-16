@@ -89,7 +89,11 @@ function onCoverImgLoad(book: Book) {
   const current = coverMap.value[book.bookUrl]
   const url = book.customCoverUrl || book.coverUrl
   if (url && current && !current.startsWith('data:')) {
-    void cacheCoverFromUrl(book.bookUrl, current, url)
+    void cacheCoverFromUrl(book.bookUrl, current, url).then((dataUrl) => {
+      if (dataUrl && coverMap.value[book.bookUrl] && !coverMap.value[book.bookUrl].startsWith('data:')) {
+        coverMap.value[book.bookUrl] = dataUrl
+      }
+    })
   }
 }
 

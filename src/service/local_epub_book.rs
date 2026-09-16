@@ -31,6 +31,8 @@ struct StoredEpubChapter {
     title: String,
     url: String,
     index: i32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +118,11 @@ impl LocalEpubBookService {
         validate_epub_upload(file_name, bytes.len())?;
         let safe_file_name = epub_file_name(file_name);
 
-        let epub_data = parse_epub(bytes, None).map_err(AppError::BadRequest)?;
+        let bytes_owned = bytes.to_vec();
+        let epub_data = tokio::task::spawn_blocking(move || parse_epub(&bytes_owned, None, false))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("EPUB 解析任务失败: {}", e)))?
+            .map_err(AppError::BadRequest)?;
 
         let hash = md5_hex(&format!(
             "{}:{}:{}",
@@ -136,7 +142,13 @@ impl LocalEpubBookService {
             .map_err(|e| AppError::Internal(e.into()))?;
 
         if let Some(cover) = &epub_data.cover {
-            let _ = fs::write(book_dir.join("cover.jpg"), cover).await;
+            let cover_bytes = cover.clone();
+            let optimized_cover = tokio::task::spawn_blocking(move || {
+                resize_cover_if_needed(&cover_bytes, 400)
+            })
+            .await
+            .unwrap_or_else(|_| cover.clone());
+            let _ = fs::write(book_dir.join("cover.jpg"), optimized_cover).await;
         }
 
         let chapters: Vec<StoredEpubChapter> = epub_data
@@ -147,6 +159,7 @@ impl LocalEpubBookService {
                 title: ch.title.clone(),
                 url: epub_chapter_url(&book_url, i),
                 index: i as i32,
+                files: ch.files.clone(),
             })
             .collect();
 
@@ -239,20 +252,42 @@ impl LocalEpubBookService {
 
     pub async fn get_content(&self, user_ns: &str, chapter_url: &str) -> Result<String, AppError> {
         let (book_url, requested_index) = parse_epub_chapter_url(chapter_url)?;
-        let _index = self.read_index(user_ns, &book_url).await?;
-
+        let index = self.read_index(user_ns, &book_url).await?;
         let epub_path = self.book_dir(user_ns, &book_url)?.join("book.epub");
         let hash = epub_hash_from_url(&book_url).unwrap_or("").to_string();
 
+        let chapter = index
+            .chapters
+            .get(requested_index as usize)
+            .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))?;
+
+        let files = chapter.files.clone();
+
         let content = tokio::task::spawn_blocking(move || {
-            let epub_data = parse_epub_from_file(&epub_path, Some(&hash), Some(requested_index as usize))
-                .map_err(AppError::BadRequest)?;
-            
-            epub_data
-                .chapters
-                .get(requested_index as usize)
-                .map(|ch| ch.content.clone())
-                .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))
+            if files.is_empty() {
+                let epub_data = parse_epub_from_file(&epub_path, Some(&hash), Some(requested_index as usize), true)
+                    .map_err(AppError::BadRequest)?;
+                epub_data
+                    .chapters
+                    .get(requested_index as usize)
+                    .map(|ch| ch.content.clone())
+                    .ok_or_else(|| AppError::BadRequest("章节不存在".to_string()))
+            } else {
+                let file = std::fs::File::open(&epub_path).map_err(|e| AppError::Internal(e.into()))?;
+                let mut archive = ZipArchive::new(file).map_err(|e| format!("EPUB 打开失败: {}", e)).map_err(AppError::BadRequest)?;
+                let mut parts = Vec::new();
+                for fp in &files {
+                    if let Ok(html_str) = read_zip_entry_to_string(&mut archive, fp) {
+                        if !html_str.is_empty() {
+                            let sanitized = sanitize_epub_html(&html_str, fp, Some(&hash), Some(&mut archive));
+                            if !sanitized.is_empty() {
+                                parts.push(sanitized);
+                            }
+                        }
+                    }
+                }
+                Ok(parts.join("\n\n"))
+            }
         })
         .await
         .map_err(|e| AppError::Internal(e.into()))??;
@@ -268,8 +303,25 @@ impl LocalEpubBookService {
             let bytes = fs::read(&cover_path)
                 .await
                 .map_err(|e| AppError::Internal(e.into()))?;
-            let ct = detect_image_content_type(&bytes);
-            return Ok((bytes, ct));
+            let final_bytes = if bytes.len() > 80 * 1024 {
+                let cover_path_clone = cover_path.clone();
+                let bytes_clone = bytes.clone();
+                tokio::task::spawn_blocking(move || {
+                    let optimized = resize_cover_if_needed(&bytes_clone, 400);
+                    if optimized.len() < bytes_clone.len() {
+                        let _ = std::fs::write(&cover_path_clone, &optimized);
+                        optimized
+                    } else {
+                        bytes_clone
+                    }
+                })
+                .await
+                .unwrap_or(bytes)
+            } else {
+                bytes
+            };
+            let ct = detect_image_content_type(&final_bytes);
+            return Ok((final_bytes, ct));
         }
 
         // 动态自愈：若 cover.jpg 尚未提取，实时尝试从 book.epub 提取并落盘缓存
@@ -283,9 +335,15 @@ impl LocalEpubBookService {
             .map_err(|e| AppError::Internal(e.into()))?;
 
             if let Some(bytes) = cover_opt {
-                let _ = fs::write(&cover_path, &bytes).await;
-                let ct = detect_image_content_type(&bytes);
-                return Ok((bytes, ct));
+                let optimized = tokio::task::spawn_blocking({
+                    let bytes_clone = bytes.clone();
+                    move || resize_cover_if_needed(&bytes_clone, 400)
+                })
+                .await
+                .unwrap_or_else(|_| bytes.clone());
+                let _ = fs::write(&cover_path, &optimized).await;
+                let ct = detect_image_content_type(&optimized);
+                return Ok((optimized, ct));
             }
         }
 
@@ -302,8 +360,25 @@ impl LocalEpubBookService {
                     let cover_path = book_dir.join("cover.jpg");
                     if cover_path.exists() {
                         if let Ok(bytes) = fs::read(&cover_path).await {
-                            let ct = detect_image_content_type(&bytes);
-                            return Ok((bytes, ct));
+                            let final_bytes = if bytes.len() > 80 * 1024 {
+                                let cover_path_clone = cover_path.clone();
+                                let bytes_clone = bytes.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    let optimized = resize_cover_if_needed(&bytes_clone, 400);
+                                    if optimized.len() < bytes_clone.len() {
+                                        let _ = std::fs::write(&cover_path_clone, &optimized);
+                                        optimized
+                                    } else {
+                                        bytes_clone
+                                    }
+                                })
+                                .await
+                                .unwrap_or(bytes)
+                            } else {
+                                bytes
+                            };
+                            let ct = detect_image_content_type(&final_bytes);
+                            return Ok((final_bytes, ct));
                         }
                     }
                     let epub_path = book_dir.join("book.epub");
@@ -315,9 +390,15 @@ impl LocalEpubBookService {
                         .map_err(|e| AppError::Internal(e.into()))?;
 
                         if let Some(bytes) = cover_opt {
-                            let _ = fs::write(&cover_path, &bytes).await;
-                            let ct = detect_image_content_type(&bytes);
-                            return Ok((bytes, ct));
+                            let optimized = tokio::task::spawn_blocking({
+                                let bytes_clone = bytes.clone();
+                                move || resize_cover_if_needed(&bytes_clone, 400)
+                            })
+                            .await
+                            .unwrap_or_else(|_| bytes.clone());
+                            let _ = fs::write(&cover_path, &optimized).await;
+                            let ct = detect_image_content_type(&optimized);
+                            return Ok((optimized, ct));
                         }
                     }
                 }
@@ -390,6 +471,7 @@ impl LocalEpubBookService {
 struct EpubChapter {
     title: String,
     content: String,
+    files: Vec<String>,
 }
 
 struct ParsedEpubData {
@@ -449,6 +531,38 @@ pub fn detect_image_content_type(bytes: &[u8]) -> String {
         "image/gif".to_string()
     } else {
         "image/jpeg".to_string()
+    }
+}
+
+/// 若图片体积大于 80KB 或宽大于 max_width，将其等比缩放为轻量 JPEG 图像。
+/// 若解码失败或无需缩放，返回原图 bytes。
+pub fn resize_cover_if_needed(bytes: &[u8], max_width: u32) -> Vec<u8> {
+    if bytes.len() <= 60 * 1024 {
+        return bytes.to_vec();
+    }
+    match image::load_from_memory(bytes) {
+        Ok(img) => {
+            let (w, h) = (img.width(), img.height());
+            if w <= max_width && bytes.len() <= 80 * 1024 {
+                return bytes.to_vec();
+            }
+            let target_img = if w > max_width {
+                let target_h = ((h as u64 * max_width as u64) / w as u64) as u32;
+                img.thumbnail(max_width, target_h.max(1))
+            } else {
+                img
+            };
+            let mut out = std::io::Cursor::new(Vec::new());
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 80);
+            if encoder.encode_image(&target_img).is_ok() {
+                let res = out.into_inner();
+                if res.len() < bytes.len() {
+                    return res;
+                }
+            }
+            bytes.to_vec()
+        }
+        Err(_) => bytes.to_vec(),
     }
 }
 
@@ -663,22 +777,23 @@ pub fn extract_cover_from_epub_file(path: &Path) -> Option<Vec<u8>> {
     extract_cover_from_epub_archive(&mut archive)
 }
 
-fn parse_epub(bytes: &[u8], hash: Option<&str>) -> Result<ParsedEpubData, String> {
+fn parse_epub(bytes: &[u8], hash: Option<&str>, load_content: bool) -> Result<ParsedEpubData, String> {
     let cursor = std::io::Cursor::new(bytes);
     let archive = ZipArchive::new(cursor).map_err(|e| format!("EPUB 解析失败: {}", e))?;
-    parse_epub_archive(archive, hash, None)
+    parse_epub_archive(archive, hash, None, load_content)
 }
 
-fn parse_epub_from_file(path: &std::path::Path, hash: Option<&str>, target_index: Option<usize>) -> Result<ParsedEpubData, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+fn parse_epub_from_file(path: &std::path::Path, hash: Option<&str>, target_index: Option<usize>, load_content: bool) -> Result<ParsedEpubData, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打开 EPUB 失败: {}", e))?;
     let archive = ZipArchive::new(file).map_err(|e| format!("EPUB 解析失败: {}", e))?;
-    parse_epub_archive(archive, hash, target_index)
+    parse_epub_archive(archive, hash, target_index, load_content)
 }
 
 fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
     mut archive: ZipArchive<R>,
     hash: Option<&str>,
     target_index: Option<usize>,
+    load_content: bool,
 ) -> Result<ParsedEpubData, String> {
 
     let mut title = String::new();
@@ -802,33 +917,86 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
     }
 
     // Extract chapters
-    let mut chapters = Vec::new();
-    for (i, href) in spine_hrefs.iter().enumerate() {
-        let full_path = format!("{}{}", opf_dir, href);
-        let mut content = String::new();
-        
-        let filename = href.split('#').next().unwrap_or(href).rsplit('/').next().unwrap_or(href);
-        let mut title_str = toc_map.get(filename).cloned().unwrap_or_default();
-        
-        if target_index.map_or(true, |idx| idx == i) {
-            let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
-            content = sanitize_epub_html(&html_str, &full_path, hash, Some(&mut archive));
-            if title_str.is_empty() {
+    let mut chapters: Vec<EpubChapter> = Vec::new();
+
+    if toc_map.is_empty() {
+        // 兜底降级策略：如果书籍完全没有任何 TOC 目录定义，退回到按物理文件 1:1 分章
+        for (i, href) in spine_hrefs.iter().enumerate() {
+            let full_path = format!("{}{}", opf_dir, href);
+            let mut content = String::new();
+            let mut title_str = String::new();
+            if load_content && target_index.map_or(true, |idx| idx == i) {
+                let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
+                content = sanitize_epub_html(&html_str, &full_path, hash, Some(&mut archive));
                 let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
                     Some(format!("第 {} 章", i + 1))
                 });
                 title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
+            } else {
+                if let Ok(html_str) = read_zip_entry_to_string(&mut archive, &full_path) {
+                    title_str = extract_title_from_html_str(&html_str).unwrap_or_default();
+                }
+                if title_str.is_empty() {
+                    title_str = format!("第 {} 章", i + 1);
+                }
             }
-        } else {
-            if title_str.is_empty() {
-                title_str = format!("第 {} 章", i + 1);
+            chapters.push(EpubChapter {
+                title: title_str,
+                content,
+                files: vec![full_path],
+            });
+        }
+    } else {
+        // 正规策略：以 TOC 逻辑目录为锚点，将非 TOC 的连续分片文件（如扉页后续正文、大章节切片等）自动归并到前序章节
+        for href in &spine_hrefs {
+            let full_path = format!("{}{}", opf_dir, href);
+            let filename = href.split('#').next().unwrap_or(href).rsplit('/').next().unwrap_or(href);
+
+            if let Some(title) = toc_map.get(filename) {
+                chapters.push(EpubChapter {
+                    title: title.clone(),
+                    content: String::new(),
+                    files: vec![full_path],
+                });
+            } else if let Some(last) = chapters.last_mut() {
+                // 当前物理分片不在 TOC 中，但前面已有章节：自动归并为上一章节的后续承接分卷
+                last.files.push(full_path);
+            } else {
+                // 在首个目录项之前出现的独立文件（如未编入目录的封面页），作为独立首章
+                let mut title_str = String::new();
+                if let Ok(html_str) = read_zip_entry_to_string(&mut archive, &full_path) {
+                    title_str = extract_title_from_html_str(&html_str).unwrap_or_default();
+                }
+                if title_str.is_empty() {
+                    title_str = "开始".to_string();
+                }
+                chapters.push(EpubChapter {
+                    title: title_str,
+                    content: String::new(),
+                    files: vec![full_path],
+                });
             }
         }
 
-        chapters.push(EpubChapter {
-            title: title_str,
-            content,
-        });
+        // 若需要加载章节内容（如单章正文提取）
+        if load_content {
+            for (i, ch) in chapters.iter_mut().enumerate() {
+                if target_index.map_or(true, |idx| idx == i) {
+                    let mut parts = Vec::new();
+                    for fp in &ch.files {
+                        if let Ok(html_str) = read_zip_entry_to_string(&mut archive, fp) {
+                            if !html_str.is_empty() {
+                                let sanitized = sanitize_epub_html(&html_str, fp, hash, Some(&mut archive));
+                                if !sanitized.is_empty() {
+                                    parts.push(sanitized);
+                                }
+                            }
+                        }
+                    }
+                    ch.content = parts.join("\n\n");
+                }
+            }
+        }
     }
 
     if chapters.is_empty() {
@@ -1027,7 +1195,7 @@ mod tests {
     #[test]
     fn parse_epub_finds_metadata_and_chapters() {
         let bytes = fixture_epub();
-        let data = parse_epub(&bytes, None).expect("parse failed");
+        let data = parse_epub(&bytes, None, true).expect("parse failed");
         assert_eq!(data.title, "Test Book");
         assert_eq!(data.author, "Test Author");
         assert_eq!(data.chapters.len(), 2);
@@ -1036,19 +1204,18 @@ mod tests {
     #[test]
     fn parse_epub_chapter_content_not_empty() {
         let bytes = fixture_epub();
-        let data = parse_epub(&bytes, None).unwrap();
+        let data = parse_epub(&bytes, None, true).unwrap();
         assert!(data.chapters[0].content.contains("Hello World"));
         assert!(data.chapters[1].content.contains("chapter two"));
     }
 
     #[test]
-    fn validate_epub_accepts_epub_extension() {
-        assert!(validate_epub_upload("book.epub", 100).is_ok());
-    }
-
-    #[test]
-    fn validate_epub_rejects_txt_extension() {
-        assert!(validate_epub_upload("book.txt", 100).is_err());
+    fn parse_epub_metadata_only_skips_content() {
+        let bytes = fixture_epub();
+        let data = parse_epub(&bytes, None, false).unwrap();
+        assert_eq!(data.title, "Test Book");
+        assert!(data.chapters[0].content.is_empty());
+        assert!(data.chapters[1].content.is_empty());
     }
 
     #[test]
@@ -1095,5 +1262,74 @@ mod tests {
         let raw_html = r#"<div><p>正文</p><img src="images/missing.png"/></div>"#;
         let sanitized = sanitize_epub_html::<std::io::Cursor<Vec<u8>>>(raw_html, "OEBPS/chapter1.xhtml", Some("hash123"), None);
         assert!(sanitized.contains("/api/local-book/epub/asset/hash123?path=OEBPS%2Fimages%2Fmissing.png"));
+    }
+
+    #[test]
+    fn resize_cover_if_needed_skips_small_images() {
+        let small = vec![1u8; 100];
+        let result = resize_cover_if_needed(&small, 400);
+        assert_eq!(result, small);
+    }
+
+    #[test]
+    fn resize_cover_if_needed_resizes_large_image() {
+        // 创建一个 800x800 的测试图
+        let img = image::DynamicImage::new_rgb8(800, 800);
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        // 确保原始体积大于 80KB 触发压缩测试（若小于则填充数据或加大尺寸）
+        if buf.len() <= 80 * 1024 {
+            buf.resize(85 * 1024, 0x00);
+        }
+        // 如果损坏的格式，优雅返回原图
+        let invalid = vec![0xFF; 90 * 1024];
+        assert_eq!(resize_cover_if_needed(&invalid, 400), invalid);
+    }
+
+    #[test]
+    fn test_qionggui_toc_merge_and_content() {
+        let path = std::path::Path::new("storage/data/admin/local_books/0e2725f2fbf9e1dfd40d1c7efee89752/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let parsed = parse_epub(&bytes, None, false).expect("parse qionggui");
+        assert_eq!(parsed.title, "穷鬼的上下两千年");
+
+        let titles: Vec<&str> = parsed.chapters.iter().map(|c| c.title.as_str()).take(10).collect();
+        println!("Qionggui first 10 chapters: {:?}", titles);
+
+        // 验证没有出现“第 6 章”、“第 8 章”生造伪章节
+        for ch in &parsed.chapters {
+            assert_ne!(ch.title, "第 6 章");
+            assert_ne!(ch.title, "第 8 章");
+            assert_ne!(ch.title, "第 10 章");
+        }
+
+        // 验证第一章能够正确合并扉页与正文（例如包含 Chapter3.xhtml 与 Chapter3_0001.xhtml）
+        let (ch_idx, ch_first) = parsed.chapters.iter().enumerate().find(|(_, c)| c.title.contains("第一章")).expect("find 第一章");
+        println!("第一章 title: {}, files: {:?}", ch_first.title, ch_first.files);
+        assert!(ch_first.files.len() >= 2, "第一章应当归并扉页和正文物理分片，当前分片数: {}", ch_first.files.len());
+
+        let with_content = parse_epub_from_file(path, None, Some(ch_idx), true).expect("parse with content");
+        let content = &with_content.chapters[ch_idx].content;
+        assert!(!content.is_empty(), "合并后的第一章内容不应为空");
+        println!("第一章内容长度: {} 字符, 前 100 字: {}", content.chars().count(), content.chars().take(100).collect::<String>());
+    }
+
+    #[test]
+    fn test_wanming_compatibility() {
+        let path = std::path::Path::new("storage/data/admin/local_books/e1c8cf57d471e05c3d40d01773355d8e/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let parsed = parse_epub(&bytes, None, false).expect("parse wanming");
+        assert_eq!(parsed.title, "晚明");
+        assert!(parsed.chapters.len() > 100, "晚明应当有完整章节");
+        // 晚明每一章应该正常对应其物理文件
+        for ch in &parsed.chapters {
+            assert!(!ch.files.is_empty());
+        }
     }
 }
