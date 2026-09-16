@@ -243,8 +243,13 @@ export function useHorizontalPaging(
 
     const { innerWidth, pageHeight } = getHorizontalPageMeasure(container)
     const title = (store.currentChapter?.title || '加载中...').trim()
-    const titleHtml = `<h1 class="horizontal-flow-title">${escapeHtml(title)}</h1>`
     const paragraphs = buildHorizontalParagraphs()
+    const hasTextParagraphs = paragraphs.some((p) => {
+      const parsed = parseParagraphHtml(p)
+      return parsed && !parsed.isMedia && parsed.text.trim().length > 0
+    })
+    const titleAttr = !hasTextParagraphs ? ' data-original-index="0" data-is-title="true"' : ''
+    const titleHtml = `<h1 class="horizontal-flow-title"${titleAttr}>${escapeHtml(title)}</h1>`
 
     const measurer = document.createElement('div')
     measurer.className = 'chapter-text horizontal-page-content'

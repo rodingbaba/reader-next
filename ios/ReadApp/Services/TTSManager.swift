@@ -358,6 +358,28 @@ class TTSManager: NSObject, ObservableObject {
         }
         
         var resolvedUrlString = rawCoverUrl
+        // 剥离可能由 Web 端拼装的 readapp://localhost 协议头
+        if resolvedUrlString.hasPrefix("readapp://localhost") {
+            resolvedUrlString = resolvedUrlString.replacingOccurrences(of: "readapp://localhost", with: "")
+        }
+
+        // 若为 Base64 格式图片，直接内存解码创建封面
+        if resolvedUrlString.hasPrefix("data:image/") {
+            if let commaIndex = resolvedUrlString.firstIndex(of: ",") {
+                let base64String = String(resolvedUrlString[resolvedUrlString.index(after: commaIndex)...])
+                if let data = Data(base64Encoded: base64String, options: .ignoreUnknownCharacters),
+                   let image = UIImage(data: data) {
+                    let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in return image }
+                    self.coverArtwork = artwork
+                    if self.currentChapterIndex < self.chapters.count {
+                        self.updateNowPlayingInfo(chapterTitle: self.chapters[self.currentChapterIndex].title)
+                    }
+                    self.logger.log("✅ 锁屏封面从 Base64 加载成功", category: "TTS")
+                    return
+                }
+            }
+        }
+
         // 处理相对路径以及 local-epub-cover: / custom-cover: 等特殊协议
         if resolvedUrlString.hasPrefix("local-epub-cover:") || resolvedUrlString.hasPrefix("custom-cover:") || resolvedUrlString.hasPrefix("/") {
             let serverBase = APIService.shared.baseURL.replacingOccurrences(of: "/reader3", with: "")
@@ -856,7 +878,15 @@ class TTSManager: NSObject, ObservableObject {
         guard currentSentenceIndex < sentences.count else {
             logger.log("当前章节朗读完成，准备下一章", category: "TTS")
             // 当前章节读完，自动读下一章
-            nextChapter()
+            if sentences.isEmpty {
+                // 防御纯空章节同步递归跳章，给前台排版与展示留出缓冲时间
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self = self, self.isPlaying else { return }
+                    self.nextChapter()
+                }
+            } else {
+                nextChapter()
+            }
             return
         }
         
@@ -1333,11 +1363,18 @@ class TTSManager: NSObject, ObservableObject {
                     
                     // 分段
                     let texts = splitTextIntoSentences(content)
-                        var newSentences: [TTSSentence] = []
+                    var newSentences: [TTSSentence] = []
+                    if texts.isEmpty {
+                        let rawTitle = (nextChapterIndex < chapters.count ? chapters[nextChapterIndex].title : "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let titleToSpeak = rawTitle.isEmpty ? "插图" : rawTitle
+                        newSentences.append(TTSSentence(text: titleToSpeak, originalIndex: 0, slices: []))
+                        logger.log("🖼️ 预载纯图片/无文本章节，使用标题作为预载内容: \(titleToSpeak)", category: "TTS")
+                    } else {
                         for (i, t) in texts.enumerated() {
                             newSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
                         }
-                        nextChapterSentences = newSentences
+                    }
+                    nextChapterSentences = newSentences
                     logger.log("下一章分段完成，共 \(nextChapterSentences.count) 段", category: "TTS")
                     
                     // 预载下一章的前几个段落（根据用户的预载设置）
@@ -1570,8 +1607,15 @@ class TTSManager: NSObject, ObservableObject {
                     
                     let texts = splitTextIntoSentences(content)
                     var newSentences: [TTSSentence] = []
-                    for (i, t) in texts.enumerated() {
-                        newSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
+                    if texts.isEmpty {
+                        let rawTitle = (currentChapterIndex < chapters.count ? chapters[currentChapterIndex].title : "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let titleToSpeak = rawTitle.isEmpty ? "插图" : rawTitle
+                        newSentences.append(TTSSentence(text: titleToSpeak, originalIndex: 0, slices: []))
+                        logger.log("🖼️ 纯图片/无文本章节，使用标题进行朗读: \(titleToSpeak)", category: "TTS")
+                    } else {
+                        for (i, t) in texts.enumerated() {
+                            newSentences.append(TTSSentence(text: t, originalIndex: i, slices: []))
+                        }
                     }
                     sentences = newSentences
                     totalSentences = sentences.count

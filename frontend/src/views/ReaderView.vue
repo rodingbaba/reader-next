@@ -4103,7 +4103,9 @@ watch(
   margin-bottom: 0 !important;
 }
 
-:deep(.chapter-text p.reading) {
+:deep(.chapter-text p.reading),
+:deep(.horizontal-page-content .horizontal-flow-title.reading),
+:deep(.chapter-title.reading) {
   background: rgba(201, 127, 58, 0.12);
   border-radius: 10px;
   box-shadow: inset 0 0 0 1px rgba(201, 127, 58, 0.18);

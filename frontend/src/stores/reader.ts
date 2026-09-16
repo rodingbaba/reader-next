@@ -1,4 +1,4 @@
-import { invokeTTS, isNetworkOnline } from '../utils/nativeBridge'
+import { invokeTTS, isNetworkOnline, isNativeApp } from '../utils/nativeBridge'
 import { defineStore } from 'pinia'
 import http from '../api/http'
 import { ref, computed, reactive, watch } from 'vue'
@@ -1010,6 +1010,10 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
 
+  function getEffectiveBookCoverUrl() {
+    return book.value?.customCoverUrl || book.value?.coverUrl || ''
+  }
+
   function resolveAbsoluteCoverUrl(cover?: string) {
     if (!cover) return ''
     const path = getCoverUrl(cover)
@@ -1017,6 +1021,12 @@ export const useReaderStore = defineStore('reader', () => {
     if (path.startsWith('http://') || path.startsWith('https://')) return path
     if (typeof window !== 'undefined') {
       try {
+        if (isNativeApp()) {
+          const serverBase = (localStorage.getItem('server_base_url') || '').replace(/\/+$/, '')
+          if (serverBase) {
+            return `${serverBase}${path}`
+          }
+        }
         return new URL(path, window.location.origin).href
       } catch {
         return path
@@ -1027,7 +1037,8 @@ export const useReaderStore = defineStore('reader', () => {
 
   function setupMediaSession(text: string) {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-      const absCover = resolveAbsoluteCoverUrl(book.value?.coverUrl)
+      const effectiveCover = getEffectiveBookCoverUrl()
+      const absCover = resolveAbsoluteCoverUrl(effectiveCover)
       navigator.mediaSession.metadata = new MediaMetadata({
         title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
         artist: book.value?.name || 'Antigravity Reader',
@@ -1826,7 +1837,7 @@ export const useReaderStore = defineStore('reader', () => {
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
-      coverUrl: resolveAbsoluteCoverUrl(book.value?.coverUrl) || book.value?.coverUrl,
+      coverUrl: resolveAbsoluteCoverUrl(getEffectiveBookCoverUrl()) || getEffectiveBookCoverUrl(),
       chapters: chapters.value,
       currentIndex: currentIndex.value,
       startIndex: options.startIndex,
@@ -2207,12 +2218,16 @@ export const useReaderStore = defineStore('reader', () => {
     return chapterContent
   }
 
+  let loadChapterSeq = 0
+
   async function loadChapter(index: number, forceRefresh = false) {
     if (!book.value || !chapters.value[index]) return
+    const currentSeq = ++loadChapterSeq
 
     loading.value = true
     try {
       const chapterContent = await fetchChapterContent(index, forceRefresh)
+      if (currentSeq !== loadChapterSeq) return
       if (chapterContent == null) return
 
       const previousSavedIndex = book.value.durChapterIndex ?? 0
@@ -2232,7 +2247,9 @@ export const useReaderStore = defineStore('reader', () => {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
       }
     } finally {
-      loading.value = false
+      if (currentSeq === loadChapterSeq) {
+        loading.value = false
+      }
     }
   }
 

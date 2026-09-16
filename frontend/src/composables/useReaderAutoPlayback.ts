@@ -873,15 +873,25 @@ export function useReaderAutoPlayback(
     if (!roots.length) return
 
     // F-B3: 三级校准策略——先按 originalIndex 定位，再校验文本前缀；不符则全文搜索前缀匹配段落；兜底回到 originalIndex
-    const findByOriginalIndex = () =>
-      roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+    const findByOriginalIndex = () => {
+      const pMatches = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+      if (pMatches.length > 0) return pMatches
+      return roots.flatMap((root) => Array.from(root.querySelectorAll(`.horizontal-flow-title[data-original-index="${index}"], .chapter-title[data-original-index="${index}"]`)) as HTMLElement[])
+    }
 
     const findByTextPrefix = (prefix: string): HTMLElement[] => {
       if (!prefix) return []
-      return roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
+      const pMatches = roots.flatMap((root) => Array.from(root.querySelectorAll('p')) as HTMLElement[])
         .filter(p => {
           const t = (p as HTMLElement).textContent?.trim() || ''
           return t.startsWith(prefix.trim())
+        })
+      if (pMatches.length > 0) return pMatches
+      const trimmedPrefix = prefix.trim()
+      return roots.flatMap((root) => Array.from(root.querySelectorAll('.horizontal-flow-title, .chapter-title')) as HTMLElement[])
+        .filter(titleEl => {
+          const t = titleEl.textContent?.trim() || ''
+          return t.length > 0 && (t.startsWith(trimmedPrefix) || trimmedPrefix.startsWith(t))
         })
     }
 
