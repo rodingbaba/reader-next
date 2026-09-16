@@ -1246,6 +1246,9 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 检查当前章节是否预载完成，并预载下一章
     private func checkAndPreloadNextChapter() {
+        guard isPlaying, !sentences.isEmpty else {
+            return
+        }
         guard currentChapterIndex < chapters.count - 1 else {
             return
         }

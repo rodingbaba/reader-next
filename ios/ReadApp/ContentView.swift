@@ -130,6 +130,12 @@ struct HybridWebView: UIViewRepresentable {
                 name: NSNotification.Name("TTSListeningDurationSync"),
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(onAppWillEnterForeground),
+                name: UIApplication.willEnterForegroundNotification,
+                object: nil
+            )
         }
         
         deinit {
@@ -165,6 +171,14 @@ struct HybridWebView: UIViewRepresentable {
             let escapedBookUrl = bookUrl.replacingOccurrences(of: "'", with: "\\'")
             DispatchQueue.main.async { [weak self] in
                 self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSDurationSync && window.__nativeBridgeTTSDurationSync({ bookUrl: '\(escapedBookUrl)', durationSeconds: \(duration) })")
+            }
+        }
+
+        @objc private func onAppWillEnterForeground() {
+            guard TTSManager.shared.isPlaying else { return }
+            let chapterIndex = TTSManager.shared.currentChapterIndex
+            DispatchQueue.main.async { [weak self] in
+                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSChapterChange && window.__nativeBridgeTTSChapterChange(\(chapterIndex))")
             }
         }
         
@@ -255,6 +269,17 @@ struct HybridWebView: UIViewRepresentable {
                     TTSManager.shared.resume()
                 case "stop":
                     TTSManager.shared.stop()
+                case "next":
+                    TTSManager.shared.nextSentence()
+                case "prev":
+                    TTSManager.shared.previousSentence()
+                case "getState":
+                    let chIdx = TTSManager.shared.currentChapterIndex
+                    let isP = TTSManager.shared.isPlaying
+                    let isPaused = TTSManager.shared.isPaused
+                    DispatchQueue.main.async { [weak self] in
+                        self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSSyncState && window.__nativeBridgeTTSSyncState({ chapterIndex: \(chIdx), isPlaying: \(isP), isPaused: \(isPaused) })")
+                    }
                 case "updateSlices":
                     if let sentencesData = payload?["sentences"] as? [[String: Any]],
                        let chapterIndex = (payload?["currentIndex"] as? Int) ?? (payload?["currentIndex"] as? Double).map({ Int($0) }) {

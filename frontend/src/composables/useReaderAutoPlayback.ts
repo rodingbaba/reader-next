@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
+import { isNativeApp, invokeTTS } from '../utils/nativeBridge'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 const OPENAI_SPEECH_CHUNK_CHAR_LIMIT = 70
@@ -736,6 +737,9 @@ export function useReaderAutoPlayback(
       currentParagraph: paragraphPreview(resolvePlaybackTarget()),
       hasPrevChapter: store.hasPrev,
     })
+    if (isNativeApp()) {
+      if (invokeTTS('prev')) return
+    }
     resetSpeechChunkState()
     const prev = getPrevLogicalParagraphFrom(resolvePlaybackTarget())
     if (prev) {
@@ -762,6 +766,9 @@ export function useReaderAutoPlayback(
       currentParagraph: paragraphPreview(resolvePlaybackTarget()),
       hasNextChapter: store.hasNext,
     })
+    if (isNativeApp()) {
+      if (invokeTTS('next')) return
+    }
     resetSpeechChunkState()
     const next = forcedNext ?? getNextLogicalParagraphFrom(resolvePlaybackTarget())
     if (next) {
@@ -913,12 +920,22 @@ export function useReaderAutoPlayback(
             }
           }
         } else {
-          // Fallback logic if no sliceIndex provided
+          // Fallback logic if no sliceIndex provided (例如后台跨章后尚未生成切片，或文本前缀全文校准后)
           const currentPageEl = pages[horizontalPageIndex.value]
-          if (currentPageEl) {
+          if (currentPageEl && els.some(el => currentPageEl.contains(el))) {
             const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
             if (elOnCurrentPage) {
               targetEl = elOnCurrentPage
+            }
+          } else {
+            // 当前页未包含目标段落（如跨章或文本校准后位于其他页），自动寻找包含目标段落的页码并翻页
+            const targetPage = pages.findIndex(page => els.some(el => page.contains(el)))
+            if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
+              setHorizontalPageIndex(targetPage)
+              const elOnTargetPage = els.find(el => pages[targetPage].contains(el))
+              if (elOnTargetPage) {
+                targetEl = elOnTargetPage
+              }
             }
           }
         }

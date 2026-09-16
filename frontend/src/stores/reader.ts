@@ -1976,20 +1976,26 @@ export const useReaderStore = defineStore('reader', () => {
           // 防切书串台守卫
           if (currentSeq !== loadBookSeq || book.value?.bookUrl !== latestBook.bookUrl) return
 
-          // 连载追更新增判断
-          if (serverChapters.length > chapters.value.length) {
-            appLog('目录', `检测到连载更新：从 ${chapters.value.length} 章更新至 ${serverChapters.length} 章`, { bookUrl: latestBook.bookUrl })
+          // 目录结构变化检测：章节数变动，或首尾章/关键节点 URL 发生变化（如 EPUB 物理分片合并或网络书源更新）
+          const isChaptersStale = serverChapters.length !== chapters.value.length ||
+            (serverChapters.length > 0 && (
+              serverChapters[0].url !== chapters.value[0]?.url ||
+              serverChapters[serverChapters.length - 1].url !== chapters.value[chapters.value.length - 1]?.url ||
+              serverChapters[0].title !== chapters.value[0]?.title
+            ))
+
+          if (isChaptersStale) {
+            appLog('目录', `检测到目录结构版本更新：从 ${chapters.value.length} 章同步至 ${serverChapters.length} 章`, { bookUrl: latestBook.bookUrl })
             chapters.value = serverChapters
             if (chapters.value.length) {
               currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
             }
             saveReaderSession()
+            // 异步落盘并清理孤儿章节
+            void setBrowserCachedChapterList(latestBook.bookUrl, serverChapters, serverChapters.length)
+              .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(serverChapters.map((c) => c.url).filter(Boolean))))
+              .catch(() => undefined)
           }
-
-          // 异步落盘并清理孤儿章节
-          void setBrowserCachedChapterList(latestBook.bookUrl, serverChapters, serverChapters.length)
-            .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(serverChapters.map((c) => c.url).filter(Boolean))))
-            .catch(() => undefined)
         } catch (err) {
           // 后台检测失败静默忽略，不打扰用户当前阅读
           appLog('目录', '后台静默检测目录更新失败(网络异常)，继续保持本地离线目录', { err: String(err) })

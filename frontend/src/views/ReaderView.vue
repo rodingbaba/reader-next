@@ -1125,7 +1125,7 @@ import { applySystemTheme } from '../utils/systemUi'
 import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
-import { isNativeApp } from '../utils/nativeBridge'
+import { isNativeApp, invokeTTS } from '../utils/nativeBridge'
 import { resolveNativeAssetUrl } from '../utils/secureAccess'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import { ReadingTracker } from '../utils/readingTracker'
@@ -1874,6 +1874,9 @@ function handleBeforeUnload() {
 
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
+    if (isNativeApp()) {
+      invokeTTS('getState')
+    }
     if (store.isSpeaking && isHorizontalPageMode.value) {
       rebuildHorizontalPages().then(() => {
         store.updateNativeTTSSlices(horizontalPages.value)
@@ -3025,7 +3028,18 @@ onMounted(async () => {
     }
   }
   (window as any).__nativeBridgeTTSChapterChange = (index: number) => {
-    jumpFromCatalog(index)
+    if (typeof index === 'number' && index !== store.currentIndex) {
+      jumpFromCatalog(index)
+    }
+  }
+  (window as any).__nativeBridgeTTSSyncState = (payload: { chapterIndex: number; isPlaying: boolean; isPaused: boolean }) => {
+    if (payload && payload.isPlaying) {
+      store.isSpeaking = true
+      store.isPaused = payload.isPaused
+      if (typeof payload.chapterIndex === 'number' && payload.chapterIndex !== store.currentIndex) {
+        jumpFromCatalog(payload.chapterIndex)
+      }
+    }
   }
   syncViewportSize()
   void loadChapterSummaryConfigForSider()
@@ -3087,6 +3101,7 @@ onUnmounted(() => {
   delete (window as any).__nativeBridgeTTSProgress
   delete (window as any).__nativeBridgeTTSStateChange
   delete (window as any).__nativeBridgeTTSChapterChange
+  delete (window as any).__nativeBridgeTTSSyncState
     stopAiPanelSiderResize()
     persistReadingProgressKeepalive()
     appStore.stopReadingSession()
