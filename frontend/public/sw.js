@@ -1,6 +1,8 @@
-const SHELL_CACHE = 'reader-shell-v1-0-16'
-const RUNTIME_CACHE = 'reader-runtime-v1-0-16'
-'/index.html',
+const SHELL_CACHE = 'reader-shell-v1-8-1'
+const RUNTIME_CACHE = 'reader-runtime-v1-8-1'
+const SHELL_ASSETS = [
+  '/',
+  '/index.html',
   '/offline.html',
   '/site.webmanifest',
   '/favicon.ico',

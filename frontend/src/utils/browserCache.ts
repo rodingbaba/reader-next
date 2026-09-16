@@ -175,6 +175,21 @@ export async function deleteBrowserBookCache(bookUrl: string) {
       await requestToPromise(store.delete(bookUrl))
     }, CHAPTER_LIST_STORE),
   ])
+
+  // 深度彻底清理：同步清理该书在 LocalStorage 中的所有记录（已读历史、TTS进度、书签与阅读会话）
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(`reader-read-history-${bookUrl}`)
+      localStorage.removeItem(`tts_cursor_${bookUrl}`)
+      localStorage.removeItem(`reader-bookmarks-${bookUrl}`)
+      const lastSessionRaw = localStorage.getItem('reader-last-session')
+      if (lastSessionRaw && lastSessionRaw.includes(bookUrl)) {
+        localStorage.removeItem('reader-last-session')
+      }
+    } catch {
+      // 忽略存储访问异常
+    }
+  }
 }
 
 export async function countBrowserBookCache(bookUrl: string) {

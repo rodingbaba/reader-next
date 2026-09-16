@@ -172,6 +172,7 @@ import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
 import { uploadTxtBook, uploadEpubBook, uploadPdfBook, uploadMobiBook } from '../api/bookshelf'
+import { deleteBrowserBookCache } from '../utils/browserCache'
 import BookGrid from '../components/BookGrid.vue'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import GroupSelectModal from '../components/bookshelf/GroupSelectModal.vue'
@@ -238,6 +239,8 @@ async function handleTxtFileChange(event: Event) {
   txtUploading.value = true
   try {
     const book = await uploadFn(file)
+    // 重新上传或导入新书时，主动清理该书可能残留的浏览器离线缓存，确保最新章节与分卷目录即时生效
+    await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
     await shelfStore.fetchBooks()
     appStore.showToast(`已导入《${book.name}》`, 'success')
   } catch (e: unknown) {
