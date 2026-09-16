@@ -123,9 +123,9 @@ describe('browserCache cover versioning', () => {
     // 为每本书存入离线缓存
     for (let i = 0; i < books.length; i++) {
       // book 0: 正常 (1KB)
-      // book 1: 超大 (90KB，超过 80KB 单张上限，应当被跳过)
+      // book 1: 超大 (120KB，超过单张上限，应当被跳过)
       // book 2..9: 正常 (1KB)
-      let content = 'A'.repeat(i === 1 ? 90 * 1024 : 1024)
+      let content = 'A'.repeat(i === 1 ? 120 * 1024 : 1024)
       const dataUrl = `data:image/jpeg;base64,${content}`
       await saveCoverCache(books[i].bookUrl, dataUrl, books[i].coverUrl)
     }
@@ -135,7 +135,7 @@ describe('browserCache cover versioning', () => {
     const raw = localStorage.getItem('reader_cover_snapshots')
     expect(raw).toBeTruthy()
     const saved = JSON.parse(raw!)
-    // 10 本中只截取前 8 本；其中 book 1 超过 80KB 被过滤，所以剩下 7 本
+    // 10 本中只截取前 8 本；其中 book 1 超过单张上限被过滤，所以剩下 7 本
     expect(saved.length).toBe(7)
     expect(saved.some((s: any) => s.key === 'snapshot-book-1')).toBe(false)
     expect(saved.some((s: any) => s.key === 'snapshot-book-0')).toBe(true)

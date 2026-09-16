@@ -11,5 +11,14 @@ describe('imageCompress', () => {
     expect(result.blob).toBeInstanceOf(Blob)
     expect(result.file).toBeInstanceOf(File)
   })
+
+  it('accepts string dataUrl as input safely', async () => {
+    const inputDataUrl = 'data:image/jpeg;base64,QUJD'
+    const result = await compressImageToThumbnail(inputDataUrl)
+
+    expect(result.dataUrl).toBe(inputDataUrl)
+    expect(result.blob).toBeInstanceOf(Blob)
+    expect(result.file).toBeInstanceOf(File)
+  })
 })
 

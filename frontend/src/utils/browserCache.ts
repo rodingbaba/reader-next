@@ -292,8 +292,8 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
 
 const COVER_SNAPSHOTS_KEY = 'reader_cover_snapshots'
 const MAX_SNAPSHOTS_COUNT = 8
-const MAX_SINGLE_SNAPSHOT_CHARS = 80 * 1024 // 单张 Base64 长度 <= 80KB
-const MAX_TOTAL_SNAPSHOTS_CHARS = 360 * 1024 // 快照总长度 <= 360KB
+const MAX_SINGLE_SNAPSHOT_CHARS = 110 * 1024 // 单张 Base64 长度 <= 110KB (提供安全冗余，自适应压缩后通常在 30~55KB)
+const MAX_TOTAL_SNAPSHOTS_CHARS = 420 * 1024 // 快照总长度 <= 420KB
 
 interface CoverSnapshotRecord {
   key: string
@@ -450,6 +450,21 @@ export async function saveCoverSnapshots(
       dataUrl = await getCoverCache(key, expected)
     }
     if (!dataUrl || !dataUrl.startsWith('data:')) continue
+
+    // 历史超标大图后台静默自愈：若已缓存的 Base64 字符数偏大（> 65KB），异步自动轻量重压并回写
+    if (dataUrl.length > 65 * 1024) {
+      const origChars = dataUrl.length
+      const bookKey = key
+      const expectedVer = expected
+      const bookName = b.name || key
+      void compressImageToThumbnail(dataUrl).then(async (comp) => {
+        if (comp?.dataUrl && comp.dataUrl.length < origChars) {
+          appLog('封面', `历史大图后台轻量自愈压缩成功 (${(origChars / 1024).toFixed(1)}KB -> ${(comp.dataUrl.length / 1024).toFixed(1)}KB): 《${bookName}》`)
+          await saveCoverCache(bookKey, comp.dataUrl, expectedVer)
+        }
+      }).catch(() => { })
+    }
+
     // 单张容量硬防线：超过单张限制放弃加入快照
     if (dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) {
       appLog('封面', `快照单张超限放弃收录 (${(dataUrl.length / 1024).toFixed(1)}KB > ${MAX_SINGLE_SNAPSHOT_CHARS / 1024}KB): 《${b.name || key}》`)
@@ -652,8 +667,8 @@ export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: str
     const blob = await res.blob()
     const originalSizeKB = (blob.size / 1024).toFixed(1)
 
-    // 若原图大于 40KB，在客户端进行等比轻量化压缩至标准规格（~25KB），确保 Base64 稳稳进入快照池
-    if (blob.size > 40 * 1024) {
+    // 若原图大于 25KB，在客户端进行等比轻量化压缩至标准规格（~25KB），确保 Base64 稳稳进入快照池
+    if (blob.size > 25 * 1024) {
       try {
         const comp = await compressImageToThumbnail(blob)
         if (comp?.dataUrl) {

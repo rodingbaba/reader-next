@@ -18,14 +18,20 @@ export interface CompressResult {
  * @param quality JPEG/WebP 压缩质量（默认 0.82）
  */
 export async function compressImageToThumbnail(
-  fileOrBlob: File | Blob,
-  maxWidth = 360,
-  maxHeight = 520,
-  quality = 0.82,
+  fileOrBlob: File | Blob | string,
+  maxWidth = 280,
+  maxHeight = 400,
+  quality = 0.8,
+  maxBase64Chars = 68 * 1024,
 ): Promise<CompressResult> {
   const fallback = async () => {
-    const dataUrl = await blobToDataUrlFallback(fileOrBlob)
-    const blob = fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob])
+    let dataUrl = ''
+    if (typeof fileOrBlob === 'string') {
+      dataUrl = fileOrBlob
+    } else {
+      dataUrl = await blobToDataUrlFallback(fileOrBlob)
+    }
+    const blob = typeof fileOrBlob === 'string' ? dataUrlToBlob(fileOrBlob) : fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob])
     const file = fileOrBlob instanceof File ? fileOrBlob : new File([blob], 'cover.jpg', { type: blob.type || 'image/jpeg' })
     return { dataUrl, blob, file }
   }
@@ -70,7 +76,31 @@ export async function compressImageToThumbnail(
 
     // 优先生成 JPEG，兼容性最好且体积小
     const mimeType = 'image/jpeg'
-    const dataUrl = canvas.toDataURL(mimeType, quality)
+    let curQuality = quality
+    let dataUrl = canvas.toDataURL(mimeType, curQuality)
+
+    // 自适应阶梯降质：若超出目标大小，自动平滑降低质量
+    const qualitySteps = [0.72, 0.62, 0.52]
+    for (const stepQuality of qualitySteps) {
+      if (dataUrl.length <= maxBase64Chars) break
+      curQuality = stepQuality
+      dataUrl = canvas.toDataURL(mimeType, curQuality)
+    }
+
+    // 若降质后依然超过目标大小，按比例微调重采样，确保 100% 能够装入快照池
+    if (dataUrl.length > maxBase64Chars && (targetWidth > 180 || targetHeight > 260)) {
+      const scaleRatio = 0.8
+      canvas.width = Math.max(1, Math.round(targetWidth * scaleRatio))
+      canvas.height = Math.max(1, Math.round(targetHeight * scaleRatio))
+      const scaleCtx = canvas.getContext('2d')
+      if (scaleCtx) {
+        scaleCtx.imageSmoothingEnabled = true
+        scaleCtx.imageSmoothingQuality = 'high'
+        scaleCtx.drawImage(imageBitmap, 0, 0, canvas.width, canvas.height)
+        curQuality = 0.62
+        dataUrl = canvas.toDataURL(mimeType, curQuality)
+      }
+    }
 
     // 转换为 Blob / File 供上传接口使用
     const blob = await new Promise<Blob>((resolve) => {
@@ -84,7 +114,7 @@ export async function compressImageToThumbnail(
           }
         },
         mimeType,
-        quality,
+        curQuality,
       )
     })
 
@@ -102,8 +132,15 @@ export async function compressImageToThumbnail(
 }
 
 /** 异步加载图片为 HTMLImageElement */
-function loadImage(source: File | Blob): Promise<HTMLImageElement> {
+function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
+    if (typeof source === 'string') {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = (err) => reject(err)
+      img.src = source
+      return
+    }
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
       return reject(new Error('URL.createObjectURL not supported'))
     }
