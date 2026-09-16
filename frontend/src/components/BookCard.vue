@@ -236,6 +236,19 @@ function handleCoverUpdated(e: Event) {
 
 onMounted(() => {
   window.addEventListener('reader-cover-updated', handleCoverUpdated)
+  // 若首帧未命中内存快照，异步检查本地 IndexedDB：若本地已有缓存且当前图片尚未完成网络渲染，可平滑补齐
+  if (!cachedCoverSrc.value.startsWith('data:')) {
+    const url = getTargetCoverVersion()
+    if (url) {
+      void getCoverCache(props.book.bookUrl, url).then((local) => {
+        if (local && !cachedCoverSrc.value.startsWith('data:')) {
+          cachedCoverSrc.value = local
+          activeCoverVersion = url
+          coverFailed.value = false
+        }
+      })
+    }
+  }
 })
 
 onUnmounted(() => {
@@ -258,14 +271,11 @@ watch(
 
 function onCoverLoad() {
   coverFailed.value = false
-  // 封面成功渲染后，若当前展示的为远程 URL，异步在后台持久化到 IndexedDB（附带版本）
+  // 核心视觉防闪：图片既然已经通过 URL 成功在屏幕上渲染，后台静默写入本地缓存与快照池即可，
+  // 严禁将当前已渲染的 cachedCoverSrc.value 替换为 dataUrl，彻底消除二次重绘闪烁！
   const url = (props.book as Book).customCoverUrl || props.book.coverUrl
   if (url && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
-    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url).then((dataUrl) => {
-      if (dataUrl && cachedCoverSrc.value && !cachedCoverSrc.value.startsWith('data:')) {
-        cachedCoverSrc.value = dataUrl
-      }
-    })
+    void cacheCoverFromUrl(props.book.bookUrl, cachedCoverSrc.value, url)
   }
 }
 

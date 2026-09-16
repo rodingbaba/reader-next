@@ -16,11 +16,17 @@ vi.mock('../api/bookshelf', () => ({
 }))
 
 vi.mock('../utils/browserCache', () => ({
-  deleteBrowserBookCache: vi.fn(),
-  listBrowserCacheSummary: vi.fn(),
+  deleteBrowserBookCache: vi.fn().mockResolvedValue(undefined),
+  listBrowserCacheSummary: vi.fn().mockResolvedValue([]),
   loadCoverSnapshots: vi.fn(),
   preloadCoversCache: vi.fn().mockResolvedValue(undefined),
   saveCoverSnapshots: vi.fn().mockResolvedValue(undefined),
+  removeCoverCache: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../api/bookmark', () => ({
+  getBookmarks: vi.fn().mockResolvedValue([]),
+  deleteBookmarks: vi.fn().mockResolvedValue('ok'),
 }))
 
 vi.mock('../utils/recentBooks', () => ({
@@ -236,5 +242,30 @@ describe('bookshelf search state', () => {
     // 重置封面
     store.updateBookCover('test-book-url', undefined)
     expect(store.books[0].customCoverUrl).toBeUndefined()
+  })
+
+  it('removeBook cascades cleanups to browser cache, cover cache, snapshots and recent books', async () => {
+    const { deleteBrowserBookCache, removeCoverCache, saveCoverSnapshots } = await import('../utils/browserCache')
+    const { removeRecentReadBook } = await import('../utils/recentBooks')
+    const { deleteBook: apiDeleteBook } = await import('../api/bookshelf')
+
+    const store = useBookshelfStore()
+    const targetBook = {
+      name: '乱世书',
+      author: '姬叉',
+      origin: 'source-1',
+      bookUrl: 'book-luanshi',
+    } as any
+
+    store.books = [targetBook]
+
+    await store.removeBook(targetBook)
+
+    expect(apiDeleteBook).toHaveBeenCalledWith(targetBook)
+    expect(deleteBrowserBookCache).toHaveBeenCalledWith('book-luanshi')
+    expect(removeCoverCache).toHaveBeenCalledWith('book-luanshi')
+    expect(removeRecentReadBook).toHaveBeenCalledWith(targetBook)
+    expect(saveCoverSnapshots).toHaveBeenCalledWith([])
+    expect(store.books.length).toBe(0)
   })
 })

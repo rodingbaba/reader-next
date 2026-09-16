@@ -54,10 +54,14 @@ export function saveRecentReadBook(book: Book) {
   localStorage.setItem(RECENT_BOOKS_KEY, JSON.stringify(next.slice(0, MAX_RECENT_BOOKS)))
 }
 
-export function removeRecentReadBook(book: Pick<Book, 'bookUrl' | 'origin'>) {
-  if (!book?.bookUrl || !book?.origin) return
-  const key = getRecentReadBookKey(book)
-  const next = loadRecentReadBooks().filter((item) => getRecentReadBookKey(item) !== key)
+export function removeRecentReadBook(book: Pick<Book, 'bookUrl'> & Partial<Pick<Book, 'origin'>>) {
+  if (!book?.bookUrl) return
+  const key = book.origin ? getRecentReadBookKey(book as Pick<Book, 'bookUrl' | 'origin'>) : ''
+  const next = loadRecentReadBooks().filter((item) => {
+    if (key && getRecentReadBookKey(item) === key) return false
+    if (item.bookUrl === book.bookUrl) return false
+    return true
+  })
   localStorage.setItem(RECENT_BOOKS_KEY, JSON.stringify(next))
 }
 

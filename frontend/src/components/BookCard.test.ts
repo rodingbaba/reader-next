@@ -69,4 +69,28 @@ describe('BookCard selection and click handling', () => {
     expect(wrapper.emitted('select')).toHaveLength(2)
     expect(wrapper.emitted('info')).toBeUndefined()
   })
+
+  it('keeps coverSrc stable without mutating to dataUrl on cover load to prevent flicker', async () => {
+    const bookWithCover: Book = {
+      ...dummyBook,
+      coverUrl: 'https://example.com/cover.jpg',
+    }
+
+    const wrapper = mount(BookCard, {
+      props: {
+        book: bookWithCover,
+      },
+    })
+
+    const img = wrapper.find('img.cover-img')
+    expect(img.exists()).toBe(true)
+    const initialSrc = img.attributes('src')
+    expect(initialSrc).toContain('/reader3/cover?path=')
+
+    // 触发图片加载事件
+    await img.trigger('load')
+
+    // 验证 src 保持原样稳定，没有发生二次强制突变换源，杜绝白屏闪烁
+    expect(img.attributes('src')).toBe(initialSrc)
+  })
 })

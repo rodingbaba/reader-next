@@ -111,11 +111,11 @@ describe('browserCache cover versioning', () => {
     expect(getCoverMemoryCache(k2, 'ver-2')).toBe(v2)
   })
 
-  it('saveCoverSnapshots respects max 6 count, 90KB single cap, and 360KB total cap', async () => {
-    const { saveCoverSnapshots } = await import('./browserCache')
+  it('saveCoverSnapshots respects max 8 count, 80KB single cap, and 360KB total cap', async () => {
+    const { saveCoverSnapshots, removeCoverCache } = await import('./browserCache')
 
-    // 构造 8 本书
-    const books = Array.from({ length: 8 }, (_, i) => ({
+    // 构造 10 本书
+    const books = Array.from({ length: 10 }, (_, i) => ({
       bookUrl: `snapshot-book-${i}`,
       coverUrl: `v-${i}`,
     }))
@@ -123,9 +123,9 @@ describe('browserCache cover versioning', () => {
     // 为每本书存入离线缓存
     for (let i = 0; i < books.length; i++) {
       // book 0: 正常 (1KB)
-      // book 1: 超大 (100KB，超过 90KB 单张上限，应当被跳过)
-      // book 2..7: 正常 (1KB)
-      let content = 'A'.repeat(i === 1 ? 100 * 1024 : 1024)
+      // book 1: 超大 (90KB，超过 80KB 单张上限，应当被跳过)
+      // book 2..9: 正常 (1KB)
+      let content = 'A'.repeat(i === 1 ? 90 * 1024 : 1024)
       const dataUrl = `data:image/jpeg;base64,${content}`
       await saveCoverCache(books[i].bookUrl, dataUrl, books[i].coverUrl)
     }
@@ -135,12 +135,18 @@ describe('browserCache cover versioning', () => {
     const raw = localStorage.getItem('reader_cover_snapshots')
     expect(raw).toBeTruthy()
     const saved = JSON.parse(raw!)
-    // 8 本中只截取前 6 本；其中 book 1 超过 90KB 被过滤，所以剩下 5 本
-    expect(saved.length).toBe(5)
+    // 10 本中只截取前 8 本；其中 book 1 超过 80KB 被过滤，所以剩下 7 本
+    expect(saved.length).toBe(7)
     expect(saved.some((s: any) => s.key === 'snapshot-book-1')).toBe(false)
     expect(saved.some((s: any) => s.key === 'snapshot-book-0')).toBe(true)
-    expect(saved.some((s: any) => s.key === 'snapshot-book-5')).toBe(true)
-    expect(saved.some((s: any) => s.key === 'snapshot-book-6')).toBe(false) // 超过第 6 本
+    expect(saved.some((s: any) => s.key === 'snapshot-book-7')).toBe(true)
+    expect(saved.some((s: any) => s.key === 'snapshot-book-8')).toBe(false) // 超过第 8 本
+
+    // 验证 removeCoverCache 能彻底从快照与内存中抹除
+    await removeCoverCache('snapshot-book-0')
+    const afterDeleteRaw = localStorage.getItem('reader_cover_snapshots')
+    const afterDelete = JSON.parse(afterDeleteRaw!)
+    expect(afterDelete.some((s: any) => s.key === 'snapshot-book-0')).toBe(false)
   })
 
   it('isCoverVersionMatch handles URL normalization and proxy path fallback', async () => {

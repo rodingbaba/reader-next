@@ -17,7 +17,9 @@ import {
   loadCoverSnapshots,
   preloadCoversCache,
   saveCoverSnapshots,
+  removeCoverCache,
 } from '../utils/browserCache'
+import { getBookmarks, deleteBookmarks } from '../api/bookmark'
 import { isLocalTxtBook } from '../utils/localBook'
 import { clearRecentReadBooks, getRecentReadBookKey, loadRecentReadBooks, removeRecentReadBook } from '../utils/recentBooks'
 import { isNetworkOnline } from '../utils/nativeBridge'
@@ -325,10 +327,20 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
 
   async function removeBook(book: Book) {
     await apiDeleteBook(book)
-    await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
+    await Promise.all([
+      deleteBrowserBookCache(book.bookUrl).catch(() => undefined),
+      removeCoverCache(book.bookUrl).catch(() => undefined),
+    ])
+    removeRecentReadBook(book)
+    void getBookmarks().then((all) => {
+      const bms = (all || []).filter((b) => (b.bookName === book.name && b.bookAuthor === book.author) || (b as any).bookUrl === book.bookUrl)
+      if (bms.length > 0) void deleteBookmarks(bms).catch(() => undefined)
+    }).catch(() => undefined)
+
     books.value = books.value.filter((b) => b.bookUrl !== book.bookUrl)
-    // 同步清理本地持久化
+    // 同步清理本地持久化与快照池
     saveCachedBookshelf(books.value)
+    void saveCoverSnapshots(books.value)
     await refreshRecentBooks()
   }
 
@@ -510,10 +522,23 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
 
     if (toDelete.length === 0) return
     await apiDeleteBooks(toDelete as Book[])
-    await Promise.all(toDelete.map((book) => deleteBrowserBookCache(book.bookUrl).catch(() => undefined)))
+    await Promise.all(toDelete.map((book) => Promise.all([
+      deleteBrowserBookCache(book.bookUrl).catch(() => undefined),
+      removeCoverCache(book.bookUrl).catch(() => undefined),
+    ])))
+    toDelete.forEach((book) => {
+      removeRecentReadBook(book)
+    })
+    void getBookmarks().then((all) => {
+      const deleteUrls = new Set(toDelete.map((b) => b.bookUrl))
+      const bms = (all || []).filter((bm) => deleteUrls.has((bm as any).bookUrl) || toDelete.some((b) => (b as Book).name === bm.bookName && (b as Book).author === bm.bookAuthor))
+      if (bms.length > 0) void deleteBookmarks(bms).catch(() => undefined)
+    }).catch(() => undefined)
     books.value = books.value.filter(b => !selectedBookUrls.value.has(b.bookUrl))
-    // 同步清理本地持久化
+    // 同步清理本地持久化与快照池
     saveCachedBookshelf(books.value)
+    void saveCoverSnapshots(books.value)
+    await refreshRecentBooks()
     clearSelection()
   }
 

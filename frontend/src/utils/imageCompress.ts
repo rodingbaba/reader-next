@@ -19,8 +19,8 @@ export interface CompressResult {
  */
 export async function compressImageToThumbnail(
   fileOrBlob: File | Blob,
-  maxWidth = 400,
-  maxHeight = 560,
+  maxWidth = 360,
+  maxHeight = 520,
   quality = 0.82,
 ): Promise<CompressResult> {
   const fallback = async () => {
@@ -122,7 +122,7 @@ function loadImage(source: File | Blob): Promise<HTMLImageElement> {
     timer = setTimeout(() => {
       cleanup()
       reject(new Error('Image load timeout'))
-    }, 800)
+    }, 3000)
     img.onload = () => {
       cleanup()
       resolve(img)

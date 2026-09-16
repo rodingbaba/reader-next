@@ -291,8 +291,8 @@ export async function cleanupOrphanChapters(bookUrl: string, validChapterUrls: S
 }
 
 const COVER_SNAPSHOTS_KEY = 'reader_cover_snapshots'
-const MAX_SNAPSHOTS_COUNT = 6
-const MAX_SINGLE_SNAPSHOT_CHARS = 90 * 1024 // 单张 Base64 长度 <= 90KB
+const MAX_SNAPSHOTS_COUNT = 8
+const MAX_SINGLE_SNAPSHOT_CHARS = 80 * 1024 // 单张 Base64 长度 <= 80KB
 const MAX_TOTAL_SNAPSHOTS_CHARS = 360 * 1024 // 快照总长度 <= 360KB
 
 interface CoverSnapshotRecord {
@@ -307,6 +307,38 @@ interface MemoryCoverEntry {
   coverUrl?: string
 }
 const coverMemoryCache = new Map<string, MemoryCoverEntry>()
+
+/** 即时安全维护单个书籍的封面快照（写入内存并同步更新 localStorage 头部） */
+export function updateCoverSnapshot(key: string, dataUrl: string, coverUrl?: string): void {
+  if (!key || !dataUrl || !dataUrl.startsWith('data:') || dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) return
+  try {
+    const raw = localStorage.getItem(COVER_SNAPSHOTS_KEY)
+    let list: CoverSnapshotRecord[] = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(list)) list = []
+
+    const existingIdx = list.findIndex((item) => item.key === key)
+    const record: CoverSnapshotRecord = { key, dataUrl, coverUrl, updatedAt: Date.now() }
+    if (existingIdx !== -1) {
+      list[existingIdx] = record
+    } else {
+      list.unshift(record)
+      if (list.length > MAX_SNAPSHOTS_COUNT) {
+        list = list.slice(0, MAX_SNAPSHOTS_COUNT)
+      }
+    }
+
+    // 检查总字符数是否超标，超标则从尾部淘汰较旧快照
+    let totalChars = list.reduce((sum, item) => sum + (item.dataUrl?.length || 0), 0)
+    while (totalChars > MAX_TOTAL_SNAPSHOTS_CHARS && list.length > 1) {
+      list.pop()
+      totalChars = list.reduce((sum, item) => sum + (item.dataUrl?.length || 0), 0)
+    }
+
+    localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(list))
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * 校验缓存中的封面版本是否与当前期望的封面标识匹配（具备宽松容错性与旧版本兼容性）
@@ -384,7 +416,14 @@ export function getCoverMemoryCache(key: string, expectedCoverUrl?: string): str
 export async function saveCoverSnapshots(
   books: Array<{ bookUrl: string; customCoverUrl?: string; coverUrl?: string }>,
 ): Promise<void> {
-  if (!Array.isArray(books) || books.length === 0) return
+  if (!Array.isArray(books) || books.length === 0) {
+    try {
+      localStorage.removeItem(COVER_SNAPSHOTS_KEY)
+    } catch {
+      // ignore
+    }
+    return
+  }
   const targetBooks = books.slice(0, MAX_SNAPSHOTS_COUNT)
   const snapshots: CoverSnapshotRecord[] = []
   let totalChars = 0
@@ -399,9 +438,9 @@ export async function saveCoverSnapshots(
       dataUrl = await getCoverCache(key, expected)
     }
     if (!dataUrl || !dataUrl.startsWith('data:')) continue
-    // 单张容量硬防线：超过 60KB 放弃加入 localStorage 快照
+    // 单张容量硬防线：超过单张限制放弃加入快照
     if (dataUrl.length > MAX_SINGLE_SNAPSHOT_CHARS) continue
-    // 总容量硬防线：超过 250KB 停止追加后续书籍
+    // 总容量硬防线：超过总容量停止追加后续书籍
     if (totalChars + dataUrl.length > MAX_TOTAL_SNAPSHOTS_CHARS) break
 
     totalChars += dataUrl.length
@@ -416,6 +455,8 @@ export async function saveCoverSnapshots(
   try {
     if (snapshots.length > 0) {
       localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(snapshots))
+    } else {
+      localStorage.removeItem(COVER_SNAPSHOTS_KEY)
     }
   } catch (err) {
     // 异常安全自愈隔离：如果触发任何 Quota 异常，清空并移除快照，绝不破坏书架与设置
@@ -518,6 +559,8 @@ export async function getCoverCache(key: string, expectedCoverUrl?: string): Pro
 export async function saveCoverCache(key: string, dataUrl: string, coverUrl?: string): Promise<void> {
   if (!key || !dataUrl) return
   coverMemoryCache.set(key, { dataUrl, coverUrl })
+  // 即时联动更新首屏快照池
+  updateCoverSnapshot(key, dataUrl, coverUrl)
   try {
     const record: BrowserCoverCacheRecord = {
       key,
@@ -545,7 +588,11 @@ export async function removeCoverCache(key: string): Promise<void> {
       const list = JSON.parse(raw) as CoverSnapshotRecord[]
       if (Array.isArray(list)) {
         const filtered = list.filter((item) => item.key !== key)
-        localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(filtered))
+        if (filtered.length > 0) {
+          localStorage.setItem(COVER_SNAPSHOTS_KEY, JSON.stringify(filtered))
+        } else {
+          localStorage.removeItem(COVER_SNAPSHOTS_KEY)
+        }
       }
     }
   } catch {
@@ -573,8 +620,8 @@ export async function cacheCoverFromUrl(key: string, url: string, coverUrl?: str
     if (!res.ok) return null
     const blob = await res.blob()
 
-    // 若原图大于 80KB，在客户端进行等比轻量化压缩至标准规格（~30KB），避免超大 Base64 塞入 IndexedDB 或被快照拒绝
-    if (blob.size > 80 * 1024) {
+    // 若原图大于 40KB，在客户端进行等比轻量化压缩至标准规格（~25KB），确保 Base64 稳稳进入快照池
+    if (blob.size > 40 * 1024) {
       try {
         const comp = await compressImageToThumbnail(blob)
         if (comp?.dataUrl) {
