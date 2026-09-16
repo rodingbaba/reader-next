@@ -347,7 +347,7 @@ class TTSManager: NSObject, ObservableObject {
     
     // MARK: - 加载封面图片
     private func loadCoverArtwork() {
-        guard let coverUrlString = bookCoverUrl, !coverUrlString.isEmpty else {
+        guard let rawCoverUrl = bookCoverUrl, !rawCoverUrl.isEmpty else {
             logger.log("未提供封面URL", category: "TTS")
             return
         }
@@ -357,8 +357,20 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         
-        guard let url = URL(string: coverUrlString) else {
-            logger.log("封面URL无效: \(coverUrlString)", category: "TTS错误")
+        var resolvedUrlString = rawCoverUrl
+        // 处理相对路径以及 local-epub-cover: / custom-cover: 等特殊协议
+        if resolvedUrlString.hasPrefix("local-epub-cover:") || resolvedUrlString.hasPrefix("custom-cover:") || resolvedUrlString.hasPrefix("/") {
+            let serverBase = APIService.shared.baseURL.replacingOccurrences(of: "/reader3", with: "")
+            if resolvedUrlString.hasPrefix("/") {
+                resolvedUrlString = "\(serverBase)\(resolvedUrlString)"
+            } else {
+                let encoded = resolvedUrlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? resolvedUrlString
+                resolvedUrlString = "\(serverBase)/reader3/cover?path=\(encoded)"
+            }
+        }
+
+        guard let url = URL(string: resolvedUrlString) else {
+            logger.log("封面URL无效: \(resolvedUrlString)", category: "TTS错误")
             return
         }
         
@@ -368,7 +380,6 @@ class TTSManager: NSObject, ObservableObject {
                 
                 if let image = UIImage(data: data) {
                     await MainActor.run {
-                        // 创建 MPMediaItemArtwork
                         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in
                             return image
                         }
@@ -379,13 +390,13 @@ class TTSManager: NSObject, ObservableObject {
                             self.updateNowPlayingInfo(chapterTitle: self.chapters[self.currentChapterIndex].title)
                         }
                         
-                        self.logger.log("✅ 封面加载成功", category: "TTS")
+                        self.logger.log("✅ 锁屏封面加载成功", category: "TTS")
                     }
                 } else {
                     logger.log("封面图片解码失败", category: "TTS错误")
                 }
             } catch {
-                logger.log("封面下载失败: \(error.localizedDescription)", category: "TTS错误")
+                logger.log("封面下载失败: \(error.localizedDescription) (URL: \(resolvedUrlString))", category: "TTS错误")
             }
         }
     }
@@ -455,6 +466,9 @@ class TTSManager: NSObject, ObservableObject {
         flushListeningDuration(force: true)
         markListeningStarted()
         self.bookTitle = bookTitle
+        if self.bookCoverUrl != coverUrl {
+            self.coverArtwork = nil
+        }
         self.bookCoverUrl = coverUrl
         self.onChapterChange = onChapterChange
         

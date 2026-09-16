@@ -11,6 +11,7 @@ import {
   getShelfBook,
   saveBookProgress,
   setBookSource as apiSetBookSource,
+  getCoverUrl,
 } from '../api/bookshelf'
 import {
   getBookmarks,
@@ -1009,13 +1010,33 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
 
+  function resolveAbsoluteCoverUrl(cover?: string) {
+    if (!cover) return ''
+    const path = getCoverUrl(cover)
+    if (!path) return ''
+    if (path.startsWith('http://') || path.startsWith('https://')) return path
+    if (typeof window !== 'undefined') {
+      try {
+        return new URL(path, window.location.origin).href
+      } catch {
+        return path
+      }
+    }
+    return path
+  }
+
   function setupMediaSession(text: string) {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      const absCover = resolveAbsoluteCoverUrl(book.value?.coverUrl)
       navigator.mediaSession.metadata = new MediaMetadata({
         title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
         artist: book.value?.name || 'Antigravity Reader',
         album: currentChapterDisplayTitle.value || '阅读',
-        artwork: book.value?.coverUrl ? [{ src: book.value.coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+        artwork: absCover ? [
+          { src: absCover, sizes: '512x512', type: 'image/jpeg' },
+          { src: absCover, sizes: '256x256', type: 'image/jpeg' },
+          { src: absCover, sizes: '128x128', type: 'image/jpeg' },
+        ] : []
       })
       navigator.mediaSession.setActionHandler('play', () => { pauseTTS() })
       navigator.mediaSession.setActionHandler('pause', () => { pauseTTS() })
@@ -1805,7 +1826,7 @@ export const useReaderStore = defineStore('reader', () => {
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
-      coverUrl: book.value?.coverUrl,
+      coverUrl: resolveAbsoluteCoverUrl(book.value?.coverUrl) || book.value?.coverUrl,
       chapters: chapters.value,
       currentIndex: currentIndex.value,
       startIndex: options.startIndex,
