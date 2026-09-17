@@ -56,10 +56,11 @@
               </svg>
             </div>
             <div class="kpi-value-row">
-              <span class="kpi-val">{{ formatHoursMinutes(statsStore.totalDurationMinutes) }}</span>
+              <span class="kpi-val" :title="totalDurationInfo.full">{{ totalDurationInfo.display }}</span>
             </div>
-            <div class="kpi-subtext">
-              其中听书 {{ formatHoursMinutes(statsStore.totalListenMinutes) }} · 看书 {{ formatHoursMinutes(Math.max(0, statsStore.totalDurationMinutes - statsStore.totalListenMinutes)) }}
+            <div class="kpi-subtext kpi-subtext-dual">
+              <div class="subtext-line" :title="`听书 ${totalListenDurationInfo.full}`">听书 {{ totalListenDurationInfo.display }}</div>
+              <div class="subtext-line" :title="`看书 ${totalReadDurationInfo.full}`">看书 {{ totalReadDurationInfo.display }}</div>
             </div>
           </div>
 
@@ -71,10 +72,11 @@
               </svg>
             </div>
             <div class="kpi-value-row">
-              <span class="kpi-val">{{ formatHoursMinutes(statsStore.todayDurationMinutes) }}</span>
+              <span class="kpi-val" :title="todayDurationInfo.full">{{ todayDurationInfo.display }}</span>
             </div>
-            <div class="kpi-subtext">
-              今日听书 {{ formatHoursMinutes(statsStore.todayListenMinutes) }}
+            <div class="kpi-subtext kpi-subtext-dual">
+              <div class="subtext-line" :title="`听书 ${todayListenDurationInfo.full}`">听书 {{ todayListenDurationInfo.display }}</div>
+              <div class="subtext-line" :title="`看书 ${todayReadDurationInfo.full}`">看书 {{ todayReadDurationInfo.display }}</div>
             </div>
           </div>
 
@@ -449,6 +451,57 @@ function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string
   if (hours > 0) return `${hours} 小时`
   return `${mins} 分钟`
 }
+
+/**
+ * 智能时长格式化（用于 KPI 卡片）：
+ * 放得下（未超出方格）时，优先展示详细的「X 小时 Y 分钟」；
+ * 超出方格安全宽度（如移动端大时长）时，自动降级为「X 小时」，并在 full 中保留完整分钟供 tooltip/长按查看
+ */
+function formatKpiDuration(totalMinutes: number, isSubtext = false): { display: string; full: string } {
+  if (totalMinutes <= 0) return { display: '0 分钟', full: '0 分钟' }
+  const hours = Math.floor(totalMinutes / 60)
+  const mins = totalMinutes % 60
+
+  const full = hours > 0
+    ? (mins > 0 ? `${hours} 小时 ${mins} 分钟` : `${hours} 小时`)
+    : `${mins} 分钟`
+
+  // 判断是否超出方格安全宽度：
+  // 1. 主数值（大字号，粗体）：
+  //    - 移动端（windowWidth <= 640）：卡片可用宽度约 130~150px，若小时数 >= 100（如 100+ 小时、3000 小时），带分钟会超出方格，降级为纯小时
+  //    - 桌面端：小时数 >= 1000 时，降级为纯小时
+  // 2. 副文本（小字号 11px）：
+  //    - 容纳空间较大，小时数 >= 1000 时降级为纯小时
+  const isMobile = windowWidth.value <= 640
+  let shouldOmitMinutes = false
+  if (!isSubtext) {
+    shouldOmitMinutes = isMobile ? hours >= 100 : hours >= 1000
+  } else {
+    shouldOmitMinutes = hours >= 1000
+  }
+
+  if (shouldOmitMinutes && hours > 0) {
+    const formattedHours = hours >= 1000 ? hours.toLocaleString() : `${hours}`
+    return {
+      display: `${formattedHours} 小时`,
+      full,
+    }
+  }
+
+  return { display: full, full }
+}
+
+const totalDurationInfo = computed(() => formatKpiDuration(statsStore.totalDurationMinutes, false))
+const totalListenDurationInfo = computed(() => formatKpiDuration(statsStore.totalListenMinutes, true))
+const totalReadDurationInfo = computed(() =>
+  formatKpiDuration(Math.max(0, statsStore.totalDurationMinutes - statsStore.totalListenMinutes), true),
+)
+const todayDurationInfo = computed(() => formatKpiDuration(statsStore.todayDurationMinutes, false))
+const todayListenDurationInfo = computed(() => formatKpiDuration(statsStore.todayListenMinutes, true))
+const todayReadDurationInfo = computed(() =>
+  formatKpiDuration(Math.max(0, statsStore.todayDurationMinutes - statsStore.todayListenMinutes), true),
+)
+
 
 const weeksCount = computed(() => {
   const w = windowWidth.value
@@ -976,7 +1029,7 @@ async function handleContinueRead(bookUrl: string) {
 /* 1. KPI Grid */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   padding: 4px;
   margin: -4px 0 0 0;
@@ -991,6 +1044,7 @@ async function handleContinueRead(bookUrl: string) {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  min-width: 0;
   transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
@@ -1032,6 +1086,7 @@ async function handleContinueRead(bookUrl: string) {
   display: flex;
   align-items: baseline;
   gap: 4px;
+  min-width: 0;
 }
 
 .kpi-val {
@@ -1039,6 +1094,10 @@ async function handleContinueRead(bookUrl: string) {
   font-weight: 700;
   color: var(--color-text);
   letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .kpi-val.kpi-chapter-val {
@@ -1055,11 +1114,26 @@ async function handleContinueRead(bookUrl: string) {
 .kpi-unit {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
+  flex-shrink: 0;
 }
 
 .kpi-subtext {
   font-size: 11px;
   color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 16px;
+}
+
+.kpi-subtext-dual {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+
+.subtext-line {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1645,7 +1719,14 @@ async function handleContinueRead(bookUrl: string) {
 /* 响应式调整 */
 @media (max-width: 768px) {
   .kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .kpi-card {
+    padding: 14px;
+  }
+  .kpi-val {
+    font-size: 1.15rem;
   }
 }
 
