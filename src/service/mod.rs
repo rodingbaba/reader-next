@@ -17,3 +17,4 @@ pub mod reading_stat_service;
 pub mod search_relevance;
 pub mod update_service;
 pub mod user_service;
+pub mod cover_search_service;

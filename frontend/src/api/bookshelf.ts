@@ -159,6 +159,18 @@ export function resetBookCover(bookUrl: string) {
   return http.post<Book>('resetBookCover', { bookUrl }).then((r) => r.data)
 }
 
+export interface CoverImageItem {
+  url: string
+  thumbUrl: string
+  title: string
+  width?: number
+  height?: number
+}
+
+export function searchCoverImages(keyword: string) {
+  return http.get<CoverImageItem[]>('searchCoverImages', { params: { keyword } }).then((r) => r.data)
+}
+
 // ─── Cover helper ───
 export function getCoverUrl(coverUrl?: string) {
   if (!coverUrl) return ''

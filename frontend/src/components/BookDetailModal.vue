@@ -41,13 +41,6 @@
               </div>
             </div>
 
-            <input
-              ref="coverFileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              style="display: none"
-              @change="handleCoverFileChange"
-            />
             <div class="book-header-info">
               <div v-if="!isEditingInfo" class="title-row">
                 <h2>{{ book.name }}</h2>
@@ -169,18 +162,24 @@
         </div>
       </div>
     </Transition>
+    <BookCoverCropperModal
+      v-if="book"
+      v-model="showCropperModal"
+      :book="book as Book"
+      @success="onCropperSuccess"
+    />
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getCoverUrl, getChapterList, saveBook, uploadBookCover, resetBookCover } from '../api/bookshelf'
-import { getBrowserCachedChapterList, getCoverCache, saveCoverCache, removeCoverCache } from '../utils/browserCache'
-import { compressImageToThumbnail } from '../utils/imageCompress'
+import { getCoverUrl, getChapterList, saveBook, resetBookCover } from '../api/bookshelf'
+import { getBrowserCachedChapterList, getCoverCache, removeCoverCache } from '../utils/browserCache'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
+import BookCoverCropperModal from './BookCoverCropperModal.vue'
 import type { Book, SearchBook, BookChapter } from '../types'
 
 const appStore = useAppStore()
@@ -199,81 +198,22 @@ const emit = defineEmits<{
 const router = useRouter()
 const readerStore = useReaderStore()
 
-const coverFileInput = ref<HTMLInputElement | null>(null)
 const uploadingCover = ref(false)
 const localCoverData = ref('')
+const showCropperModal = ref(false)
 
 function triggerCoverUpload() {
-  if (uploadingCover.value) return
-  coverFileInput.value?.click()
+  if (uploadingCover.value || !props.book) return
+  showCropperModal.value = true
 }
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-async function handleCoverFileChange(e: Event) {
-  const target = e.target as HTMLInputElement
-  const file = target.files?.[0]
-  if (!file || !props.book) return
-
-  uploadingCover.value = true
-  try {
-    // 客户端智能等比压缩（宽 ≤400px，质量 0.82，体积缩减至 20~40KB，使 Base64 稳稳进入快照池）
-    let compressedFile = file
-    let base64 = ''
-    try {
-      const comp = await compressImageToThumbnail(file)
-      compressedFile = comp.file
-      base64 = comp.dataUrl
-    } catch (compErr) {
-      console.warn('封面压缩异常，降级原图', compErr)
-      base64 = await fileToDataUrl(file)
-    }
-
-    const updatedBook = await uploadBookCover(props.book.bookUrl, compressedFile)
-
-    // 1. 先将轻量化图片以 Base64 Data URL 形式写入 IndexedDB 离线封面池，确保本地秒显
-    localCoverData.value = base64
-    try {
-      await saveCoverCache(props.book.bookUrl, base64, updatedBook.customCoverUrl)
-    } catch (cacheErr) {
-      console.warn('缓存封面至本地 IndexedDB 异常', cacheErr)
-    }
-
-    const b = props.book as Book
-    b.customCoverUrl = updatedBook.customCoverUrl
-    emit('update:book', { ...b })
-
-    // 2. 响应式更新 shelfStore 并同步写回 localStorage 书架缓存
-    shelfStore.updateBookCover(b.bookUrl, updatedBook.customCoverUrl)
-
-    // 3. 发出全局封面变更广播，通知所有挂载的卡片组件瞬时更新
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('reader-cover-updated', {
-          detail: {
-            bookUrl: b.bookUrl,
-            coverData: base64,
-            customCoverUrl: updatedBook.customCoverUrl,
-          },
-        }),
-      )
-    }
-
-    coverFailed.value = false
-    appStore.showToast('封面更换成功', 'success')
-  } catch (err: any) {
-    appStore.showToast(err?.message || '封面上传失败', 'error')
-  } finally {
-    uploadingCover.value = false
-    if (target) target.value = ''
-  }
+function onCropperSuccess(customCoverUrl: string, base64: string) {
+  localCoverData.value = base64
+  coverFailed.value = false
+  const b = props.book as Book
+  b.customCoverUrl = customCoverUrl
+  emit('update:book', { ...b })
+  appStore.showToast('封面更换成功', 'success')
 }
 
 async function handleResetCover() {

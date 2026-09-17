@@ -2328,6 +2328,31 @@ pub async fn reset_book_cover(
     )))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SearchCoverImagesQuery {
+    pub keyword: Option<String>,
+    pub key: Option<String>,
+}
+
+pub async fn search_cover_images(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Query(query): Query<SearchCoverImagesQuery>,
+) -> Result<Json<ApiResponse<Vec<crate::service::cover_search_service::CoverImageItem>>>, AppError> {
+    let _user_ns = state
+        .user_service
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
+        .await
+        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+
+    let kw = query.keyword.or(query.key).unwrap_or_default();
+    let results = crate::service::cover_search_service::search_bing_cover_images(&kw)
+        .await
+        .unwrap_or_default();
+
+    Ok(Json(ApiResponse::ok(results)))
+}
+
 pub async fn get_invalid_book_sources(
     State(state): State<AppState>,
     auth: AuthContext,
