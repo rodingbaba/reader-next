@@ -830,6 +830,8 @@ export function useReaderAutoPlayback(
   let lastNativeTTSIndex = -1
   let lastNativeTTSSliceIndex: number | undefined
   let lastNativeTTSTextPrefix: string | undefined
+  let chapterIndexOffset = 0
+  let lastTrackedChapterIndex = -1
 
   let isChapterLayoutReady = true
   // F-B1: 队列也存储 textPrefix 供布局就绪后做三级校准
@@ -866,6 +868,12 @@ export function useReaderAutoPlayback(
       return
     }
 
+    // 章节切换时自动复位索引偏移量
+    if (lastTrackedChapterIndex !== store.currentIndex) {
+      lastTrackedChapterIndex = store.currentIndex
+      chapterIndexOffset = 0
+    }
+
     let roots: HTMLElement[] = []
     if (isContinuousMode.value) {
       roots = Array.from(scrollContainerRef.value?.querySelectorAll(`.continuous-chapter[data-chapter-index="${store.currentIndex}"] .chapter-text[data-role="continuous"]`) || []) as HTMLElement[]
@@ -879,10 +887,10 @@ export function useReaderAutoPlayback(
     }
 
     // F-B3: 三级校准策略——先按 originalIndex 定位，再校验文本前缀；不符则全文搜索前缀匹配段落；兜底回到 originalIndex
-    const findByOriginalIndex = () => {
-      const pMatches = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${index}"]`)) as HTMLElement[])
+    const findByOriginalIndex = (targetIndex: number) => {
+      const pMatches = roots.flatMap((root) => Array.from(root.querySelectorAll(`p[data-original-index="${targetIndex}"]`)) as HTMLElement[])
       if (pMatches.length > 0) return pMatches
-      return roots.flatMap((root) => Array.from(root.querySelectorAll(`.horizontal-flow-title[data-original-index="${index}"], .chapter-title[data-original-index="${index}"]`)) as HTMLElement[])
+      return roots.flatMap((root) => Array.from(root.querySelectorAll(`.horizontal-flow-title[data-original-index="${targetIndex}"], .chapter-title[data-original-index="${targetIndex}"]`)) as HTMLElement[])
     }
 
     const findByTextPrefix = (prefix: string): HTMLElement[] => {
@@ -901,25 +909,64 @@ export function useReaderAutoPlayback(
         })
     }
 
-    // 1. 快路径：按 originalIndex 定位 → 校验文本前缀相符
-    let els = findByOriginalIndex()
+    // 辅助检查：段落/切片文本与广播前缀是否相符（支持跨页页尾短切片双向包含容错）
+    const checkPrefixMatch = (el: HTMLElement, prefix: string) => {
+      const trimmed = prefix.trim()
+      const text = el.textContent?.trim() || ''
+      if (!trimmed || !text) return false
+      if (text.startsWith(trimmed)) return true
+      // 跨页末尾切片字数短（例如 6~14 字），前缀 16 字长于切片，此时前缀包含切片文本即属相符
+      if (text.length >= 4 && trimmed.startsWith(text)) return true
+      return false
+    }
+
+    // 1. 快路径：优先尝试应用了 chapterIndexOffset 的 targetIndex；若未命中或前缀不符则尝试原始 index
+    let effectiveIndex = index + chapterIndexOffset
+    let els = findByOriginalIndex(effectiveIndex)
+    let isOffsetHit = false
+    if (chapterIndexOffset !== 0 && els.length > 0 && textPrefix) {
+      if (checkPrefixMatch(els[0] as HTMLElement, textPrefix)) {
+        isOffsetHit = true
+      } else {
+        // 偏移量不匹配，尝试原始 index
+        els = findByOriginalIndex(index)
+      }
+    }
+
     const sliceSummary = els.map(el => `s${el.getAttribute('data-slice-index') ?? 0}`).join(',')
-    appLog('TTS-Web', `DOM 检索段落 ${index}: 命中 ${els.length} 个元素 [${sliceSummary}]`)
+    appLog('TTS-Web', `DOM 检索段落: 广播index=${index}, 实际查询=${isOffsetHit ? effectiveIndex : index}(offset=${chapterIndexOffset}), 命中 ${els.length} 个元素 [${sliceSummary}]`)
+
     if (els.length > 0 && textPrefix) {
-      const trimmedPrefix = textPrefix.trim()
-      const firstElText = (els[0] as HTMLElement).textContent?.trim() || ''
-      if (!firstElText.startsWith(trimmedPrefix)) {
+      const firstEl = els[0] as HTMLElement
+      if (checkPrefixMatch(firstEl, textPrefix)) {
+        appLog('TTS-Web', `✅ 前缀快路径校验通过: index=${isOffsetHit ? effectiveIndex : index}`)
+      } else {
         // 2. 慢路径：索引定位的段落文本与广播前缀不符 → 全 DOM 搜前缀匹配段落
+        const firstElText = firstEl.textContent?.trim() || ''
+        const trimmedPrefix = textPrefix.trim()
         appLog('TTS-Web', `⚠️ [TTS-CALIBRATION] 前缀校验不符，进入慢路径搜索: index=${index}, DOM前缀="${firstElText.slice(0, 16)}"(len=${firstElText.length}), 广播前缀="${trimmedPrefix}"(len=${trimmedPrefix.length})`)
         const fallbackEls = findByTextPrefix(trimmedPrefix)
         if (fallbackEls.length > 0) {
-          appLog('TTS-Web', `慢路径匹配到 ${fallbackEls.length} 个候选元素，覆盖原始 els 集合`)
-          els = fallbackEls
+          const matchedEl = fallbackEls[0]
+          const realOriginalIndex = matchedEl.getAttribute('data-original-index')
+          if (realOriginalIndex !== null) {
+            // 核心修复：根据真实索引，反查该段落的【所有切片节点】（包括 s0, s1, ...），切片 1 绝不丢失
+            const allSlices = roots.flatMap((root) =>
+              Array.from(root.querySelectorAll(`p[data-original-index="${realOriginalIndex}"]`)) as HTMLElement[]
+            )
+            els = allSlices.length > 0 ? allSlices : fallbackEls
+            const realNumeric = parseInt(realOriginalIndex, 10)
+            if (!Number.isNaN(realNumeric)) {
+              chapterIndexOffset = realNumeric - index
+              appLog('TTS-Web', `🎯 慢路径校准成功并反查全量切片: realOriginalIndex=${realOriginalIndex}, 切片数=${els.length}, 更新 chapterIndexOffset=${chapterIndexOffset}`)
+            }
+          } else {
+            els = fallbackEls
+            appLog('TTS-Web', `慢路径匹配到非标准段落元素，保留搜索结果 (${els.length} 项)`)
+          }
         } else {
           appLog('TTS-Web', `慢路径未搜出匹配元素，兜底保留 findByOriginalIndex 结果 (${els.length} 项)`)
         }
-      } else {
-        appLog('TTS-Web', `✅ 前缀快路径校验通过: index=${index}`)
       }
     }
 
@@ -948,7 +995,17 @@ export function useReaderAutoPlayback(
             }
           } else {
             const availableSlices = els.map(el => el.getAttribute('data-slice-index') ?? 0).join(', ')
-            appLog('TTS-Web', `⚠️ 在 els 中未找到 sliceIndex=${numericSliceIndex} 的元素！当前 els 切片列表: [${availableSlices}]`)
+            appLog('TTS-Web', `⚠️ 在 els 中未找到 sliceIndex=${numericSliceIndex} 的元素！当前 els 切片列表: [${availableSlices}]，尝试以段落末尾切片兜底`)
+            // 若请求后序切片（>0）但在 DOM 中超出，则以最后一个切片兜底定位
+            const fallbackEl = els[els.length - 1]
+            if (fallbackEl) {
+              targetEl = fallbackEl
+              const targetPage = pages.findIndex(page => page.contains(fallbackEl))
+              if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
+                appLog('TTS-Web', `🚀 切片超限兜底翻页: ${horizontalPageIndex.value} -> ${targetPage}`)
+                setHorizontalPageIndex(targetPage)
+              }
+            }
           }
         } else {
           // Fallback logic if no sliceIndex provided (例如后台跨章后尚未生成切片，或文本前缀全文校准后)
