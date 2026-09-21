@@ -446,9 +446,29 @@ class TTSManager: NSObject, ObservableObject {
             logger.log("⚠️ 忽略热更新切片：章节不匹配 (target: \(currentIndex), current: \(currentChapterIndex))", category: "TTS")
             return
         }
+        // 辅助清理前缀：过滤所有空白和标点
+        func cleanPrefix(_ text: String, length: Int = 12) -> String {
+            let filtered = text.unicodeScalars.filter {
+                !CharacterSet.whitespacesAndNewlines.contains($0) &&
+                !CharacterSet.punctuationCharacters.contains($0) &&
+                !CharacterSet.symbols.contains($0)
+            }
+            let str = String(String.UnicodeScalarView(filtered))
+            return String(str.prefix(length))
+        }
+
+        struct WebSentenceMeta {
+            let originalIndex: Int
+            let text: String
+            let prefix: String
+            let slices: [TTSSlice]
+        }
+
+        var webSentences: [WebSentenceMeta] = []
         var slicesByOriginalIndex: [Int: [TTSSlice]] = [:]
         for dict in sentencesData {
             guard let oIdx = dict["originalIndex"] as? Int else { continue }
+            let webText = dict["text"] as? String ?? ""
             var parsedSlices: [TTSSlice] = []
             if let slicesData = dict["slices"] as? [[String: Any]] {
                 for sDict in slicesData {
@@ -459,28 +479,63 @@ class TTSManager: NSObject, ObservableObject {
                     }
                 }
             }
+            let meta = WebSentenceMeta(originalIndex: oIdx, text: webText, prefix: cleanPrefix(webText), slices: parsedSlices)
+            webSentences.append(meta)
             if !parsedSlices.isEmpty {
                 slicesByOriginalIndex[oIdx] = parsedSlices
             }
         }
 
-        guard !slicesByOriginalIndex.isEmpty else {
+        guard !webSentences.isEmpty else {
             logger.log("⚠️ 忽略热更新切片：解析出的有效切片数据为空 (target: \(currentIndex), rawCount: \(sentencesData.count))", category: "TTS")
             return
         }
 
         var updatedSentences: [TTSSentence] = []
+        var searchCursor = 0
+        var matchedCount = 0
+
         for sentence in self.sentences {
-            if let newSlices = slicesByOriginalIndex[sentence.originalIndex] {
-                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: sentence.originalIndex, slices: newSlices))
+            let nativePrefix = cleanPrefix(sentence.text)
+            var matchedMeta: WebSentenceMeta? = nil
+
+            if !nativePrefix.isEmpty {
+                // 1. 优先从游标往后找文本前缀匹配的 Web 段落
+                for i in searchCursor..<webSentences.count {
+                    let w = webSentences[i]
+                    if !w.prefix.isEmpty && (w.prefix.hasPrefix(nativePrefix) || nativePrefix.hasPrefix(w.prefix)) {
+                        matchedMeta = w
+                        searchCursor = i + 1
+                        break
+                    }
+                }
+                // 2. 若游标之后未找到，全局兜底查找一次
+                if matchedMeta == nil {
+                    for i in 0..<searchCursor {
+                        let w = webSentences[i]
+                        if !w.prefix.isEmpty && (w.prefix.hasPrefix(nativePrefix) || nativePrefix.hasPrefix(w.prefix)) {
+                            matchedMeta = w
+                            break
+                        }
+                    }
+                }
+            }
+
+            if let meta = matchedMeta {
+                matchedCount += 1
+                // 仅将权威切片和对齐的 originalIndex 赋予该段落，严格保持原 sentence.text 与数组结构不变，绝无重复朗读隐患
+                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: meta.originalIndex, slices: meta.slices))
+            } else if let fallbackSlices = slicesByOriginalIndex[sentence.originalIndex] {
+                // 兜底：未匹配到文本前缀时保留原数字索引匹配
+                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: sentence.originalIndex, slices: fallbackSlices))
             } else {
                 updatedSentences.append(sentence)
             }
         }
         self.sentences = updatedSentences
-        let multiSliceCount = slicesByOriginalIndex.values.filter { $0.count > 1 }.count
-        let multiSliceDetails = slicesByOriginalIndex.filter { $0.value.count > 1 }.map { "段落\($0.key)(\($0.value.count)切片)" }.joined(separator: ", ")
-        logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)，其中跨页段落 \(multiSliceCount) 个: [\(multiSliceDetails)]", category: "TTS")
+        let multiSliceCount = self.sentences.filter { $0.slices.count > 1 }.count
+        let multiSliceDetails = self.sentences.filter { $0.slices.count > 1 }.map { "段落\($0.originalIndex)(\($0.slices.count)切片)" }.joined(separator: ", ")
+        logger.log("✅ 成功文本对齐热更新切片 (文本匹配成功 \(matchedCount)/\(self.sentences.count) 段)：其中跨页段落 \(multiSliceCount) 个: [\(multiSliceDetails)]", category: "TTS")
 
         if currentSentenceIndex >= 0 && currentSentenceIndex < self.sentences.count {
             let curSentence = self.sentences[currentSentenceIndex]
