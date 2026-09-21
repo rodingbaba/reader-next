@@ -926,6 +926,7 @@ export function useReaderAutoPlayback(
             targetEl = exactEl
             const targetPage = pages.findIndex(page => page.contains(exactEl))
             if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
+              console.log(`[TTS-FLIP] 跨页切片翻页成功: originalIndex=${index}, sliceIndex=${numericSliceIndex}, targetPage=${targetPage}`)
               setHorizontalPageIndex(targetPage)
             }
           }
@@ -979,6 +980,12 @@ export function useReaderAutoPlayback(
     }
   }
 
+  function refreshLastNativeTTSProgress() {
+    if (lastNativeTTSIndex >= 0) {
+      syncNativeTTSProgress(lastNativeTTSIndex, lastNativeTTSSliceIndex, lastNativeTTSTextPrefix)
+    }
+  }
+
   function disposeAutoPlayback() {
     cancelSpeechTransition()
     stopAutoScroll()
@@ -990,6 +997,7 @@ export function useReaderAutoPlayback(
     saveTTSCursor,
     clearReadingClass,
     syncNativeTTSProgress,
+    refreshLastNativeTTSProgress,
     setChapterLayoutReady,
     startAutoScroll,
     stopAutoScroll,

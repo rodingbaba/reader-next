@@ -176,6 +176,7 @@ struct HybridWebView: UIViewRepresentable {
 
         @objc private func onAppWillEnterForeground() {
             guard TTSManager.shared.isPlaying else { return }
+            TTSManager.shared.ensurePlaybackTimerRunning()
             let chapterIndex = TTSManager.shared.currentChapterIndex
             DispatchQueue.main.async { [weak self] in
                 self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSChapterChange && window.__nativeBridgeTTSChapterChange(\(chapterIndex))")

@@ -1901,6 +1901,9 @@ function handleVisibilityChange() {
     if (store.isSpeaking && isHorizontalPageMode.value) {
       rebuildHorizontalPages().then(() => {
         store.updateNativeTTSSlices(horizontalPages.value)
+        nextTick(() => {
+          refreshLastNativeTTSProgress()
+        })
       })
     }
     return
@@ -2415,6 +2418,7 @@ function scheduleRestoreReadingPosition() {
 const {
   clearReadingClass,
   syncNativeTTSProgress,
+  refreshLastNativeTTSProgress,
   setChapterLayoutReady,
   startAutoScroll,
   stopAutoScroll,

@@ -109,6 +109,14 @@ class TTSManager: NSObject, ObservableObject {
     private var overlapTimer: Timer?
     private var playbackTimer: Timer?
 
+    func ensurePlaybackTimerRunning() {
+        guard isPlaying, !isPaused else { return }
+        if playbackTimer == nil {
+            logger.log("🛡️ 前台看门狗：已补齐切片轮询定时器", category: "TTS")
+            startPlaybackTimer()
+        }
+    }
+
     private func startPlaybackTimer() {
         stopPlaybackTimer()
         DispatchQueue.main.async {
@@ -136,14 +144,19 @@ class TTSManager: NSObject, ObservableObject {
         let sentence = sentences[currentSentenceIndex]
         if sentence.slices.isEmpty { return }
         
-        let progress = currentTime / duration
+        // F-T1: 针对跨页切片段落增加约 200ms 的提前量补偿，防止无缝段落交接(gapReduction)提前切下一段导致末尾切片漏发
+        let lookAhead: Double = sentence.slices.count > 1 ? 0.2 : 0.0
+        let effectiveTime = min(duration, currentTime + lookAhead)
+        let progress = effectiveTime / duration
         let targetCharIndex = Int(progress * Double(sentence.text.count))
         
         let currentSlice = sentence.slices.first(where: { targetCharIndex >= $0.charStart && targetCharIndex < ($0.charStart + $0.charLength) }) ?? (targetCharIndex >= sentence.text.count ? sentence.slices.last : sentence.slices.first)
         if let slice = currentSlice {
             let sliceIndex = slice.sliceIndex
             if self.lastReportedSliceIndex != sliceIndex {
+                let oldIndex = self.lastReportedSliceIndex ?? -1
                 self.lastReportedSliceIndex = sliceIndex
+                logger.log("📢 跨页切片推进: 段落 \(sentence.originalIndex), 切片 \(oldIndex) -> \(sliceIndex)", category: "TTS")
                 // F-B1: 追加 textPrefix 供 Web 端做进度校准
                 let textPrefix = String(sentence.text.prefix(16))
                 NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: [
@@ -434,8 +447,12 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         var slicesByOriginalIndex: [Int: [TTSSlice]] = [:]
+        var textByOriginalIndex: [Int: String] = [:]
         for dict in sentencesData {
             guard let oIdx = dict["originalIndex"] as? Int else { continue }
+            if let t = dict["text"] as? String, !t.isEmpty {
+                textByOriginalIndex[oIdx] = t
+            }
             var parsedSlices: [TTSSlice] = []
             if let slicesData = dict["slices"] as? [[String: Any]] {
                 for sDict in slicesData {
@@ -458,17 +475,26 @@ class TTSManager: NSObject, ObservableObject {
 
         var updatedSentences: [TTSSentence] = []
         for sentence in self.sentences {
+            let effectiveText = textByOriginalIndex[sentence.originalIndex] ?? sentence.text
             if let newSlices = slicesByOriginalIndex[sentence.originalIndex] {
-                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: sentence.originalIndex, slices: newSlices))
+                updatedSentences.append(TTSSentence(text: effectiveText, originalIndex: sentence.originalIndex, slices: newSlices))
             } else {
-                updatedSentences.append(sentence)
+                updatedSentences.append(TTSSentence(text: effectiveText, originalIndex: sentence.originalIndex, slices: sentence.slices))
             }
         }
         self.sentences = updatedSentences
         logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)", category: "TTS")
 
-        // 重置上次上报的 sliceIndex，以便立即触发最新切片进度检测
+        if currentSentenceIndex >= 0 && currentSentenceIndex < self.sentences.count {
+            let curSlices = self.sentences[currentSentenceIndex].slices
+            if curSlices.count > 1 {
+                logger.log("📄 当前朗读段落 (\(currentSentenceIndex)) 含有 \(curSlices.count) 个切片，切片已就绪", category: "TTS")
+            }
+        }
+
+        // 重置上次上报的 sliceIndex，并确保定时器运行，以便立即触发最新切片进度检测
         self.lastReportedSliceIndex = nil
+        ensurePlaybackTimerRunning()
         updateSliceProgress()
     }
 
@@ -1267,7 +1293,9 @@ class TTSManager: NSObject, ObservableObject {
                 player.play()
                 isPaused = false
                 markListeningStarted()
+                startPlaybackTimer()
                 logger.log("✅ TTS 恢复播放", category: "TTS")
+                logger.log("⏱️ 恢复播放：已重启切片轮询定时器", category: "TTS")
                 updatePlaybackRate()
             } else {
                 // audioPlayer 不存在，重新播放当前句子
