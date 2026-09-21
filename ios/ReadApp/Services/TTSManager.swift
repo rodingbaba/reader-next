@@ -447,12 +447,8 @@ class TTSManager: NSObject, ObservableObject {
             return
         }
         var slicesByOriginalIndex: [Int: [TTSSlice]] = [:]
-        var textByOriginalIndex: [Int: String] = [:]
         for dict in sentencesData {
             guard let oIdx = dict["originalIndex"] as? Int else { continue }
-            if let t = dict["text"] as? String, !t.isEmpty {
-                textByOriginalIndex[oIdx] = t
-            }
             var parsedSlices: [TTSSlice] = []
             if let slicesData = dict["slices"] as? [[String: Any]] {
                 for sDict in slicesData {
@@ -475,11 +471,10 @@ class TTSManager: NSObject, ObservableObject {
 
         var updatedSentences: [TTSSentence] = []
         for sentence in self.sentences {
-            let effectiveText = textByOriginalIndex[sentence.originalIndex] ?? sentence.text
             if let newSlices = slicesByOriginalIndex[sentence.originalIndex] {
-                updatedSentences.append(TTSSentence(text: effectiveText, originalIndex: sentence.originalIndex, slices: newSlices))
+                updatedSentences.append(TTSSentence(text: sentence.text, originalIndex: sentence.originalIndex, slices: newSlices))
             } else {
-                updatedSentences.append(TTSSentence(text: effectiveText, originalIndex: sentence.originalIndex, slices: sentence.slices))
+                updatedSentences.append(sentence)
             }
         }
         self.sentences = updatedSentences
