@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { useReaderStore } from '../stores/reader'
 import { isNativeApp, invokeTTS } from '../utils/nativeBridge'
+import { appLog } from '../utils/appLogger'
 
 type ReaderStore = ReturnType<typeof useReaderStore>
 const OPENAI_SPEECH_CHUNK_CHAR_LIMIT = 70
@@ -858,7 +859,9 @@ export function useReaderAutoPlayback(
     lastNativeTTSIndex = index
     lastNativeTTSSliceIndex = numericSliceIndex
     lastNativeTTSTextPrefix = textPrefix
+    appLog('TTS-Web', `收到原生进度通知: originalIndex=${index}, sliceIndex=${numericSliceIndex ?? '无'}, textPrefix=${textPrefix ?? '无'}`)
     if (!isChapterLayoutReady) {
+      appLog('TTS-Web', `⚠️ 章节排版尚未就绪，进度入队等待: originalIndex=${index}, sliceIndex=${numericSliceIndex ?? '无'}`)
       pendingProgressQueue.push({ index, sliceIndex: numericSliceIndex, textPrefix })
       return
     }
@@ -870,7 +873,10 @@ export function useReaderAutoPlayback(
       roots = [chapterTextRef.value]
     }
 
-    if (!roots.length) return
+    if (!roots.length) {
+      appLog('TTS-Web', `⚠️ 未找到正文根容器 (roots 为空), isContinuous=${isContinuousMode.value}, isHorizontal=${isHorizontalPageMode.value}`)
+      return
+    }
 
     // F-B3: 三级校准策略——先按 originalIndex 定位，再校验文本前缀；不符则全文搜索前缀匹配段落；兜底回到 originalIndex
     const findByOriginalIndex = () => {
@@ -897,17 +903,23 @@ export function useReaderAutoPlayback(
 
     // 1. 快路径：按 originalIndex 定位 → 校验文本前缀相符
     let els = findByOriginalIndex()
+    const sliceSummary = els.map(el => `s${el.getAttribute('data-slice-index') ?? 0}`).join(',')
+    appLog('TTS-Web', `DOM 检索段落 ${index}: 命中 ${els.length} 个元素 [${sliceSummary}]`)
     if (els.length > 0 && textPrefix) {
       const trimmedPrefix = textPrefix.trim()
       const firstElText = (els[0] as HTMLElement).textContent?.trim() || ''
       if (!firstElText.startsWith(trimmedPrefix)) {
         // 2. 慢路径：索引定位的段落文本与广播前缀不符 → 全 DOM 搜前缀匹配段落
-        console.warn(`[TTS-CALIBRATION] originalIndex=${index} 文本前缀不符，触发全文搜索校准。Native前缀="${trimmedPrefix}", DOM="${firstElText.slice(0, 30)}"`)
+        appLog('TTS-Web', `⚠️ [TTS-CALIBRATION] 前缀校验不符，进入慢路径搜索: index=${index}, DOM前缀="${firstElText.slice(0, 16)}"(len=${firstElText.length}), 广播前缀="${trimmedPrefix}"(len=${trimmedPrefix.length})`)
         const fallbackEls = findByTextPrefix(trimmedPrefix)
         if (fallbackEls.length > 0) {
+          appLog('TTS-Web', `慢路径匹配到 ${fallbackEls.length} 个候选元素，覆盖原始 els 集合`)
           els = fallbackEls
+        } else {
+          appLog('TTS-Web', `慢路径未搜出匹配元素，兜底保留 findByOriginalIndex 结果 (${els.length} 项)`)
         }
-        // 3. 兜底：els 保持 findByOriginalIndex 结果（现状行为）
+      } else {
+        appLog('TTS-Web', `✅ 前缀快路径校验通过: index=${index}`)
       }
     }
 
@@ -925,10 +937,18 @@ export function useReaderAutoPlayback(
           if (exactEl) {
             targetEl = exactEl
             const targetPage = pages.findIndex(page => page.contains(exactEl))
+            appLog('TTS-Web', `跨页切片目标定位: originalIndex=${index}, sliceIndex=${numericSliceIndex}, targetPage=${targetPage}, 当前页=${horizontalPageIndex.value}`)
             if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
-              console.log(`[TTS-FLIP] 跨页切片翻页成功: originalIndex=${index}, sliceIndex=${numericSliceIndex}, targetPage=${targetPage}`)
+              appLog('TTS-Web', `🚀 执行跨页翻页 setHorizontalPageIndex: ${horizontalPageIndex.value} -> ${targetPage} (段落 ${index} 切片 ${numericSliceIndex})`)
               setHorizontalPageIndex(targetPage)
+            } else if (targetPage === horizontalPageIndex.value) {
+              appLog('TTS-Web', `切片目标页与当前页相同 (${targetPage})，无需翻页`)
+            } else {
+              appLog('TTS-Web', `⚠️ 未在 pages 中找到 exactEl 所在的页容器 (targetPage=${targetPage})`)
             }
+          } else {
+            const availableSlices = els.map(el => el.getAttribute('data-slice-index') ?? 0).join(', ')
+            appLog('TTS-Web', `⚠️ 在 els 中未找到 sliceIndex=${numericSliceIndex} 的元素！当前 els 切片列表: [${availableSlices}]`)
           }
         } else {
           // Fallback logic if no sliceIndex provided (例如后台跨章后尚未生成切片，或文本前缀全文校准后)
@@ -937,11 +957,14 @@ export function useReaderAutoPlayback(
             const elOnCurrentPage = els.find(el => currentPageEl.contains(el))
             if (elOnCurrentPage) {
               targetEl = elOnCurrentPage
+              appLog('TTS-Web', `无切片索引兜底: 当前页包含目标段落，停留在当前页 ${horizontalPageIndex.value}`)
             }
           } else {
             // 当前页未包含目标段落（如跨章或文本校准后位于其他页），自动寻找包含目标段落的页码并翻页
             const targetPage = pages.findIndex(page => els.some(el => page.contains(el)))
+            appLog('TTS-Web', `无切片索引兜底: 目标段落位于其他页，targetPage=${targetPage}, 当前页=${horizontalPageIndex.value}`)
             if (targetPage >= 0 && targetPage !== horizontalPageIndex.value) {
+              appLog('TTS-Web', `🚀 无切片兜底触发翻页: ${horizontalPageIndex.value} -> ${targetPage}`)
               setHorizontalPageIndex(targetPage)
               const elOnTargetPage = els.find(el => pages[targetPage].contains(el))
               if (elOnTargetPage) {
@@ -953,6 +976,8 @@ export function useReaderAutoPlayback(
       }
 
       showParagraph(targetEl)
+    } else {
+      appLog('TTS-Web', `⚠️ 未能定位到段落 ${index} 的任何 DOM 元素！`)
     }
   }
 

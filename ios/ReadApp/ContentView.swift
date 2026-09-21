@@ -153,8 +153,13 @@ struct HybridWebView: UIViewRepresentable {
             } else {
                 prefixArg = "undefined"
             }
+            LogManager.shared.log("🌉 透传 TTS 进度到 Web: index=\(index), slice=\(sliceArg), prefix=\(prefixArg)", category: "Hybrid")
             DispatchQueue.main.async { [weak self] in
-                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index), \(sliceArg), \(prefixArg))")
+                guard let webView = self?.webView else {
+                    LogManager.shared.log("⚠️ 透传 TTS 进度失败: webView 为 nil (index=\(index), slice=\(sliceArg))", category: "Hybrid")
+                    return
+                }
+                webView.evaluateJavaScript("window.__nativeBridgeTTSProgress && window.__nativeBridgeTTSProgress(\(index), \(sliceArg), \(prefixArg))")
             }
         }
         

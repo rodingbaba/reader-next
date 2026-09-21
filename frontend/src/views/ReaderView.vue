@@ -1126,6 +1126,7 @@ import { countBrowserBookCache } from '../utils/browserCache'
 import { APP_VIEWPORT_CHANGE_EVENT, syncViewportSize } from '../utils/viewport'
 import { isReaderInteractiveClickTarget } from '../utils/readerClick'
 import { isNativeApp, invokeTTS } from '../utils/nativeBridge'
+import { appLog } from '../utils/appLogger'
 import { resolveNativeAssetUrl } from '../utils/secureAccess'
 import { createReaderProgressAutoSaveScheduler, createReaderProgressExitSaver } from '../utils/readerProgressAutoSave'
 import { ReadingTracker } from '../utils/readingTracker'
@@ -1895,19 +1896,23 @@ function handleBeforeUnload() {
 
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
+    appLog('TTS-Web', `📱 切回前台 visibilitychange: isSpeaking=${store.isSpeaking}, isPaused=${store.isPaused}, isHorizontalPageMode=${isHorizontalPageMode.value}, 当前页=${horizontalPageIndex.value}`)
     if (isNativeApp()) {
       invokeTTS('getState')
     }
     if (store.isSpeaking && isHorizontalPageMode.value) {
       rebuildHorizontalPages().then(() => {
+        appLog('TTS-Web', `📱 切回前台重构水平分页完成: 总页数=${horizontalPages.value.length}, 当前页=${horizontalPageIndex.value}`)
         store.updateNativeTTSSlices(horizontalPages.value)
         nextTick(() => {
+          appLog('TTS-Web', `📱 执行 refreshLastNativeTTSProgress 刷新前台高亮`)
           refreshLastNativeTTSProgress()
         })
       })
     }
     return
   }
+  appLog('TTS-Web', `📱 切入后台 visibilitychange (hidden)`)
   persistReadingProgressTemporaryKeepalive()
 }
 

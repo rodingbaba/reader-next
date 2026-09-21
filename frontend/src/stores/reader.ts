@@ -1820,6 +1820,11 @@ export const useReaderStore = defineStore('reader', () => {
     if (!isSpeaking.value) return
     const sentences = extractDomSentences(explicitPages)
     if (!sentences.length) return
+    const multiSliceSummary = sentences
+      .filter(s => s.slices.length > 1)
+      .map(s => `p${s.originalIndex}(${s.slices.length}切片: [${s.slices.map(sl => `s${sl.sliceIndex}@${sl.charStart}+${sl.charLength}`).join(',')}])`)
+      .join('; ')
+    appLog('TTS-Web', `📤 发送 updateSlices 热更新切片: 章节=${currentIndex.value}, 段落数=${sentences.length}, 跨页段落数=${sentences.filter(s => s.slices.length > 1).length} [${multiSliceSummary}]`)
     invokeTTS('updateSlices', {
       currentIndex: currentIndex.value,
       sentences

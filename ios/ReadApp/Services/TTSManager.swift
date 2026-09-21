@@ -156,7 +156,7 @@ class TTSManager: NSObject, ObservableObject {
             if self.lastReportedSliceIndex != sliceIndex {
                 let oldIndex = self.lastReportedSliceIndex ?? -1
                 self.lastReportedSliceIndex = sliceIndex
-                logger.log("📢 跨页切片推进: 段落 \(sentence.originalIndex), 切片 \(oldIndex) -> \(sliceIndex)", category: "TTS")
+                logger.log("📢 跨页切片推进: 段落 \(sentence.originalIndex), 切片 \(oldIndex) -> \(sliceIndex) | time=\(String(format: "%.2f", currentTime))/\(String(format: "%.2f", duration)), targetChar=\(targetCharIndex)/\(sentence.text.count), sliceRange=[\(slice.charStart)..<\(slice.charStart + slice.charLength)]", category: "TTS")
                 // F-B1: 追加 textPrefix 供 Web 端做进度校准
                 let textPrefix = String(sentence.text.prefix(16))
                 NotificationCenter.default.post(name: NSNotification.Name("TTSProgressChanged"), object: nil, userInfo: [
@@ -478,12 +478,17 @@ class TTSManager: NSObject, ObservableObject {
             }
         }
         self.sentences = updatedSentences
-        logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)", category: "TTS")
+        let multiSliceCount = slicesByOriginalIndex.values.filter { $0.count > 1 }.count
+        let multiSliceDetails = slicesByOriginalIndex.filter { $0.value.count > 1 }.map { "段落\($0.key)(\($0.value.count)切片)" }.joined(separator: ", ")
+        logger.log("✅ 成功热更新当前章节 \(currentIndex) 的 DOM 切片信息，更新段落数: \(slicesByOriginalIndex.count)，其中跨页段落 \(multiSliceCount) 个: [\(multiSliceDetails)]", category: "TTS")
 
         if currentSentenceIndex >= 0 && currentSentenceIndex < self.sentences.count {
-            let curSlices = self.sentences[currentSentenceIndex].slices
+            let curSentence = self.sentences[currentSentenceIndex]
+            let curSlices = curSentence.slices
+            logger.log("📄 当前朗读段落索引: \(currentSentenceIndex), originalIndex: \(curSentence.originalIndex), 文本字数: \(curSentence.text.count), 切片数: \(curSlices.count)", category: "TTS")
             if curSlices.count > 1 {
-                logger.log("📄 当前朗读段落 (\(currentSentenceIndex)) 含有 \(curSlices.count) 个切片，切片已就绪", category: "TTS")
+                let sliceSummary = curSlices.map { "s\($0.sliceIndex):[\($0.charStart)..<\($0.charStart + $0.charLength)]" }.joined(separator: ", ")
+                logger.log("📄 当前朗读段落切片范围详情: \(sliceSummary)", category: "TTS")
             }
         }
 
