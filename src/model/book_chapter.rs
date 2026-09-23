@@ -12,4 +12,6 @@ pub struct BookChapter {
     pub is_volume: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<i32>,
 }

@@ -64,6 +64,7 @@ export interface BookChapter {
   index: number
   isVolume?: boolean
   volume?: string
+  level?: number
 }
 
 // ─── 书源 ───

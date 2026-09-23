@@ -57,6 +57,19 @@
       </div>
       <div class="chapter-jump-actions">
         <button
+          v-if="(isTreeCatalog || hasVolumes) && !chapterSearch.trim()"
+          class="jump-btn"
+          :title="isAllCollapsed ? '展开全部目录' : '折叠全部目录'"
+          @click="toggleCollapseAll"
+        >
+          <svg v-if="isAllCollapsed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m7 15 5 5 5-5M7 9l5-5 5 5" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m7 4 5 5 5-5M7 20l5-5 5 5" />
+          </svg>
+        </button>
+        <button
           class="jump-btn"
           title="跳到目录顶部"
           :disabled="!filteredChapters.length"
@@ -86,7 +99,51 @@
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
       <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
 
-      <!-- 分卷折叠模式 (有分卷且非搜索状态) -->
+      <!-- 1. 多级树状折叠模式 (多层级书籍且非搜索状态) -->
+      <template v-else-if="isTreeCatalog && !chapterSearch.trim()">
+        <div
+          v-for="item in visibleTreeChapters"
+          :key="item.index"
+          class="list-item tree-item"
+          :class="{
+            'is-volume': item.isVolume,
+            'level-0': item.level === 0,
+            'level-1': item.level === 1,
+            'level-2': item.level >= 2,
+            active: item.index === store.currentIndex,
+            read: store.isChapterRead(item.index)
+          }"
+          :style="{ paddingLeft: `${Math.max(16, 16 + item.level * 16)}px` }"
+          @click="handleTreeItemClick(item)"
+        >
+          <!-- 卷折叠箭头 -->
+          <span
+            v-if="item.isVolume"
+            class="tree-arrow"
+            :class="{ open: !collapsedNodeIndices.has(item.index) }"
+            @click.stop="toggleTreeNode(item.index)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6" /></svg>
+          </span>
+          <span v-else class="tree-bullet"></span>
+
+          <span class="item-title tree-title">{{ item.title }}</span>
+
+          <!-- 卷下章节数 -->
+          <span v-if="item.isVolume && item.childCount > 0" class="volume-count">
+            {{ item.childCount }}章
+          </span>
+
+          <!-- 叶子章节阅读状态 -->
+          <div v-else-if="!item.isVolume" class="item-status">
+            <span v-if="item.index === store.currentIndex" class="status-badge current">当前</span>
+            <span v-else-if="store.isChapterRead(item.index)" class="status-badge read">已读</span>
+            <span v-if="isChapterCached(item.url)" class="status-badge cached">已缓存</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 2. 普通分卷折叠模式 (单层分卷且非搜索状态) -->
       <template v-else-if="hasVolumes && !chapterSearch.trim()">
         <div v-for="group in groupedVolumes" :key="group.volumeTitle" class="volume-group">
           <div class="volume-header" @click="toggleVolume(group.volumeTitle)">
@@ -115,7 +172,7 @@
         </div>
       </template>
 
-      <!-- 普通平铺列表 (无分卷或搜索时) -->
+      <!-- 3. 普通平铺列表 (无分卷或搜索时) -->
       <template v-else>
         <div
           v-for="chapter in filteredChapters"
@@ -213,6 +270,139 @@ const hasVolumes = computed(() => {
   return store.chapters.some(c => !!c.volume)
 })
 
+const isTreeCatalog = computed(() => {
+  return store.chapters.some(c => (c.level !== undefined && c.level > 0) || c.isVolume)
+})
+
+interface TreeCatalogItem {
+  index: number
+  title: string
+  url: string
+  level: number
+  isVolume: boolean
+  childCount: number
+  parentIndex: number | null
+}
+
+const collapsedNodeIndices = ref<Set<number>>(new Set())
+let hasInitTreeCollapsed = false
+
+const preparedTreeChapters = computed<TreeCatalogItem[]>(() => {
+  if (!isTreeCatalog.value) return []
+  const chapters = store.chapters
+  const n = chapters.length
+  const items: TreeCatalogItem[] = []
+
+  for (let i = 0; i < n; i++) {
+    const ch = chapters[i]
+    const level = ch.level ?? 0
+    const nextLevel = i + 1 < n ? (chapters[i + 1].level ?? 0) : 0
+    const isVol = !!ch.isVolume || nextLevel > level
+
+    items.push({
+      index: i,
+      title: ch.title,
+      url: ch.url,
+      level,
+      isVolume: isVol,
+      childCount: 0,
+      parentIndex: null,
+    })
+  }
+
+  const stack: { index: number; level: number }[] = []
+  for (let i = 0; i < n; i++) {
+    const item = items[i]
+    while (stack.length > 0 && stack[stack.length - 1].level >= item.level) {
+      stack.pop()
+    }
+    if (stack.length > 0) {
+      item.parentIndex = stack[stack.length - 1].index
+    }
+    stack.push({ index: i, level: item.level })
+  }
+
+  for (let i = 0; i < n; i++) {
+    const item = items[i]
+    if (item.isVolume) {
+      let count = 0
+      for (let j = i + 1; j < n; j++) {
+        if (items[j].level <= item.level) {
+          break
+        }
+        if (!items[j].isVolume) {
+          count++
+        }
+      }
+      item.childCount = count
+    }
+  }
+
+  return items
+})
+
+const visibleTreeChapters = computed<TreeCatalogItem[]>(() => {
+  const items = preparedTreeChapters.value
+  const list: TreeCatalogItem[] = []
+  let hiddenBelowLevel: number | null = null
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+
+    if (hiddenBelowLevel !== null) {
+      if (item.level > hiddenBelowLevel) {
+        continue
+      } else {
+        hiddenBelowLevel = null
+      }
+    }
+
+    list.push(item)
+
+    if (item.isVolume && collapsedNodeIndices.value.has(item.index)) {
+      hiddenBelowLevel = item.level
+    }
+  }
+
+  return list
+})
+
+function toggleTreeNode(index: number) {
+  if (collapsedNodeIndices.value.has(index)) {
+    collapsedNodeIndices.value.delete(index)
+  } else {
+    collapsedNodeIndices.value.add(index)
+  }
+}
+
+function handleTreeItemClick(item: TreeCatalogItem) {
+  if (item.isVolume) {
+    toggleTreeNode(item.index)
+  } else {
+    goToChapter(item.index)
+  }
+}
+
+function initTreeCollapsedIfNeeded() {
+  if (!isTreeCatalog.value || hasInitTreeCollapsed || preparedTreeChapters.value.length === 0) return
+  const curIdx = store.currentIndex
+  const currentAncestors = new Set<number>()
+  let curr = preparedTreeChapters.value[curIdx]
+  while (curr && curr.parentIndex !== null) {
+    currentAncestors.add(curr.parentIndex)
+    curr = preparedTreeChapters.value[curr.parentIndex]
+  }
+
+  for (const item of preparedTreeChapters.value) {
+    if (item.isVolume && !currentAncestors.has(item.index)) {
+      if (item.level >= 1) {
+        collapsedNodeIndices.value.add(item.index)
+      }
+    }
+  }
+  hasInitTreeCollapsed = true
+}
+
 interface VolumeGroup {
   volumeTitle: string
   chapters: Array<any>
@@ -221,7 +411,7 @@ interface VolumeGroup {
 const collapsedVolumes = ref<Set<string>>(new Set())
 
 const groupedVolumes = computed<VolumeGroup[]>(() => {
-  if (!hasVolumes.value) return []
+  if (!hasVolumes.value || isTreeCatalog.value) return []
   const groups: VolumeGroup[] = []
   let currentGroup: VolumeGroup | null = null
 
@@ -259,9 +449,57 @@ function ensureCurrentVolumeExpanded() {
   }
 }
 
+function ensureCurrentAncestorsExpanded() {
+  if (isTreeCatalog.value) {
+    let curr = preparedTreeChapters.value[store.currentIndex]
+    while (curr && curr.parentIndex !== null) {
+      collapsedNodeIndices.value.delete(curr.parentIndex)
+      curr = preparedTreeChapters.value[curr.parentIndex]
+    }
+  } else {
+    ensureCurrentVolumeExpanded()
+  }
+}
+
+const isAllCollapsed = computed(() => {
+  if (isTreeCatalog.value) {
+    const volItems = preparedTreeChapters.value.filter(i => i.isVolume)
+    if (volItems.length === 0) return false
+    return volItems.every(i => collapsedNodeIndices.value.has(i.index))
+  }
+  if (hasVolumes.value) {
+    if (groupedVolumes.value.length === 0) return false
+    return groupedVolumes.value.every(g => collapsedVolumes.value.has(g.volumeTitle))
+  }
+  return false
+})
+
+function toggleCollapseAll() {
+  if (isTreeCatalog.value) {
+    if (isAllCollapsed.value) {
+      collapsedNodeIndices.value.clear()
+    } else {
+      preparedTreeChapters.value.forEach(i => {
+        if (i.isVolume) {
+          collapsedNodeIndices.value.add(i.index)
+        }
+      })
+    }
+  } else if (hasVolumes.value) {
+    if (isAllCollapsed.value) {
+      collapsedVolumes.value.clear()
+    } else {
+      groupedVolumes.value.forEach(g => {
+        collapsedVolumes.value.add(g.volumeTitle)
+      })
+    }
+  }
+}
+
 onMounted(() => {
   activeTab.value = props.initialTab
-  ensureCurrentVolumeExpanded()
+  initTreeCollapsedIfNeeded()
+  ensureCurrentAncestorsExpanded()
   scrollToCurrent()
   store.fetchBookmarks()
   void refreshCachedChapterState()
@@ -274,27 +512,33 @@ watch(() => props.initialTab, (tab) => {
     selectedBookmarkKeys.value.clear()
   }
   if (tab === 'chapters') {
+    initTreeCollapsedIfNeeded()
+    ensureCurrentAncestorsExpanded()
     void refreshCachedChapterState()
     scrollToCurrent()
   }
 })
 
 watch(() => store.currentIndex, () => {
-  ensureCurrentVolumeExpanded()
+  ensureCurrentAncestorsExpanded()
 })
 
 watch(() => store.book?.bookUrl, () => {
+  hasInitTreeCollapsed = false
+  initTreeCollapsedIfNeeded()
   void refreshCachedChapterState()
-  ensureCurrentVolumeExpanded()
+  ensureCurrentAncestorsExpanded()
 })
 
 watch(() => store.chapters, () => {
+  hasInitTreeCollapsed = false
+  initTreeCollapsedIfNeeded()
   void refreshCachedChapterState()
-  ensureCurrentVolumeExpanded()
+  ensureCurrentAncestorsExpanded()
 }, { deep: true })
 
 function scrollToCurrent() {
-  ensureCurrentVolumeExpanded()
+  ensureCurrentAncestorsExpanded()
   nextTick(() => {
     const activeEl = listRef.value?.querySelector('.list-item.active')
     if (activeEl) {
@@ -597,6 +841,74 @@ function formatDate(ts?: number) {
   text-align: center;
   opacity: 0.5;
   font-size: 14px;
+}
+
+/* Multi-level Tree Catalog Styles */
+.tree-item {
+  position: relative;
+  user-select: none;
+}
+
+.tree-item.is-volume {
+  font-weight: 550;
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.tree-item.is-volume:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.tree-item.level-0.is-volume {
+  font-size: 14px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.03);
+  border-top: 1px solid rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.tree-item.level-1.is-volume {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.tree-arrow {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: transform 0.2s ease;
+  cursor: pointer;
+}
+
+.tree-arrow:hover {
+  opacity: 0.9;
+}
+
+.tree-arrow.open {
+  transform: rotate(90deg);
+}
+
+.tree-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tree-bullet {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.22;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+.tree-title {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Volume Groups (爱阅记同款折叠分卷样式) */

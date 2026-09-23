@@ -35,6 +35,10 @@ struct StoredEpubChapter {
     files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     volume: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    level: Option<i32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    is_volume: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,11 +124,13 @@ impl LocalEpubBookService {
         validate_epub_upload(file_name, bytes.len())?;
         let safe_file_name = epub_file_name(file_name);
 
+        let t_parse_start = std::time::Instant::now();
         let bytes_owned = bytes.to_vec();
         let epub_data = tokio::task::spawn_blocking(move || parse_epub(&bytes_owned, None, false))
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("EPUB 解析任务失败: {}", e)))?
             .map_err(AppError::BadRequest)?;
+        let t_parse = t_parse_start.elapsed();
 
         let hash = md5_hex(&format!(
             "{}:{}:{}",
@@ -139,6 +145,7 @@ impl LocalEpubBookService {
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
 
+        let t_disk_start = std::time::Instant::now();
         fs::write(book_dir.join("book.epub"), bytes)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
@@ -163,6 +170,8 @@ impl LocalEpubBookService {
                 index: i as i32,
                 files: ch.files.clone(),
                 volume: ch.volume.clone(),
+                level: ch.level,
+                is_volume: ch.is_volume,
             })
             .collect();
 
@@ -184,6 +193,16 @@ impl LocalEpubBookService {
         fs::write(book_dir.join("chapters.json"), data)
             .await
             .map_err(|e| AppError::Internal(e.into()))?;
+        let t_disk = t_disk_start.elapsed();
+
+        tracing::info!(
+            "[LocalEpub] '{}' imported ({} chapters, {:.2} MB): parse_toc={}ms, disk_write={}ms",
+            index.name,
+            index.chapters.len(),
+            bytes.len() as f64 / 1024.0 / 1024.0,
+            t_parse.as_millis(),
+            t_disk.as_millis()
+        );
 
         let total_chars: usize = epub_data.chapters.iter().map(|ch| ch.content.len()).sum();
 
@@ -249,6 +268,8 @@ impl LocalEpubBookService {
                 url: ch.url,
                 index: ch.index,
                 volume: ch.volume,
+                level: ch.level,
+                is_volume: ch.is_volume,
                 ..BookChapter::default()
             })
             .collect())
@@ -477,6 +498,8 @@ struct EpubChapter {
     content: String,
     files: Vec<String>,
     volume: Option<String>,
+    level: Option<i32>,
+    is_volume: bool,
 }
 
 struct ParsedEpubData {
@@ -839,6 +862,8 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
     // Parse OPF
     let opf_str = read_zip_entry_to_string(&mut archive, &rootfile_path)?;
     let mut manifest_items: HashMap<String, String> = HashMap::new();
+    let mut manifest_details: Vec<(String, String, String, String)> = Vec::new(); // (id, href, media_type, properties)
+    let mut spine_toc_id: Option<String> = None;
 
     {
         let mut opf_reader = Reader::from_str(&opf_str);
@@ -853,19 +878,31 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                 {
                     "metadata" => in_metadata = true,
                     "manifest" => in_manifest = true,
-                    "spine" => in_spine = true,
+                    "spine" => {
+                        in_spine = true;
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref().eq_ignore_ascii_case(b"toc") {
+                                spine_toc_id = Some(String::from_utf8_lossy(&attr.value).trim().to_string());
+                            }
+                        }
+                    }
                     "item" if in_manifest => {
                         let mut id = String::new();
                         let mut href = String::new();
+                        let mut media_type = String::new();
+                        let mut properties = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"id" => id = String::from_utf8_lossy(&attr.value).into_owned(),
                                 b"href" => href = String::from_utf8_lossy(&attr.value).into_owned(),
+                                b"media-type" => media_type = String::from_utf8_lossy(&attr.value).into_owned(),
+                                b"properties" => properties = String::from_utf8_lossy(&attr.value).into_owned(),
                                 _ => {}
                             }
                         }
                         if !id.is_empty() && !href.is_empty() {
-                            manifest_items.insert(id, href);
+                            manifest_items.insert(id.clone(), href.clone());
+                            manifest_details.push((id, href, media_type, properties));
                         }
                     }
                     "itemref" if in_spine => {
@@ -905,14 +942,56 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
         }
     }
 
-    // Read nav
-    let nav_item = manifest_items.values().find(|href| {
-        href.ends_with("nav.xhtml") || href.ends_with("nav.html") || href.ends_with("toc.ncx")
-    });
-    if let Some(nav_href) = nav_item {
+    // Read nav / TOC with comprehensive multi-layer strategy
+    let mut candidate_nav_hrefs: Vec<String> = Vec::new();
+
+    // 1. Prioritize spine toc attribute (standard EPUB 2)
+    if let Some(toc_id) = &spine_toc_id {
+        if let Some(href) = manifest_items.get(toc_id) {
+            candidate_nav_hrefs.push(href.clone());
+        }
+    }
+
+    // 2. MIME type match (application/x-dtbncx+xml)
+    for (_, href, media_type, _) in &manifest_details {
+        if media_type.eq_ignore_ascii_case("application/x-dtbncx+xml") {
+            if !candidate_nav_hrefs.contains(href) {
+                candidate_nav_hrefs.push(href.clone());
+            }
+        }
+    }
+
+    // 3. EPUB 3 properties="nav"
+    for (_, href, _, properties) in &manifest_details {
+        if properties.split_whitespace().any(|p| p.eq_ignore_ascii_case("nav")) {
+            if !candidate_nav_hrefs.contains(href) {
+                candidate_nav_hrefs.push(href.clone());
+            }
+        }
+    }
+
+    // 4. File extension fallbacks (*.ncx, nav.xhtml, toc.xhtml, etc.)
+    for href in manifest_items.values() {
+        let lower = href.to_lowercase();
+        if lower.ends_with(".ncx")
+            || lower.ends_with("nav.xhtml")
+            || lower.ends_with("nav.html")
+            || lower.ends_with("toc.xhtml")
+            || lower.ends_with("toc.html")
+        {
+            if !candidate_nav_hrefs.contains(href) {
+                candidate_nav_hrefs.push(href.clone());
+            }
+        }
+    }
+
+    for nav_href in &candidate_nav_hrefs {
         let full_path = format!("{}{}", opf_dir, nav_href);
         if let Ok(nav_str) = read_zip_entry_to_string(&mut archive, &full_path) {
-            nav_content = Some(nav_str);
+            if !nav_str.trim().is_empty() {
+                nav_content = Some(nav_str);
+                break;
+            }
         }
     }
 
@@ -934,7 +1013,12 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                 let html_str = read_zip_entry_to_string(&mut archive, &full_path).unwrap_or_default();
                 content = sanitize_epub_html(&html_str, &full_path, hash, Some(&mut archive));
                 let chapter_title = extract_title_from_html_str(&html_str).or_else(|| {
-                    Some(format!("第 {} 章", i + 1))
+                    let lower = href.to_lowercase();
+                    if lower.contains("cover") {
+                        Some("封面".to_string())
+                    } else {
+                        Some(format!("第 {} 章", i + 1))
+                    }
                 });
                 title_str = chapter_title.unwrap_or_else(|| "正文".to_string());
             } else {
@@ -942,7 +1026,12 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                     title_str = extract_title_from_html_str(&html_str).unwrap_or_default();
                 }
                 if title_str.is_empty() {
-                    title_str = format!("第 {} 章", i + 1);
+                    let lower = href.to_lowercase();
+                    if lower.contains("cover") {
+                        title_str = "封面".to_string();
+                    } else {
+                        title_str = format!("第 {} 章", i + 1);
+                    }
                 }
             }
             chapters.push(EpubChapter {
@@ -950,10 +1039,12 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                 content,
                 files: vec![full_path],
                 volume: None,
+                level: Some(0),
+                is_volume: false,
             });
         }
     } else {
-        // 正规策略：以 TOC 逻辑目录为锚点，将非 TOC 的连续分片文件（如扉页后续正文、大章节切片等）自动归并到前序章节
+        // 正规策略：以 TOC 逻辑目录为锚点，将非 TOC 的连续分片文件（如封面后续正文、大章节切片等）自动归并到前序章节
         for href in &spine_hrefs {
             let full_path = format!("{}{}", opf_dir, href);
             let filename = href.split('#').next().unwrap_or(href).rsplit('/').next().unwrap_or(href);
@@ -964,6 +1055,8 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                     content: String::new(),
                     files: vec![full_path],
                     volume: toc_item.volume.clone(),
+                    level: Some(toc_item.level),
+                    is_volume: toc_item.is_volume,
                 });
             } else if let Some(last) = chapters.last_mut() {
                 // 当前物理分片不在 TOC 中，但前面已有章节：自动归并为上一章节的后续承接分卷
@@ -975,13 +1068,20 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
                     title_str = extract_title_from_html_str(&html_str).unwrap_or_default();
                 }
                 if title_str.is_empty() {
-                    title_str = "开始".to_string();
+                    let lower = href.to_lowercase();
+                    if lower.contains("cover") || lower.contains("titlepage") {
+                        title_str = "封面".to_string();
+                    } else {
+                        title_str = "开始".to_string();
+                    }
                 }
                 chapters.push(EpubChapter {
                     title: title_str,
                     content: String::new(),
                     files: vec![full_path],
                     volume: None,
+                    level: Some(0),
+                    is_volume: false,
                 });
             }
         }
@@ -1021,7 +1121,7 @@ fn parse_epub_archive<R: std::io::Read + std::io::Seek>(
 
 fn extract_title_from_html_str(html_str: &str) -> Option<String> {
     use once_cell::sync::Lazy;
-    static RE_H: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<h[1-3][^>]*>(.*?)</h[1-3]>").unwrap());
+    static RE_H: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<h[1-6][^>]*>(.*?)</h[1-6]>").unwrap());
     if let Some(caps) = RE_H.captures(html_str) {
         if let Some(m) = caps.get(1) {
             let raw = strip_html_tags(m.as_str());
@@ -1125,6 +1225,28 @@ fn sanitize_epub_html<R: std::io::Read + std::io::Seek>(
         original_match.to_string()
     }).to_string();
 
+    // 3. 将 EPUB 常见的 <svg><image .../></svg> 包装标准化为干净的 <p class="reader-image-paragraph"><img .../></p>
+    // 避免在前端阅读器分页/仿真翻页时由于 SVG 高度塌陷或 DOM 结构被破坏导致封面图片不显示
+    static RE_SVG_WRAPPER: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(?si)<svg[^>]*>[\s\S]*?<image[^>]+(?:xlink:href|href)=['"]([^'"]+)['"][^>]*>[\s\S]*?</svg>"#).unwrap()
+    });
+    text = RE_SVG_WRAPPER.replace_all(&text, |caps: &regex::Captures| {
+        let src = caps.get(1).unwrap().as_str();
+        format!(r#"<p class="reader-image-paragraph" style="text-align: center; margin: 0 auto;"><img src="{}" alt="封面" style="max-width: 100%; max-height: 100%; height: auto; object-fit: contain; margin: 0 auto; display: block;" /></p>"#, src)
+    }).to_string();
+
+    static RE_STANDALONE_IMAGE_TAG: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(?i)<image\b([^>]*(?:src|href|xlink:href)=['"][^'"]+['"][^>]*)>"#).unwrap()
+    });
+    static RE_XLINK: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)\bxlink:href="#).unwrap());
+    static RE_HREF: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)\bhref="#).unwrap());
+    text = RE_STANDALONE_IMAGE_TAG.replace_all(&text, |caps: &regex::Captures| {
+        let attrs = caps.get(1).unwrap().as_str();
+        let norm_attrs = RE_XLINK.replace_all(attrs, "src=");
+        let norm_attrs = RE_HREF.replace_all(&norm_attrs, "src=");
+        format!("<img {}>", norm_attrs)
+    }).to_string();
+
     // Quick and dirty fix to keep body content if possible, or just return text
     // We don't want the full html/head/body structure to confuse the frontend
     static RE_BODY: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap());
@@ -1148,6 +1270,8 @@ fn strip_html_tags(html: &str) -> String {
 struct TocItem {
     pub title: String,
     pub volume: Option<String>,
+    pub level: i32,
+    pub is_volume: bool,
 }
 
 fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
@@ -1220,6 +1344,8 @@ fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
                     }
                 } else if name.eq_ignore_ascii_case("navPoint") {
                     if let Some(item) = stack.pop() {
+                        let level = stack.len() as i32;
+                        let is_volume = item.has_children;
                         if let Some(src) = item.src {
                             let href = src.split('#').next().unwrap_or(&src);
                             let filename = href.rsplit('/').next().unwrap_or(href).to_string();
@@ -1233,6 +1359,8 @@ fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
                                 map.insert(filename, TocItem {
                                     title: item.title,
                                     volume,
+                                    level,
+                                    is_volume,
                                 });
                             }
                         }
@@ -1257,6 +1385,8 @@ fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
                 map.insert(filename, TocItem {
                     title,
                     volume: None,
+                    level: 0,
+                    is_volume: false,
                 });
             }
         }
@@ -1271,6 +1401,8 @@ fn extract_toc_map(nav: &str) -> HashMap<String, TocItem> {
                 map.insert(filename, TocItem {
                     title,
                     volume: None,
+                    level: 0,
+                    is_volume: false,
                 });
             }
         }
@@ -1491,5 +1623,57 @@ mod tests {
         let next_ch = &parsed.chapters[p1_idx + 1];
         assert_eq!(next_ch.title, "第1章 前世今生");
         assert_eq!(next_ch.volume.as_deref(), Some("【第一篇】宦海惊情"));
+    }
+
+    #[test]
+    fn test_liuchao_ncx_volume_extraction() {
+        let path = std::path::Path::new("storage/data/admin/local_books/42a894f9994c3285f22bf0a9d7315bc9/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        let parsed = parse_epub(&bytes, None, false).expect("parse liuchao epub");
+        assert!(parsed.title.contains("六朝清羽记"));
+        assert!(parsed.chapters.len() > 800, "六朝应当有 800+ 章节，实际: {}", parsed.chapters.len());
+
+        // 验证首章为封面，而非第 1 章或扉页
+        assert_eq!(parsed.chapters[0].title, "封面");
+
+        // 验证第1集第1章为「第1章·穿越」，volume 为「第1集·太乙真宗」
+        let ch_chuanyue = parsed.chapters.iter().find(|c| c.title == "第1章·穿越").expect("必须找到「第1章·穿越」");
+        assert_eq!(ch_chuanyue.volume.as_deref(), Some("第1集·太乙真宗"));
+
+        // 验证第1集第2章为「第2章·异界」
+        let ch_yijie = parsed.chapters.iter().find(|c| c.title == "第2章·异界").expect("必须找到「第2章·异界」");
+        assert_eq!(ch_yijie.volume.as_deref(), Some("第1集·太乙真宗"));
+
+        // 验证没有被降级错命名的「第 6 章」
+        let dummy_ch6 = parsed.chapters.iter().find(|c| c.title == "第 6 章");
+        assert!(dummy_ch6.is_none(), "不应当出现降级生成的「第 6 章」");
+
+        // 验证多层级 level 与 is_volume
+        let ch_part1 = parsed.chapters.iter().find(|c| c.title == "第一部 《六朝清羽记》").expect("第一部");
+        assert_eq!(ch_part1.level, Some(0));
+        assert!(ch_part1.is_volume);
+
+        let ch_set1 = parsed.chapters.iter().find(|c| c.title == "第1集·太乙真宗").expect("第1集");
+        assert_eq!(ch_set1.level, Some(1));
+        assert!(ch_set1.is_volume);
+
+        assert_eq!(ch_chuanyue.level, Some(2));
+        assert!(!ch_chuanyue.is_volume);
+    }
+
+    #[tokio::test]
+    async fn test_liuchao_cover_content() {
+        let path = std::path::Path::new("storage/data/admin/local_books/42a894f9994c3285f22bf0a9d7315bc9/book.epub");
+        if !path.exists() {
+            return;
+        }
+        let service = LocalEpubBookService::new("storage");
+        let content = service.get_content("admin", "local-epub:42a894f9994c3285f22bf0a9d7315bc9#0").await.unwrap();
+        println!("COVER CONTENT:\n{}", &content[..content.len().min(300)]);
+        assert!(content.contains("<img"), "封面应当被标准化转换为 img 标签");
+        assert!(content.contains("data:image/jpeg;base64,"), "封面应当内嵌 base64 数据");
     }
 }

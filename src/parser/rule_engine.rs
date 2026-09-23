@@ -2235,6 +2235,7 @@ fn build_chapter_from_json(
         is_pay,
         is_volume,
         volume: None,
+        level: None,
     })
 }
 

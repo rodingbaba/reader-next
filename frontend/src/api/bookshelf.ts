@@ -22,35 +22,61 @@ export function saveBooks(books: Partial<Book>[]) {
   return http.post<Book[]>('saveBooks', books).then((r) => r.data)
 }
 
-export function uploadTxtBook(file: File) {
+export type UploadProgressCallback = (percent: number, loaded: number, total: number) => void
+
+export function uploadTxtBook(file: File, onProgress?: UploadProgressCallback) {
   const formData = new FormData()
   formData.append('file', file)
   return http.post<Book>('uploadTxtBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (e.total && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total)
+        onProgress(percent, e.loaded, e.total)
+      }
+    },
   }).then((r) => r.data)
 }
 
-export function uploadEpubBook(file: File) {
+export function uploadEpubBook(file: File, onProgress?: UploadProgressCallback) {
   const formData = new FormData()
   formData.append('file', file)
   return http.post<Book>('uploadEpubBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (e.total && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total)
+        onProgress(percent, e.loaded, e.total)
+      }
+    },
   }).then((r) => r.data)
 }
 
-export function uploadPdfBook(file: File) {
+export function uploadPdfBook(file: File, onProgress?: UploadProgressCallback) {
   const formData = new FormData()
   formData.append('file', file)
   return http.post<Book>('uploadPdfBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (e.total && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total)
+        onProgress(percent, e.loaded, e.total)
+      }
+    },
   }).then((r) => r.data)
 }
 
-export function uploadMobiBook(file: File) {
+export function uploadMobiBook(file: File, onProgress?: UploadProgressCallback) {
   const formData = new FormData()
   formData.append('file', file)
   return http.post<Book>('uploadMobiBook', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (e.total && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total)
+        onProgress(percent, e.loaded, e.total)
+      }
+    },
   }).then((r) => r.data)
 }
 

@@ -1505,6 +1505,7 @@ pub async fn upload_epub_book(
         .await
         .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
+    let t_start = std::time::Instant::now();
     let mut file_name = String::new();
     let mut bytes: Option<Bytes> = None;
     while let Some(field) = multipart
@@ -1527,11 +1528,30 @@ pub async fn upload_epub_book(
     }
 
     let bytes = bytes.ok_or_else(|| AppError::BadRequest("file required".to_string()))?;
+    let t_recv = t_start.elapsed();
+    let size_mb = bytes.len() as f64 / 1024.0 / 1024.0;
+
+    let t_import_start = std::time::Instant::now();
     let book = state
         .local_epub_book_service
         .import_epub_book(&user_ns, &file_name, &bytes)
         .await?;
+    let t_import = t_import_start.elapsed();
+
+    let t_save_start = std::time::Instant::now();
     let saved = state.book_service.save_book(&user_ns, book).await?;
+    let t_save = t_save_start.elapsed();
+
+    tracing::info!(
+        "[Upload] EPUB '{}' ({:.2} MB) uploaded successfully: recv_net={}ms, import_book={}ms, save_shelf={}ms, total={}ms",
+        file_name,
+        size_mb,
+        t_recv.as_millis(),
+        t_import.as_millis(),
+        t_save.as_millis(),
+        t_start.elapsed().as_millis()
+    );
+
     Ok(Json(ApiResponse::ok(
         serde_json::to_value(saved).unwrap_or_default(),
     )))

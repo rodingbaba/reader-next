@@ -87,6 +87,25 @@
         </div>
       </div>
 
+      <!-- 上传中进度浮动通知条 -->
+      <transition name="fade">
+        <div v-if="txtUploading" class="upload-progress-banner">
+          <div class="progress-info">
+            <span class="progress-title">
+              <svg class="spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 0 0-15.55-6.2L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+              {{ uploadPhaseText }}
+            </span>
+            <span class="progress-metric">{{ uploadMetricText }}</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" :style="{ width: `${uploadProgress}%` }"></div>
+          </div>
+        </div>
+      </transition>
+
       <input
         ref="txtFileInputRef"
         type="file"
@@ -166,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
@@ -194,6 +213,26 @@ const selectedBook = ref<Book | SearchBook | null>(null)
 const openingBookUrl = ref('')
 const txtFileInputRef = ref<HTMLInputElement | null>(null)
 const txtUploading = ref(false)
+const uploadProgress = ref(0)
+const uploadPhase = ref<'uploading' | 'processing'>('uploading')
+const uploadFileName = ref('')
+const uploadUploadedBytes = ref(0)
+const uploadTotalBytes = ref(0)
+
+const uploadMetricText = computed(() => {
+  if (uploadPhase.value === 'processing') return '正在解析'
+  if (!uploadTotalBytes.value) return `${uploadProgress.value}%`
+  const loadedMb = (uploadUploadedBytes.value / 1024 / 1024).toFixed(1)
+  const totalMb = (uploadTotalBytes.value / 1024 / 1024).toFixed(1)
+  return `${loadedMb}MB / ${totalMb}MB (${uploadProgress.value}%)`
+})
+
+const uploadPhaseText = computed(() => {
+  if (uploadPhase.value === 'processing') {
+    return '文件已上传完成，正在服务端极速解析目录与存储...'
+  }
+  return `正在上传《${uploadFileName.value}》...`
+})
 
 onMounted(() => {
   // 后台静默刷新用户信息，不阻塞书架的本地即刻渲染
@@ -217,7 +256,7 @@ async function handleTxtFileChange(event: Event) {
   if (!file) return
 
   const name = file.name.toLowerCase()
-  let uploadFn: (file: File) => Promise<Book>
+  let uploadFn: (file: File, onProgress?: (p: number, l: number, t: number) => void) => Promise<Book>
   let formatLabel: string
   if (name.endsWith('.epub')) {
     uploadFn = uploadEpubBook
@@ -237,8 +276,21 @@ async function handleTxtFileChange(event: Event) {
   }
 
   txtUploading.value = true
+  uploadProgress.value = 0
+  uploadPhase.value = 'uploading'
+  uploadFileName.value = file.name
+  uploadUploadedBytes.value = 0
+  uploadTotalBytes.value = file.size
+
   try {
-    const book = await uploadFn(file)
+    const book = await uploadFn(file, (percent, loaded, total) => {
+      uploadProgress.value = percent
+      uploadUploadedBytes.value = loaded
+      uploadTotalBytes.value = total
+      if (percent >= 100) {
+        uploadPhase.value = 'processing'
+      }
+    })
     // 重新上传或导入新书时，主动清理该书可能残留的浏览器离线缓存，确保最新章节与分卷目录即时生效
     await deleteBrowserBookCache(book.bookUrl).catch(() => undefined)
     await shelfStore.fetchBooks()
@@ -247,6 +299,8 @@ async function handleTxtFileChange(event: Event) {
     appStore.showToast((e as Error).message || `${formatLabel} 上传失败`, 'error')
   } finally {
     txtUploading.value = false
+    uploadProgress.value = 0
+    uploadPhase.value = 'uploading'
   }
 }
 
@@ -516,6 +570,65 @@ async function handleRefreshBooks() {
   font-weight: 700;
   color: var(--color-primary);
   margin: 0 4px;
+}
+
+/* upload progress banner */
+.upload-progress-banner {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.08));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.upload-progress-banner .progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  gap: var(--space-3);
+}
+
+.upload-progress-banner .progress-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-progress-banner .progress-title svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.upload-progress-banner .progress-metric {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.upload-progress-banner .progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: var(--color-bg-hover, rgba(0, 0, 0, 0.08));
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.upload-progress-banner .progress-bar-fill {
+  height: 100%;
+  background: var(--color-primary, #3b82f6);
+  border-radius: var(--radius-full);
+  transition: width 0.2s ease-out;
 }
 
 .batch-actions {

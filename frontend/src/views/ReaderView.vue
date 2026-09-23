@@ -1697,13 +1697,13 @@ function formatChapterHtml(rawText: string) {
       // 将转换后的 HTML 写回 text，确保无 <p> 标签时走纯文本路径也能使用转换后的 URL
       text = wrapper.innerHTML
     }
-    // 检查是否有未包裹在 <p> 标签中的顶级 <img> / <image>，自动包装以统一块级结构
-    wrapper.querySelectorAll('img, image').forEach((img) => {
-      if (!img.closest('p')) {
+    // 检查是否有未包裹在 <p> 标签中的顶级媒体元素（img, svg, picture, video），自动包装以统一块级结构
+    wrapper.querySelectorAll('img, svg, picture, video').forEach((media) => {
+      if (!media.closest('p')) {
         const p = document.createElement('p')
         p.className = 'reader-image-paragraph'
-        img.parentNode?.insertBefore(p, img)
-        p.appendChild(img)
+        media.parentNode?.insertBefore(p, media)
+        p.appendChild(media)
       }
     })
 
@@ -1711,7 +1711,7 @@ function formatChapterHtml(rawText: string) {
     if (paragraphs.length) {
       let logicalIndex = 0
       paragraphs.forEach((paragraph) => {
-        const hasMedia = !!paragraph.querySelector('img, svg, picture, video')
+        const hasMedia = !!paragraph.querySelector('img, image, svg, picture, video')
         const plainText = (paragraph.textContent || '').replace(/^[\u3000\u00A0 \t]+/, '').trim()
         if (!plainText && !hasMedia) {
           paragraph.remove()
@@ -4131,7 +4131,11 @@ watch(
 }
 
 :deep(.chapter-text img),
-:deep(.horizontal-page-content img) {
+:deep(.chapter-text svg),
+:deep(.chapter-text image),
+:deep(.horizontal-page-content img),
+:deep(.horizontal-page-content svg),
+:deep(.horizontal-page-content image) {
   max-width: 100%;
   max-height: 100%;
   height: auto;
