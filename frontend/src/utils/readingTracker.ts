@@ -1,5 +1,6 @@
 import { recordReadingHeartbeat, type RecordHeartbeatPayload } from '../api/readingStats'
 import type { Book } from '../types'
+import { isNativeApp } from './nativeBridge'
 
 const LOCAL_STATS_STORAGE_KEY = 'reader-local-reading-stats-v1'
 const PENDING_HEARTBEATS_KEY = 'reader-pending-reading-heartbeats-v1'
@@ -222,8 +223,11 @@ export class ReadingTracker {
   private settleElapsed(isFlushing: boolean = false): number {
     if (this.isDestroyed && !isFlushing) return 0
     const now = Date.now()
-    const elapsed = Math.round((now - this.lastTickAt) / 1000)
+    let elapsed = Math.round((now - this.lastTickAt) / 1000)
     this.lastTickAt = now
+
+    // 保护：单次心跳跨度最大不超过 IDLE_TIMEOUT_MS（120秒），防止系统休眠/挂起恢复后产生脉冲式虚假高时长
+    elapsed = Math.min(Math.max(0, elapsed), Math.round(IDLE_TIMEOUT_MS / 1000))
 
     if (elapsed <= 0) return 0
 
@@ -232,6 +236,12 @@ export class ReadingTracker {
 
     // 必须处于活跃状态 或 正在听书
     if (!isListening && !isUserActive) {
+      return 0
+    }
+
+    // 关键：在 iOS 原生 App (Hybrid) 环境下，听书时长完全由原生 TTSManager 独立统计并通过 Bridge 上报
+    // Web 端自身的定时器在听书状态下必须完全静默，避免双通道重复累计导致听书与总阅读时长虚高
+    if (isListening && isNativeApp()) {
       return 0
     }
 

@@ -73,7 +73,7 @@ function createCallbackPromise(): { callbackId: string; promise: Promise<any> } 
 }
 
 export const isNativeApp = () => {
-  return !!(window.webkit?.messageHandlers?.dataControl);
+  return typeof window !== 'undefined' && !!(window.webkit?.messageHandlers?.dataControl);
 };
 
 export const invokeData = (action: string, payload?: any) => {
