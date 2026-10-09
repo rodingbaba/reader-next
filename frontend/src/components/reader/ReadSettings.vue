@@ -309,6 +309,7 @@
         <label>点击翻页</label>
         <div class="btn-group">
           <button class="opt-btn" :class="{ active: config.clickAction === 'auto' }" @click="store.updateConfig('clickAction', 'auto')">自动翻页</button>
+          <button class="opt-btn" :class="{ active: config.clickAction === 'fullscreen_next' }" @click="store.updateConfig('clickAction', 'fullscreen_next')">全屏下一页</button>
           <button class="opt-btn" :class="{ active: config.clickAction === 'next' }" @click="store.updateConfig('clickAction', 'next')">仅下滚</button>
           <button class="opt-btn" :class="{ active: config.clickAction === 'none' }" @click="store.updateConfig('clickAction', 'none')">禁用</button>
         </div>

@@ -2492,7 +2492,7 @@ function handleGlobalClick(e: MouseEvent) {
   }
   if (store.isAutoScrolling) return
   
-  if (isHorizontalPageMode.value && isMobile.value) {
+  if (isHorizontalPageMode.value) {
     const x = e.clientX / window.innerWidth
     if (x < 0.3) {
       clickZoneAction('prev')
@@ -2527,6 +2527,11 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
   
   const container = scrollContainerRef.value
   if (!container) return
+
+  if (config.value.clickAction === 'fullscreen_next' || config.value.clickAction === 'next') {
+    pageForward()
+    return
+  }
   
   if (isHorizontalPageMode.value) {
     if (zone === 'next') pageForward()
@@ -2536,11 +2541,6 @@ function clickZoneAction(zone: 'prev' | 'menu' | 'next') {
 
   const h = container.clientHeight
   const delta = h * 0.8 // Page scroll amount
-
-  if (config.value.clickAction === 'next') {
-    pageForward()
-    return
-  }
   
   if (zone === 'next') {
     if (container.scrollTop + h >= container.scrollHeight - 10) {

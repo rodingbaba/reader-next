@@ -469,7 +469,7 @@ export function useReaderAutoPlayback(
     container.scrollTop += speed
 
     if (container.scrollTop + container.clientHeight >= container.scrollHeight - 2) {
-      if (config.value.clickAction === 'auto' && store.hasNext) {
+      if (config.value.clickAction !== 'none' && store.hasNext) {
         void nextChapter()
       } else {
         stopAutoScroll()

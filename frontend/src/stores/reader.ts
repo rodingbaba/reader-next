@@ -74,7 +74,7 @@ export interface ReadConfig {
   autoPageMode: 'pixel' | 'paragraph'
   scrollPixel: number
   pageSpeed: number
-  clickAction: 'next' | 'auto' | 'none'
+  clickAction: 'next' | 'auto' | 'fullscreen_next' | 'none'
   selectAction: 'popup' | 'ignore'
   chineseMode: 'simplified' | 'traditional'
   specialMode: 'normal' | 'simple'
