@@ -3060,7 +3060,7 @@ onMounted(async () => {
   (window as any).__nativeBridgeTTSChapterChange = (index: number) => {
     if (typeof index === 'number' && index !== store.currentIndex) {
       jumpFromCatalog(index)
-      void store.supplyUpcomingChaptersOffline(index, 3)
+      void store.supplyUpcomingChaptersOffline(index, 10)
     }
   }
   (window as any).__nativeBridgeTTSSyncState = (payload: { chapterIndex: number; isPlaying: boolean; isPaused: boolean }) => {

@@ -213,6 +213,9 @@ struct HybridWebView: UIViewRepresentable {
                 safePayload.removeValue(forKey: "sentences") // Remove sentences from logs to save space
                 safePayload.removeValue(forKey: "text") // Remove full text // Remove sentences from logs to save space
                 safePayload.removeValue(forKey: "preloadedChapters") // Remove preloaded chapters to save space
+                if let cover = safePayload["coverUrl"] as? String, cover.count > 60 {
+                    safePayload["coverUrl"] = "\(cover.prefix(40))... [长度: \(cover.count)]"
+                }
                 LogManager.shared.log("接收到 TTS 控制指令: action=\(action), payload=\(String(describing: safePayload))", category: "Hybrid")
                 switch action {
                 case "play":

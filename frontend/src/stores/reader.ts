@@ -1839,7 +1839,7 @@ export const useReaderStore = defineStore('reader', () => {
     })
   }
 
-  async function fetchUpcomingChaptersOffline(startIndex: number, count = 3): Promise<Array<{ index: number; url: string; content: string }>> {
+  async function fetchUpcomingChaptersOffline(startIndex: number, count = 10): Promise<Array<{ index: number; url: string; content: string }>> {
     if (!book.value?.bookUrl || !chapters.value || chapters.value.length === 0) return []
     const results: Array<{ index: number; url: string; content: string }> = []
     const endIndex = Math.min(chapters.value.length, startIndex + count)
@@ -1863,7 +1863,7 @@ export const useReaderStore = defineStore('reader', () => {
     return results
   }
 
-  async function supplyUpcomingChaptersOffline(startIndex: number, count = 3) {
+  async function supplyUpcomingChaptersOffline(startIndex: number, count = 10) {
     if (!book.value?.bookUrl) return
     const chaptersToSupply = await fetchUpcomingChaptersOffline(startIndex + 1, count)
     if (chaptersToSupply.length > 0) {
@@ -1905,7 +1905,7 @@ export const useReaderStore = defineStore('reader', () => {
     })) {
       isSpeaking.value = true
       isPaused.value = false
-      void supplyUpcomingChaptersOffline(currentIndex.value, 3)
+      void supplyUpcomingChaptersOffline(currentIndex.value, 10)
       return
     }
 

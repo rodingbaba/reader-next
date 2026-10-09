@@ -914,7 +914,7 @@ class TTSManager: NSObject, ObservableObject {
         result = result.replacingOccurrences(of: "&amp;", with: "&")
         result = result.replacingOccurrences(of: "&quot;", with: "\"")
         
-        logger.log("原始文本长度: \(text.count), 过滤后: \(result.count)", category: "TTS")
+        // logger.log("原始文本长度: \(text.count), 过滤后: \(result.count)", category: "TTS")
         return result
     }
     
