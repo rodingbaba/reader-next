@@ -77,7 +77,35 @@ struct HttpTTS: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, userid, name, url, contentType, concurrentRate, loginUrl, loginUi, header, enabledCookieJar, loginCheckJs, lastUpdateTime
     }
-    
+
+    init(
+        id: String,
+        userid: String? = nil,
+        name: String,
+        url: String,
+        contentType: String? = nil,
+        concurrentRate: String? = nil,
+        loginUrl: String? = nil,
+        loginUi: String? = nil,
+        header: String? = nil,
+        enabledCookieJar: Bool? = nil,
+        loginCheckJs: String? = nil,
+        lastUpdateTime: Int64? = nil
+    ) {
+        self.id = id
+        self.userid = userid
+        self.name = name
+        self.url = url
+        self.contentType = contentType
+        self.concurrentRate = concurrentRate
+        self.loginUrl = loginUrl
+        self.loginUi = loginUi
+        self.header = header
+        self.enabledCookieJar = enabledCookieJar
+        self.loginCheckJs = loginCheckJs
+        self.lastUpdateTime = lastUpdateTime
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         

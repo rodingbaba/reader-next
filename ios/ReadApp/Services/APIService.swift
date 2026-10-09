@@ -589,7 +589,7 @@ class APIService: ObservableObject {
             cachedTTSList = loadPersistedTTSList() ?? []
         }
         var current = cachedTTSList ?? []
-        let engine = HttpTTS(id: id, userid: nil, name: name ?? id, url: url, contentType: nil)
+        let engine = HttpTTS(id: id, name: name ?? id, url: url)
         if let idx = current.firstIndex(where: { $0.id == id }) {
             current[idx] = engine
         } else {
