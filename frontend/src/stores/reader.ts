@@ -29,6 +29,7 @@ import {
   getBrowserCachedChapterList,
   restoreChapterListFromCacheRecords,
   cleanupOrphanChapters,
+  getCoverMemoryCache,
 } from '../utils/browserCache'
 import { appLog } from '../utils/appLogger'
 import { saveRecentReadBook, loadRecentReadBooks } from '../utils/recentBooks'
@@ -1035,18 +1036,25 @@ export const useReaderStore = defineStore('reader', () => {
     return path
   }
 
+  function resolveCoverForTTS(): string {
+    const effective = getEffectiveBookCoverUrl()
+    const offlineCover = book.value?.bookUrl ? getCoverMemoryCache(book.value.bookUrl, effective) : null
+    return (offlineCover && offlineCover.startsWith('data:'))
+      ? offlineCover
+      : (resolveAbsoluteCoverUrl(effective) || effective || '')
+  }
+
   function setupMediaSession(text: string) {
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-      const effectiveCover = getEffectiveBookCoverUrl()
-      const absCover = resolveAbsoluteCoverUrl(effectiveCover)
+      const cover = resolveCoverForTTS()
       navigator.mediaSession.metadata = new MediaMetadata({
         title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
         artist: book.value?.name || 'Antigravity Reader',
         album: currentChapterDisplayTitle.value || '阅读',
-        artwork: absCover ? [
-          { src: absCover, sizes: '512x512', type: 'image/jpeg' },
-          { src: absCover, sizes: '256x256', type: 'image/jpeg' },
-          { src: absCover, sizes: '128x128', type: 'image/jpeg' },
+        artwork: cover ? [
+          { src: cover, sizes: '512x512', type: cover.startsWith('data:image/png') ? 'image/png' : 'image/jpeg' },
+          { src: cover, sizes: '256x256', type: cover.startsWith('data:image/png') ? 'image/png' : 'image/jpeg' },
+          { src: cover, sizes: '128x128', type: cover.startsWith('data:image/png') ? 'image/png' : 'image/jpeg' },
         ] : []
       })
       navigator.mediaSession.setActionHandler('play', () => { pauseTTS() })
@@ -1846,7 +1854,7 @@ export const useReaderStore = defineStore('reader', () => {
       bookUrl: book.value?.bookUrl,
       bookSourceUrl: book.value?.origin,
       bookTitle: book.value?.name,
-      coverUrl: resolveAbsoluteCoverUrl(getEffectiveBookCoverUrl()) || getEffectiveBookCoverUrl(),
+      coverUrl: resolveCoverForTTS(),
       chapters: chapters.value,
       currentIndex: currentIndex.value,
       startIndex: options.startIndex,
