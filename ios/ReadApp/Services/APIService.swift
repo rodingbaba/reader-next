@@ -518,6 +518,30 @@ class APIService: ObservableObject {
         }
     }
 
+    // MARK: - 注入章节缓存（用于离线书籍/断网环境预填入本地沙盒磁盘缓存）
+    func injectChapterContent(bookUrl: String, bookSourceUrl: String? = nil, index: Int, chapterUrl: String? = nil, content: String) async {
+        guard !content.isEmpty else { return }
+        let useSanitization = UserPreferences.shared.useReplaceRuleSanitization
+        let cacheKey = buildChapterCacheKey(
+            bookUrl: bookUrl,
+            bookSourceUrl: bookSourceUrl,
+            index: index,
+            chapterUrl: chapterUrl,
+            useReplaceRuleSanitization: useSanitization
+        )
+        await chapterCache.set(content, for: cacheKey)
+
+        let fallbackKey = buildChapterCacheKey(
+            bookUrl: bookUrl,
+            bookSourceUrl: bookSourceUrl,
+            index: index,
+            chapterUrl: chapterUrl,
+            useReplaceRuleSanitization: !useSanitization
+        )
+        await chapterCache.set(content, for: fallbackKey)
+        LogManager.shared.log("💾 离线正文已注入原生磁盘缓存: 章节=\(index), 字符数=\(content.count)", category: "缓存")
+    }
+
     // MARK: - 批量预载章节内容
     func preloadChapterContents(bookUrl: String, bookSourceUrl: String?, indices: [Int], bookName: String? = nil) async {
         let uniqueIndices = Array(Set(indices)).sorted()

@@ -1839,6 +1839,42 @@ export const useReaderStore = defineStore('reader', () => {
     })
   }
 
+  async function fetchUpcomingChaptersOffline(startIndex: number, count = 3): Promise<Array<{ index: number; url: string; content: string }>> {
+    if (!book.value?.bookUrl || !chapters.value || chapters.value.length === 0) return []
+    const results: Array<{ index: number; url: string; content: string }> = []
+    const endIndex = Math.min(chapters.value.length, startIndex + count)
+    for (let i = startIndex; i < endIndex; i++) {
+      if (i < 0) continue
+      const ch = chapters.value[i]
+      if (!ch || !ch.url) continue
+      try {
+        const cachedContent = await getBrowserCachedChapter(book.value.bookUrl, ch.url).catch(() => null)
+        if (cachedContent && typeof cachedContent === 'string' && cachedContent.trim().length > 0) {
+          results.push({
+            index: i,
+            url: ch.url,
+            content: cachedContent
+          })
+        }
+      } catch (e) {
+        console.warn(`[Reader] 读取离线预备章节 ${i} 失败:`, e)
+      }
+    }
+    return results
+  }
+
+  async function supplyUpcomingChaptersOffline(startIndex: number, count = 3) {
+    if (!book.value?.bookUrl) return
+    const chaptersToSupply = await fetchUpcomingChaptersOffline(startIndex + 1, count)
+    if (chaptersToSupply.length > 0) {
+      invokeTTS('supplyChapters', {
+        bookUrl: book.value.bookUrl,
+        bookSourceUrl: book.value.origin,
+        chapters: chaptersToSupply
+      })
+    }
+  }
+
   function startTTS(text?: string, options: TTSOptions & { startIndex?: number, startSliceIndex?: number } = {}, interruptCurrent = true) {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
@@ -1869,6 +1905,7 @@ export const useReaderStore = defineStore('reader', () => {
     })) {
       isSpeaking.value = true
       isPaused.value = false
+      void supplyUpcomingChaptersOffline(currentIndex.value, 3)
       return
     }
 
@@ -2651,6 +2688,7 @@ export const useReaderStore = defineStore('reader', () => {
     switchSource, preloadNextChapter, preloadAroundChapter,
     refreshChapters,
     isSpeaking, isSpeechLoading, isPaused, isSpeechTransitioning, startTTS, pauseTTS, stopTTS, beginTTSSession,
+    fetchUpcomingChaptersOffline, supplyUpcomingChaptersOffline,
     voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
     systemTtsNativeEventsReliable,
     fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,

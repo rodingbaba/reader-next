@@ -211,7 +211,8 @@ struct HybridWebView: UIViewRepresentable {
                 var safePayload = payload ?? [:]
                 safePayload.removeValue(forKey: "chapters") // Remove chapters from logs to save space
                 safePayload.removeValue(forKey: "sentences") // Remove sentences from logs to save space
-                    safePayload.removeValue(forKey: "text") // Remove full text // Remove sentences from logs to save space
+                safePayload.removeValue(forKey: "text") // Remove full text // Remove sentences from logs to save space
+                safePayload.removeValue(forKey: "preloadedChapters") // Remove preloaded chapters to save space
                 LogManager.shared.log("接收到 TTS 控制指令: action=\(action), payload=\(String(describing: safePayload))", category: "Hybrid")
                 switch action {
                 case "play":
@@ -240,6 +241,9 @@ struct HybridWebView: UIViewRepresentable {
                         }
                     }
                     
+                    if let preloaded = payload?["preloadedChapters"] as? [[String: Any]] {
+                        self.injectChaptersPayload(preloaded, bookUrl: validBookUrl, bookSourceUrl: payload?["bookSourceUrl"] as? String)
+                    }
                     
                     if let engineDict = payload?["httpTtsEngine"] as? [String: Any],
                        let eId = (engineDict["id"] as? String) ?? (engineDict["id"] as? NSNumber)?.stringValue,
@@ -275,6 +279,12 @@ struct HybridWebView: UIViewRepresentable {
                         }
                     )
                     LogManager.shared.log("✅ JS Bridge Play TTS Started", category: "Hybrid")
+                case "supplyChapters":
+                    if let validBookUrl = payload?["bookUrl"] as? String,
+                       let chaptersList = payload?["chapters"] as? [[String: Any]] {
+                        let bookSourceUrl = payload?["bookSourceUrl"] as? String
+                        self.injectChaptersPayload(chaptersList, bookUrl: validBookUrl, bookSourceUrl: bookSourceUrl)
+                    }
                 case "pause":
                     TTSManager.shared.pause()
                 case "resume":
@@ -411,6 +421,24 @@ struct HybridWebView: UIViewRepresentable {
             }
         }
         
+        private func injectChaptersPayload(_ chaptersList: [[String: Any]], bookUrl: String, bookSourceUrl: String?) {
+            Task {
+                for item in chaptersList {
+                    guard let content = item["content"] as? String, !content.isEmpty else { continue }
+                    let idx = (item["index"] as? Int) ?? (item["index"] as? Double).map { Int($0) } ?? -1
+                    let chUrl = item["url"] as? String
+                    guard idx >= 0 else { continue }
+                    await APIService.shared.injectChapterContent(
+                        bookUrl: bookUrl,
+                        bookSourceUrl: bookSourceUrl,
+                        index: idx,
+                        chapterUrl: chUrl,
+                        content: content
+                    )
+                }
+            }
+        }
+
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
             let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: { _ in completionHandler(false) }))
