@@ -431,7 +431,7 @@ class TTSManager: NSObject, ObservableObject {
                     logger.log("封面图片解码失败", category: "TTS错误")
                 }
             } catch {
-                logger.log("封面下载失败: \(error.localizedDescription) (URL: \(resolvedUrlString))", category: "TTS错误")
+                logger.log("封面下载跳过 (可能处于离线环境): \(error.localizedDescription)", category: "TTS")
             }
         }
     }

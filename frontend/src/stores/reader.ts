@@ -1835,6 +1835,10 @@ export const useReaderStore = defineStore('reader', () => {
     const rawText = (text || content.value.replace(/<[^>]+>/g, '')).trim()
     if (!rawText) return
 
+    const activeHttpEngine = speechConfig.provider === 'http'
+      ? speechConfig.httpTtsEngines.find(e => e.id === speechConfig.httpTtsActiveId)
+      : undefined
+
     const finalSentences = extractDomSentences()
     if (invokeTTS('play', {
       sentences: finalSentences,
@@ -1848,7 +1852,12 @@ export const useReaderStore = defineStore('reader', () => {
       startIndex: options.startIndex,
       startSliceIndex: options.startSliceIndex,
       speakerId: speechConfig.provider === 'http' ? speechConfig.httpTtsActiveId : undefined,
-      speechRate: speechConfig.speechRate
+      speechRate: speechConfig.speechRate,
+      httpTtsEngine: activeHttpEngine ? {
+        id: activeHttpEngine.id,
+        name: activeHttpEngine.name,
+        url: activeHttpEngine.url,
+      } : undefined,
     })) {
       isSpeaking.value = true
       isPaused.value = false

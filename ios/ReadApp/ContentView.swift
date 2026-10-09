@@ -241,7 +241,13 @@ struct HybridWebView: UIViewRepresentable {
                     }
                     
                     
-                    if let sId = payload?["speakerId"] as? String {
+                    if let engineDict = payload?["httpTtsEngine"] as? [String: Any],
+                       let eId = (engineDict["id"] as? String) ?? (engineDict["id"] as? NSNumber)?.stringValue,
+                       let eUrl = engineDict["url"] as? String {
+                        let eName = engineDict["name"] as? String
+                        APIService.shared.registerTTS(id: eId, name: eName, url: eUrl)
+                        UserPreferences.shared.selectedTTSId = eId
+                    } else if let sId = payload?["speakerId"] as? String {
                         UserPreferences.shared.selectedTTSId = sId
                     } else if let sId = payload?["speakerId"] as? NSNumber {
                         UserPreferences.shared.selectedTTSId = sId.stringValue
