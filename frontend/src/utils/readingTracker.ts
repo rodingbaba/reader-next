@@ -129,6 +129,75 @@ export async function flushAllPendingHeartbeats(config?: { timeout?: number }): 
   return true
 }
 
+/**
+ * 本地超额自动补偿同步机制（Reconciliation）
+ * 比较本地账本与服务端返回的单书统计：
+ * 若本地记录的时长确实大于服务端（曾因断网或旧版本遗留在本地 localStorage 中），
+ * 自动计算差额并生成补录心跳推送到服务端，确保服务端与所有其他端完整对齐，零数据丢失。
+ */
+export async function reconcileLocalStatsWithRemote(
+  remoteBooks: { bookUrl: string; totalDurationSecs: number; totalListenSecs: number }[],
+  config?: { timeout?: number },
+): Promise<boolean> {
+  const local = loadLocalReadingStats()
+  if (!local.books || Object.keys(local.books).length === 0) return true
+
+  const remoteMap = new Map(remoteBooks.map((b) => [b.bookUrl, b]))
+  let hasReconciliation = false
+
+  for (const [url, lb] of Object.entries(local.books)) {
+    if (!lb || lb.totalDurationSecs <= 0) continue
+
+    const remote = remoteMap.get(url)
+    const remoteTotal = remote ? remote.totalDurationSecs : 0
+    const remoteListen = remote ? remote.totalListenSecs : 0
+
+    const diffTotal = lb.totalDurationSecs - remoteTotal
+    const diffListen = lb.totalListenSecs - remoteListen
+
+    if (diffTotal > 0) {
+      // 拆分为听书差额与纯看书差额分别补录
+      const listenDelta = Math.max(0, Math.min(diffListen, diffTotal))
+      const readDelta = Math.max(0, diffTotal - listenDelta)
+
+      const targetDate = lb.lastReadDate || getTodayDateString()
+
+      if (listenDelta > 0) {
+        appendPendingHeartbeat({
+          bookUrl: url,
+          bookName: lb.bookName || '未知书籍',
+          author: lb.author || '',
+          coverUrl: lb.coverUrl,
+          readDate: targetDate,
+          durationSecs: listenDelta,
+          isListening: true,
+          chaptersDelta: 0,
+        })
+        hasReconciliation = true
+      }
+
+      if (readDelta > 0) {
+        appendPendingHeartbeat({
+          bookUrl: url,
+          bookName: lb.bookName || '未知书籍',
+          author: lb.author || '',
+          coverUrl: lb.coverUrl,
+          readDate: targetDate,
+          durationSecs: readDelta,
+          isListening: false,
+          chaptersDelta: 0,
+        })
+        hasReconciliation = true
+      }
+    }
+  }
+
+  if (hasReconciliation) {
+    return await flushAllPendingHeartbeats(config)
+  }
+  return false
+}
+
 let activeTrackerInstance: ReadingTracker | null = null
 
 export function setActiveTrackerInstance(instance: ReadingTracker | null) {

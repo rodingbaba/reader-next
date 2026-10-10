@@ -42,14 +42,14 @@ impl ReadingStatService {
             Utc::now().format("%Y-%m-%d").to_string()
         };
 
-        // 限制每次心跳增量秒数，防止异常大数（0 ~ 3600 秒）
-        let duration_secs = req.duration_secs.clamp(0, 3600);
+        // 限制每次心跳增量秒数（0 ~ 86400 秒，支持单日大额历史差额补偿上报）
+        let duration_secs = req.duration_secs.clamp(0, 86400);
         let listen_secs = if req.is_listening.unwrap_or(false) {
             duration_secs
         } else {
             0
         };
-        let chapters_read = req.chapters_delta.unwrap_or(0).clamp(0, 100) as i64;
+        let chapters_read = req.chapters_delta.unwrap_or(0).clamp(0, 1000) as i64;
         let ts = now_ts();
 
         sqlx::query(

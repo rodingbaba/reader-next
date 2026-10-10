@@ -10,6 +10,7 @@ import {
   loadLocalReadingStats,
   loadPendingHeartbeats,
   flushAllPendingHeartbeats,
+  reconcileLocalStatsWithRemote,
   getTodayDateString,
 } from '../utils/readingTracker'
 import { isNetworkOnline } from '../utils/nativeBridge'
@@ -130,6 +131,26 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
       if (remoteBooks) {
         bookStats.value = remoteBooks
         saveStatsBooksSnapshot(remoteBooks)
+
+        // 4. 本地超额自动对齐与补偿上报（Reconciliation）：
+        // 若本机之前因离线断网或旧版本遗留导致某些书籍的时长大于服务端，自动计算差额推送到服务端，
+        // 确保服务端与所有其他设备彻底对齐，消除单书时长差异。
+        const reconciled = await reconcileLocalStatsWithRemote(remoteBooks, { timeout: 2500 }).catch(() => false)
+        if (reconciled && loadPendingHeartbeats().length === 0) {
+          // 补偿同步成功，顺带刷新拉取一次最新的服务端聚合汇总
+          const [updatedSummary, updatedBooks] = await Promise.all([
+            getReadingStatsSummary(today, focusedBookUrl.value || undefined, { timeout: 3000 }).catch(() => null),
+            getReadingBookStats({ timeout: 3000 }).catch(() => null),
+          ])
+          if (updatedSummary) {
+            summary.value = updatedSummary
+            saveStatsSummarySnapshot(updatedSummary)
+          }
+          if (updatedBooks) {
+            bookStats.value = updatedBooks
+            saveStatsBooksSnapshot(updatedBooks)
+          }
+        }
       } else if (!bookStats.value.length) {
         // 远端不可用/超时熔断，优先尝试从持久化历史快照恢复全量书籍档案
         const cachedBooks = loadStatsBooksSnapshot()

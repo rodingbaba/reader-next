@@ -310,5 +310,43 @@ describe('readingTracker utility', () => {
     expect(loadPendingHeartbeats().length).toBe(1)
     expect(loadPendingHeartbeats()[0].bookUrl).toBe('book://sync-fail')
   })
+
+  it('reconciles local excess stats with remote and uploads deltas', async () => {
+    const { reconcileLocalStatsWithRemote } = await import('./readingTracker')
+    clearPendingHeartbeats()
+
+    // 模拟本地有 11 小时 (39600s)，听书 8 小时 (28800s)
+    saveLocalReadingStats({
+      daily: {},
+      books: {
+        'book://liuchao': {
+          bookUrl: 'book://liuchao',
+          bookName: '六朝清羽记',
+          author: '罗森',
+          totalDurationSecs: 39600,
+          totalListenSecs: 28800,
+          lastReadDate: '2026-10-09',
+          lastReadAt: 1728400000000,
+        },
+      },
+    })
+
+    // 模拟服务端只有 8 小时 (28800s)，听书 5 小时 (18000s)
+    const remoteBooks = [
+      {
+        bookUrl: 'book://liuchao',
+        totalDurationSecs: 28800,
+        totalListenSecs: 18000,
+      },
+    ]
+
+    const success = await reconcileLocalStatsWithRemote(remoteBooks)
+    expect(success).toBe(true)
+
+    // 应该生成并成功上报了 2 条补录（听书差额 10800s + 看书差额 0s）
+    expect(readingStatsApi.recordReadingHeartbeat).toHaveBeenCalled()
+    // 成功后 pending 池子应为空
+    expect(loadPendingHeartbeats()).toEqual([])
+  })
 })
 
