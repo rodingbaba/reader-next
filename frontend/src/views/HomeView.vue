@@ -386,7 +386,14 @@ async function handleReorderBooks(payload: { draggedUrl: string; targetUrl: stri
 
 async function handleRefreshBooks() {
   try {
-    await shelfStore.refreshBooks()
+    const res = await shelfStore.refreshBooks()
+    if (res?.offline) {
+      appStore.showToast('当前处于离线模式，已显示本地离线书架', 'warning')
+    } else if (res?.success) {
+      appStore.showToast('书架已同步至最新', 'success')
+    } else {
+      appStore.showToast('服务端未连通，已保持本地书架', 'warning')
+    }
   } catch (e: any) {
     appStore.showToast(e.message || '刷新书架失败', 'error')
   }

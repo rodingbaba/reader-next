@@ -46,23 +46,33 @@ export interface ReadingStatsSummary {
 /**
  * 上报单次阅读心跳增量
  */
-export function recordReadingHeartbeat(payload: RecordHeartbeatPayload) {
-  return http.post<string>('stats/record', payload).then((r) => r.data)
+export function recordReadingHeartbeat(
+  payload: RecordHeartbeatPayload,
+  config?: { timeout?: number },
+) {
+  return http.post<string>('stats/record', payload, config).then((r) => r.data)
 }
 
 /**
  * 获取统计总览与每日热力图数据（支持按 bookUrl 过滤单书）
  */
-export function getReadingStatsSummary(today?: string, bookUrl?: string) {
+export function getReadingStatsSummary(
+  today?: string,
+  bookUrl?: string,
+  config?: { timeout?: number },
+) {
   return http
-    .get<ReadingStatsSummary>('stats/summary', { params: { today, book_url: bookUrl } })
+    .get<ReadingStatsSummary>('stats/summary', {
+      params: { today, book_url: bookUrl },
+      ...config,
+    })
     .then((r) => r.data)
 }
 
 /**
  * 获取每本书的阅读统计列表
  */
-export function getReadingBookStats() {
-  return http.get<BookReadingStatItem[]>('stats/books').then((r) => r.data)
+export function getReadingBookStats(config?: { timeout?: number }) {
+  return http.get<BookReadingStatItem[]>('stats/books', config).then((r) => r.data)
 }
 

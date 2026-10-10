@@ -40,9 +40,15 @@ import SourceManager from './components/SourceManager.vue'
 import UserManager from './components/UserManager.vue'
 import WebdavManager from './components/WebdavManager.vue'
 import { isNativeApp } from './utils/nativeBridge'
+import { flushAllPendingHeartbeats } from './utils/readingTracker'
 
 const route = useRoute()
 const appStore = useAppStore()
+let heartbeatSyncTimer: number | null = null
+
+function triggerGlobalHeartbeatSync() {
+  void flushAllPendingHeartbeats({ timeout: 2500 })
+}
 
 const showHeader = computed(() => route.name !== 'reader')
 const showBottomNav = computed(() => route.name !== 'reader')
@@ -56,6 +62,17 @@ onMounted(() => {
     // 后台静默校验登录态；断网不会重置 isLoggedIn，不阻塞 UI
     void appStore.fetchUserInfo()
   }
+
+  window.addEventListener('need-login', handleNeedLogin)
+  window.addEventListener('online', triggerGlobalHeartbeatSync)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      triggerGlobalHeartbeatSync()
+    }
+  })
+  // 前台每 45 秒静默触发一次未同步增量心跳排空
+  heartbeatSyncTimer = window.setInterval(triggerGlobalHeartbeatSync, 45000)
+  triggerGlobalHeartbeatSync()
 })
 
 // need-login 事件：仅在服务端明确返回 401/NEED_LOGIN 时由 http.ts 派发
@@ -67,12 +84,13 @@ async function handleNeedLogin() {
   appStore.showLoginModal = true
 }
 
-onMounted(() => {
-  window.addEventListener('need-login', handleNeedLogin)
-})
-
 onUnmounted(() => {
   window.removeEventListener('need-login', handleNeedLogin)
+  window.removeEventListener('online', triggerGlobalHeartbeatSync)
+  if (heartbeatSyncTimer) {
+    clearInterval(heartbeatSyncTimer)
+    heartbeatSyncTimer = null
+  }
 })
 </script>
 

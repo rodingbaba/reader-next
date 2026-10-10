@@ -299,16 +299,23 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
    * 主动刷新书架（用户下拉刷新等场景）：
    * 不走本地秒出段，直接拉取远端，失败时保留本地
    */
-  async function refreshBooks() {
+  async function refreshBooks(): Promise<{ success: boolean; offline: boolean }> {
+    const isOffline = !isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)
+    if (isOffline) {
+      appLog('书架', '当前处于离线模式，跳过主动刷新并保留本地书架')
+      refreshing.value = false
+      return { success: false, offline: true }
+    }
+
     refreshing.value = true
     const mySeq = ++fetchBooksSeq
     try {
       appLog('书架', '用户主动刷新书架...')
       const [serverBooks, browserSummaries] = await Promise.all([
-        getBookshelfWithCacheInfo(),
+        getBookshelfWithCacheInfo({ timeout: 3000 }),
         listBrowserCacheSummary().catch(() => []),
       ])
-      if (mySeq !== fetchBooksSeq) return
+      if (mySeq !== fetchBooksSeq) return { success: false, offline: false }
       const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
       books.value = mergeServerBooksWithLocalProtection(serverBooks, books.value, browserMap)
       saveCachedBookshelf(books.value)
@@ -318,8 +325,10 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('reader-flush-outbox'))
       }
+      return { success: true, offline: false }
     } catch (err) {
       appLog('书架', `主动刷新书架失败: ${(err as Error).message || String(err)}，保留本地数据`)
+      return { success: false, offline: false }
     } finally {
       refreshing.value = false
     }

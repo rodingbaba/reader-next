@@ -6,8 +6,8 @@ export function getBookshelf() {
   return http.get<Book[]>('getBookshelf').then((r) => r.data)
 }
 
-export function getBookshelfWithCacheInfo() {
-  return http.get<Book[]>('getShelfBookWithCacheInfo').then((r) => r.data)
+export function getBookshelfWithCacheInfo(config?: { timeout?: number }) {
+  return http.get<Book[]>('getShelfBookWithCacheInfo', config).then((r) => r.data)
 }
 
 export function getShelfBook(url: string) {

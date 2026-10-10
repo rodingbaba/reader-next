@@ -9,8 +9,10 @@ import {
 import {
   loadLocalReadingStats,
   loadPendingHeartbeats,
+  flushAllPendingHeartbeats,
   getTodayDateString,
 } from '../utils/readingTracker'
+import { isNetworkOnline } from '../utils/nativeBridge'
 
 const STATS_SUMMARY_SNAPSHOT_KEY = 'reader-stats-summary-snapshot-v1'
 const STATS_BOOKS_SNAPSHOT_KEY = 'reader-stats-books-snapshot-v1'
@@ -92,17 +94,33 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
       focusedBookUrl.value = targetBookUrl
     }
 
+    // 1. 若检测到网络离线，0ms 立即还原本地离线快照与增量，完全不发起长耗时网络阻塞
+    const isOffline = !isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)
+    if (isOffline) {
+      const cached = loadStatsSummarySnapshot()
+      if (cached) summary.value = cached
+      const cachedBooks = loadStatsBooksSnapshot()
+      if (cachedBooks.length) bookStats.value = cachedBooks
+      mergeWithLocalStats(today)
+      loading.value = false
+      return { success: false, offline: true }
+    }
+
     try {
+      // 2. Sync-Before-Fetch：先排空本地所有积压心跳增量，保证服务端拥有两端最新合并数据
+      await flushAllPendingHeartbeats({ timeout: 2500 }).catch(() => false)
+
+      // 3. 发起远端查询，注入 3.0s 短超时熔断保护，彻底解决服务端离线转圈 120 秒的问题
       const [remoteSummary, remoteBooks] = await Promise.all([
-        getReadingStatsSummary(today, focusedBookUrl.value || undefined).catch(() => null),
-        getReadingBookStats().catch(() => null),
+        getReadingStatsSummary(today, focusedBookUrl.value || undefined, { timeout: 3000 }).catch(() => null),
+        getReadingBookStats({ timeout: 3000 }).catch(() => null),
       ])
 
       if (remoteSummary) {
         summary.value = remoteSummary
         saveStatsSummarySnapshot(remoteSummary)
       } else if (!summary.value) {
-        // 远端不可用，优先尝试从持久化历史快照恢复全量历史与热力图
+        // 远端不可用/超时熔断，优先尝试从持久化历史快照恢复全量历史与热力图
         const cached = loadStatsSummarySnapshot()
         if (cached) {
           summary.value = cached
@@ -113,7 +131,7 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
         bookStats.value = remoteBooks
         saveStatsBooksSnapshot(remoteBooks)
       } else if (!bookStats.value.length) {
-        // 远端不可用，优先尝试从持久化历史快照恢复全量书籍档案
+        // 远端不可用/超时熔断，优先尝试从持久化历史快照恢复全量书籍档案
         const cachedBooks = loadStatsBooksSnapshot()
         if (cachedBooks.length) {
           bookStats.value = cachedBooks
@@ -122,6 +140,7 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
 
       // 智能双向融合：叠加本地未确认的增量心跳（Pending Deltas），确保离线听书/阅读时长绝对不被覆盖！
       mergeWithLocalStats(today)
+      return { success: !!remoteSummary && !!remoteBooks, offline: false }
     } finally {
       loading.value = false
     }
@@ -137,6 +156,7 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
       const remoteSummary = await getReadingStatsSummary(
         today,
         focusedBookUrl.value || undefined,
+        { timeout: 3000 },
       ).catch(() => null)
       if (remoteSummary) {
         summary.value = remoteSummary

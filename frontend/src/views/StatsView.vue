@@ -363,11 +363,13 @@ import CustomSelect from '../components/CustomSelect.vue'
 import { useReadingStatsStore } from '../stores/readingStats'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
+import { useAppStore } from '../stores/app'
 import { getTodayDateString, loadLocalReadingStats } from '../utils/readingTracker'
 import { loadRecentReadBooks } from '../utils/recentBooks'
 import { getBookInitial } from '../utils/bookCoverFallback'
 
 const router = useRouter()
+const appStore = useAppStore()
 const statsStore = useReadingStatsStore()
 const shelfStore = useBookshelfStore()
 const readerStore = useReaderStore()
@@ -428,8 +430,15 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
 })
 
-function handleRefresh() {
-  void statsStore.fetchStats()
+async function handleRefresh() {
+  const result = await statsStore.fetchStats()
+  if (result?.offline) {
+    appStore.showToast('当前处于离线模式，已显示本地离线统计', 'warning')
+  } else if (result?.success) {
+    appStore.showToast('阅读统计已同步至最新', 'success')
+  } else {
+    appStore.showToast('服务端未连通，已显示本地离线统计', 'warning')
+  }
 }
 
 function scrollToHeatmapEnd() {

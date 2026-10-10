@@ -104,6 +104,115 @@ export function clearPendingHeartbeats(): void {
   } catch { }
 }
 
+/**
+ * 全局排空待同步心跳池，将所有离线/未决增量推送到服务端
+ * @param config 可选的网络请求配置（如短超时）
+ * @returns 是否全部成功排空
+ */
+export async function flushAllPendingHeartbeats(config?: { timeout?: number }): Promise<boolean> {
+  const list = loadPendingHeartbeats()
+  if (!list.length) return true
+
+  for (const item of [...list]) {
+    try {
+      await recordReadingHeartbeat(item, config)
+      // 上报成功后从增量池中安全移除已 ACK 的增量
+      const currentList = loadPendingHeartbeats()
+      const key = buildPendingHeartbeatKey(item)
+      const updated = currentList.filter((entry) => buildPendingHeartbeatKey(entry) !== key)
+      savePendingHeartbeats(updated)
+    } catch {
+      // 网络失败保留在池中，下次继续重试，中断当前循环
+      return false
+    }
+  }
+  return true
+}
+
+let activeTrackerInstance: ReadingTracker | null = null
+
+export function setActiveTrackerInstance(instance: ReadingTracker | null) {
+  activeTrackerInstance = instance
+}
+
+/**
+ * 全局记录外部听书时长（即使退出阅读器界面也能准确累加并尝试上报）
+ */
+export function recordExternalListeningGlobal(seconds: number, specificBookUrl?: string) {
+  const activeBook = activeTrackerInstance ? activeTrackerInstance.getCurrentBook() : null
+  const targetUrl = specificBookUrl || activeBook?.bookUrl
+  if (!targetUrl) return
+
+  const today = getTodayDateString()
+  const now = Date.now()
+  const local = loadLocalReadingStats()
+
+  // 1. 更新 local daily
+  if (!local.daily[today]) {
+    local.daily[today] = { readDate: today, durationSecs: 0, listenSecs: 0, books: {} }
+  }
+  local.daily[today].durationSecs += seconds
+  local.daily[today].listenSecs += seconds
+  if (!local.daily[today].books[targetUrl]) {
+    local.daily[today].books[targetUrl] = { durationSecs: 0, listenSecs: 0 }
+  }
+  local.daily[today].books[targetUrl].durationSecs += seconds
+  local.daily[today].books[targetUrl].listenSecs += seconds
+
+  // 2. 更新 local book
+  const existingLocalBook = local.books[targetUrl]
+  const bookName = activeBook?.name || existingLocalBook?.bookName || '未知书籍'
+  const author = activeBook?.author || existingLocalBook?.author || ''
+  const coverUrl = activeBook?.coverUrl || activeBook?.customCoverUrl || existingLocalBook?.coverUrl
+
+  if (!local.books[targetUrl]) {
+    local.books[targetUrl] = {
+      bookUrl: targetUrl,
+      bookName,
+      author,
+      coverUrl,
+      totalDurationSecs: 0,
+      totalListenSecs: 0,
+      lastReadDate: today,
+      lastReadAt: now,
+    }
+  }
+  local.books[targetUrl].totalDurationSecs += seconds
+  local.books[targetUrl].totalListenSecs += seconds
+  local.books[targetUrl].lastReadDate = today
+  local.books[targetUrl].lastReadAt = now
+
+  saveLocalReadingStats(local)
+
+  // 3. 上报服务端，网络故障时安全存入本地待同步增量池
+  const payload: RecordHeartbeatPayload = {
+    bookUrl: targetUrl,
+    bookName,
+    author,
+    coverUrl,
+    readDate: today,
+    durationSecs: seconds,
+    isListening: true,
+    chaptersDelta: 0,
+  }
+
+  void recordReadingHeartbeat(payload).catch(() => {
+    appendPendingHeartbeat(payload)
+  })
+}
+
+// 模块级全局常驻 Bridge 监听：无论用户在阅读器内部、书架还是统计页面，iOS 原生回补的听书时长都能被准确接收
+if (typeof window !== 'undefined') {
+  ;(window as any).__nativeBridgeTTSDurationSync = (payload: {
+    bookUrl?: string
+    durationSeconds?: number
+  }) => {
+    if (!payload || !payload.durationSeconds || payload.durationSeconds <= 0) return
+    const duration = Math.min(Math.round(payload.durationSeconds), 7200)
+    recordExternalListeningGlobal(duration, payload.bookUrl)
+  }
+}
+
 export interface TrackerOptions {
   getBook: () => Book | null
   isSpeaking: () => boolean
@@ -122,12 +231,17 @@ export class ReadingTracker {
 
   constructor(options: TrackerOptions) {
     this.options = options
+    setActiveTrackerInstance(this)
     this.lastActiveAt = Date.now()
     this.lastTickAt = Date.now()
     this.initActivityListeners()
     this.initBridgeListener()
     this.startHeartbeat()
     void this.flushPendingHeartbeats()
+  }
+
+  public getCurrentBook(): Book | null {
+    return this.options.getBook()
   }
 
   public recordChapterProgress() {
@@ -389,22 +503,7 @@ export class ReadingTracker {
   }
 
   private async flushPendingHeartbeats() {
-    const list = loadPendingHeartbeats()
-    if (!list.length) return
-
-    for (const item of [...list]) {
-      try {
-        await recordReadingHeartbeat(item)
-        // 上报成功后从增量池中安全移除
-        const currentList = loadPendingHeartbeats()
-        const key = buildPendingHeartbeatKey(item)
-        const updated = currentList.filter((entry) => buildPendingHeartbeatKey(entry) !== key)
-        savePendingHeartbeats(updated)
-      } catch {
-        // 网络失败保留在池中，下次继续重试
-        break
-      }
-    }
+    await flushAllPendingHeartbeats()
   }
 
   public destroy() {
@@ -414,6 +513,7 @@ export class ReadingTracker {
       this.timer = null
     }
     this.flushNow()
+    setActiveTrackerInstance(null)
   }
 }
 

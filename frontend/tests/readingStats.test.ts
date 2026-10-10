@@ -12,6 +12,7 @@ vi.mock('../src/api/readingStats', () => ({
 vi.mock('../src/utils/readingTracker', () => ({
   getTodayDateString: () => '2026-09-11',
   loadPendingHeartbeats: () => [],
+  flushAllPendingHeartbeats: vi.fn().mockResolvedValue(true),
   loadLocalReadingStats: () => ({
     daily: {},
     books: {

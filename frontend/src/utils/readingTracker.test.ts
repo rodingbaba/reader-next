@@ -6,14 +6,22 @@ import {
   loadPendingHeartbeats,
   appendPendingHeartbeat,
   clearPendingHeartbeats,
+  flushAllPendingHeartbeats,
   ReadingTracker,
   type LocalReadingStatsData,
 } from './readingTracker'
+
+import * as readingStatsApi from '../api/readingStats'
+
+vi.mock('../api/readingStats', () => ({
+  recordReadingHeartbeat: vi.fn().mockResolvedValue('ok'),
+}))
 
 describe('readingTracker utility', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    vi.mocked(readingStatsApi.recordReadingHeartbeat).mockResolvedValue('ok')
   })
 
   it('formats current date as YYYY-MM-DD', () => {
@@ -256,6 +264,51 @@ describe('readingTracker utility', () => {
 
     clearPendingHeartbeats()
     expect(loadPendingHeartbeats()).toEqual([])
+  })
+
+  it('flushes all pending heartbeats upon flushAllPendingHeartbeats and clears acked items', async () => {
+    clearPendingHeartbeats()
+    appendPendingHeartbeat({
+      bookUrl: 'book://sync-test-1',
+      bookName: '同步书1',
+      readDate: '2026-09-11',
+      durationSecs: 60,
+      isListening: true,
+    })
+    appendPendingHeartbeat({
+      bookUrl: 'book://sync-test-2',
+      bookName: '同步书2',
+      readDate: '2026-09-11',
+      durationSecs: 120,
+      isListening: false,
+    })
+
+    expect(loadPendingHeartbeats().length).toBe(2)
+
+    const success = await flushAllPendingHeartbeats()
+    expect(success).toBe(true)
+    expect(readingStatsApi.recordReadingHeartbeat).toHaveBeenCalledTimes(2)
+    // 成功上报后池子被完全排空
+    expect(loadPendingHeartbeats()).toEqual([])
+  })
+
+  it('retains failed items when flushAllPendingHeartbeats encounters network failure', async () => {
+    clearPendingHeartbeats()
+    appendPendingHeartbeat({
+      bookUrl: 'book://sync-fail',
+      bookName: '失败书',
+      readDate: '2026-09-11',
+      durationSecs: 30,
+      isListening: false,
+    })
+
+    vi.mocked(readingStatsApi.recordReadingHeartbeat).mockRejectedValueOnce(new Error('Network offline'))
+
+    const success = await flushAllPendingHeartbeats()
+    expect(success).toBe(false)
+    // 失败保留在池中，绝不丢失
+    expect(loadPendingHeartbeats().length).toBe(1)
+    expect(loadPendingHeartbeats()[0].bookUrl).toBe('book://sync-fail')
   })
 })
 
