@@ -194,17 +194,23 @@ describe('reader local txt chapters', () => {
     const restored = await readerStore.restorePersistedSession()
 
     expect(getShelfBook).toHaveBeenCalledWith('book-restore')
-    expect(getChapterList).toHaveBeenCalledWith({
-      bookUrl: 'book-restore',
-      bookSourceUrl: 'source-1',
-    })
+    expect(getChapterList).toHaveBeenCalledWith(
+      {
+        bookUrl: 'book-restore',
+        bookSourceUrl: 'source-1',
+      },
+      { timeout: 2500 },
+    )
     expect(readerStore.chapters.length).toBe(5)
     expect(getBrowserCachedChapter).toHaveBeenCalledWith('book-restore', 'chapter-5')
-    expect(getBookContent).toHaveBeenCalledWith({
-      chapterUrl: 'chapter-5',
-      bookSourceUrl: 'source-1',
-      refresh: 0,
-    })
+    expect(getBookContent).toHaveBeenCalledWith(
+      {
+        chapterUrl: 'chapter-5',
+        bookSourceUrl: 'source-1',
+        refresh: 0,
+      },
+      { timeout: 2500 },
+    )
     expect(restored).toBe(true)
     expect(readerStore.currentIndex).toBe(4)
     expect(readerStore.book?.durChapterPos).toBe(6400)
@@ -254,11 +260,14 @@ describe('reader local txt chapters', () => {
     expect(restored).toBe(true)
     expect(readerStore.currentIndex).toBe(0)
     expect(readerStore.book?.durChapterPos).toBe(0)
-    expect(getBookContent).toHaveBeenCalledWith({
-      chapterUrl: 'chapter-1',
-      bookSourceUrl: 'source-1',
-      refresh: 0,
-    })
+    expect(getBookContent).toHaveBeenCalledWith(
+      {
+        chapterUrl: 'chapter-1',
+        bookSourceUrl: 'source-1',
+        refresh: 0,
+      },
+      { timeout: 2500 },
+    )
   })
 })
 

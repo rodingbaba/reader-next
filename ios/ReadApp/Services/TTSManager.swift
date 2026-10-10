@@ -38,6 +38,30 @@ class TTSManager: NSObject, ObservableObject {
         }
     }
 
+    func recordPendingDuration(bookUrl: String, duration: Double) {
+        guard !bookUrl.isEmpty, duration > 0 else { return }
+        var pending = UserDefaults.standard.dictionary(forKey: "reader_pending_tts_durations") as? [String: Double] ?? [:]
+        pending[bookUrl] = (pending[bookUrl] ?? 0.0) + duration
+        UserDefaults.standard.set(pending, forKey: "reader_pending_tts_durations")
+    }
+
+    func getPendingDurations() -> [String: Double] {
+        return UserDefaults.standard.dictionary(forKey: "reader_pending_tts_durations") as? [String: Double] ?? [:]
+    }
+
+    func acknowledgePendingDuration(bookUrl: String, duration: Double) {
+        var current = UserDefaults.standard.dictionary(forKey: "reader_pending_tts_durations") as? [String: Double] ?? [:]
+        if let currentVal = current[bookUrl] {
+            let remaining = currentVal - duration
+            if remaining <= 0.1 {
+                current.removeValue(forKey: bookUrl)
+            } else {
+                current[bookUrl] = remaining
+            }
+            UserDefaults.standard.set(current, forKey: "reader_pending_tts_durations")
+        }
+    }
+
     func flushListeningDuration(force: Bool = false) {
         guard let start = listeningStartTime else { return }
         let now = Date()
@@ -49,6 +73,7 @@ class TTSManager: NSObject, ObservableObject {
             let duration = accumulatedListeningSeconds
             accumulatedListeningSeconds = 0.0
             if !bookUrl.isEmpty {
+                recordPendingDuration(bookUrl: bookUrl, duration: duration)
                 NotificationCenter.default.post(
                     name: NSNotification.Name("TTSListeningDurationSync"),
                     object: nil,

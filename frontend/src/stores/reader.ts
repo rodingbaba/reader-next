@@ -853,19 +853,22 @@ export const useReaderStore = defineStore('reader', () => {
     loading.value = true
     let restoredBook = session.book
     let restoredChapters = session.chapters
+
+    // 优先尝试读取本地 IndexedDB 权威离线目录，保证本地离线章节秒开
+    const cachedRecord = await getBrowserCachedChapterList(session.book.bookUrl).catch(() => null)
+    if (cachedRecord && cachedRecord.chapters?.length) {
+      restoredChapters = cachedRecord.chapters
+    }
+
     let nextIndex = Math.max(0, Math.min(session.currentIndex || 0, restoredChapters.length - 1))
     let nextProgress = session.chapterScrollProgress || 0
 
     const latestBook = await resolveLatestShelfBook(session.book)
-    if (
-      latestBook !== session.book
+    const isServerProgressNewer = latestBook !== session.book
       && normalizeProgressTimestamp(latestBook.durChapterTime) > normalizeProgressTimestamp(session.updatedAt)
-    ) {
+
+    if (isServerProgressNewer) {
       restoredBook = latestBook
-      restoredChapters = await getChapterList({
-        bookUrl: latestBook.bookUrl,
-        bookSourceUrl: latestBook.origin,
-      }).catch(() => session.chapters)
       nextIndex = Math.max(0, Math.min(restoredChapters.length - 1, latestBook.durChapterIndex || 0))
       nextProgress = decodeServerProgress(latestBook.durChapterPos)
     }
@@ -875,17 +878,47 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = restoredChapters
     loadReadChapterHistory(restoredBook)
 
+    let restoreSuccess = false
     try {
       const chapterContent = await fetchChapterContent(nextIndex)
-      if (chapterContent == null) return false
-      setActiveChapterState(nextIndex, chapterContent, nextProgress)
-      markChapterAsRead(nextIndex)
-      return true
+      if (chapterContent != null) {
+        setActiveChapterState(nextIndex, chapterContent, nextProgress)
+        markChapterAsRead(nextIndex)
+        restoreSuccess = true
+      }
     } catch {
-      return false
+      restoreSuccess = false
     } finally {
       loading.value = false
     }
+
+    // 首屏展示完成后，若处于在线状态且存在服务端最新书架标记，启动后台静默 SWR 检测目录变动（2.5s 短熔断，绝不阻塞前台）
+    if (restoreSuccess && isServerProgressNewer && isNetworkOnline() && (typeof navigator === 'undefined' || navigator.onLine)) {
+      void (async () => {
+        try {
+          const serverChapters = await getChapterList({
+            bookUrl: restoredBook.bookUrl,
+            bookSourceUrl: restoredBook.origin,
+          }, { timeout: 2500 })
+          if (book.value?.bookUrl !== restoredBook.bookUrl) return
+          const isStale = serverChapters.length !== chapters.value.length ||
+            (serverChapters.length > 0 && (
+              serverChapters[0].url !== chapters.value[0]?.url ||
+              serverChapters[serverChapters.length - 1].url !== chapters.value[chapters.value.length - 1]?.url
+            ))
+          if (isStale) {
+            chapters.value = serverChapters
+            void setBrowserCachedChapterList(restoredBook.bookUrl, serverChapters, serverChapters.length)
+              .then(() => cleanupOrphanChapters(restoredBook.bookUrl, new Set(serverChapters.map((c) => c.url).filter(Boolean))))
+              .catch(() => undefined)
+          }
+        } catch {
+          // 静默忽略网络超时或失败
+        }
+      })()
+    }
+
+    return restoreSuccess
   }
 
   function getReadHistoryStorageKey(currentBook?: Book | null) {
@@ -2060,6 +2093,7 @@ export const useReaderStore = defineStore('reader', () => {
         currentIndex.value = Math.max(0, Math.min(currentIndex.value, chapters.value.length - 1))
       }
       chaptersLoading.value = false
+      loading.value = false
       appLog('目录', `⚡ 本地离线目录秒开成功，共 ${cached.chapters.length} 章`, { bookUrl: latestBook.bookUrl })
       saveReaderSession()
 
@@ -2075,7 +2109,7 @@ export const useReaderStore = defineStore('reader', () => {
           const serverChapters = await getChapterList({
             bookUrl: latestBook.bookUrl,
             bookSourceUrl: latestBook.origin,
-          })
+          }, { timeout: 2500 })
           // 防切书串台守卫
           if (currentSeq !== loadBookSeq || book.value?.bookUrl !== latestBook.bookUrl) return
 
@@ -2254,7 +2288,7 @@ export const useReaderStore = defineStore('reader', () => {
         chapterUrl: chapter.url,
         bookSourceUrl: book.value.origin,
         refresh: forceRefresh ? 1 : 0,
-      })
+      }, { timeout: 2500 })
       appLog('正文', `第 ${index} 章《${chapter.title}》远端获取成功，写入本机离线`, { size: chapterContent.length })
     } catch (error) {
       if (browserCached) {

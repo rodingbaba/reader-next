@@ -3,6 +3,9 @@ import {
   getTodayDateString,
   loadLocalReadingStats,
   saveLocalReadingStats,
+  loadPendingHeartbeats,
+  appendPendingHeartbeat,
+  clearPendingHeartbeats,
   ReadingTracker,
   type LocalReadingStatsData,
 } from './readingTracker'
@@ -214,6 +217,45 @@ describe('readingTracker utility', () => {
     expect(local.books['book://daming']?.totalDurationSecs).toBe(120)
 
     vi.useRealTimers()
+  })
+
+  it('aggregates pending heartbeats into key pool without truncation over long sessions', () => {
+    clearPendingHeartbeats()
+    expect(loadPendingHeartbeats()).toEqual([])
+
+    // 模拟离线连续心跳 100 次（相当于 1500 秒，旧版本 slice(-50) 会丢弃前 50 次）
+    for (let i = 0; i < 100; i++) {
+      appendPendingHeartbeat({
+        bookUrl: 'book://offline-long',
+        bookName: '测试长篇',
+        readDate: '2026-09-11',
+        durationSecs: 15,
+        isListening: true,
+      })
+    }
+
+    const pool = loadPendingHeartbeats()
+    // 聚合在同一个 key 下，条目数恒等于 1
+    expect(pool.length).toBe(1)
+    expect(pool[0].bookUrl).toBe('book://offline-long')
+    expect(pool[0].durationSecs).toBe(1500)
+    expect(pool[0].isListening).toBe(true)
+
+    // 追加不同书籍与非听书的心跳
+    appendPendingHeartbeat({
+      bookUrl: 'book://offline-read',
+      bookName: '测试阅读',
+      readDate: '2026-09-11',
+      durationSecs: 30,
+      isListening: false,
+    })
+
+    const updatedPool = loadPendingHeartbeats()
+    expect(updatedPool.length).toBe(2)
+    expect(updatedPool.find((x) => x.bookUrl === 'book://offline-read')?.durationSecs).toBe(30)
+
+    clearPendingHeartbeats()
+    expect(loadPendingHeartbeats()).toEqual([])
   })
 })
 

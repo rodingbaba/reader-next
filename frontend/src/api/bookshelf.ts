@@ -97,8 +97,8 @@ export function getChapterList(params: {
   tocUrl?: string
   bookSourceUrl?: string
   refresh?: number
-}) {
-  return http.post<BookChapter[]>('getChapterList', params).then((r) => r.data)
+}, config?: { timeout?: number }) {
+  return http.post<BookChapter[]>('getChapterList', params, config).then((r) => r.data)
 }
 
 export async function getBookContent(params: {
@@ -106,7 +106,7 @@ export async function getBookContent(params: {
   bookSourceUrl?: string
   index?: number
   refresh?: number
-}) {
+}, config?: { timeout?: number }) {
   if (isNativeApp()) {
     try {
       const cached = await invokeData('getCache', params)
@@ -115,7 +115,7 @@ export async function getBookContent(params: {
       console.error('Native getCache error', e)
     }
   }
-  return http.post<string>('getBookContent', params).then((r) => r.data)
+  return http.post<string>('getBookContent', params, config).then((r) => r.data)
 }
 
 export async function saveBookProgress(params: {

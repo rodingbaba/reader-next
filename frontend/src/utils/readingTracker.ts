@@ -59,6 +59,51 @@ export function saveLocalReadingStats(data: LocalReadingStatsData) {
   } catch { }
 }
 
+export function buildPendingHeartbeatKey(item: RecordHeartbeatPayload): string {
+  return `${item.bookUrl}::${item.readDate}::${item.isListening ? 1 : 0}`
+}
+
+export function loadPendingHeartbeats(): RecordHeartbeatPayload[] {
+  try {
+    const raw = localStorage.getItem(PENDING_HEARTBEATS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export function savePendingHeartbeats(list: RecordHeartbeatPayload[]): void {
+  try {
+    localStorage.setItem(PENDING_HEARTBEATS_KEY, JSON.stringify(list))
+  } catch { }
+}
+
+export function appendPendingHeartbeat(payload: RecordHeartbeatPayload): void {
+  const list = loadPendingHeartbeats()
+  const key = buildPendingHeartbeatKey(payload)
+  const existingIndex = list.findIndex((item) => buildPendingHeartbeatKey(item) === key)
+
+  if (existingIndex >= 0) {
+    const existing = list[existingIndex]
+    existing.durationSecs += payload.durationSecs
+    existing.chaptersDelta = (existing.chaptersDelta || 0) + (payload.chaptersDelta || 0)
+    if (payload.bookName) existing.bookName = payload.bookName
+    if (payload.author) existing.author = payload.author
+    if (payload.coverUrl) existing.coverUrl = payload.coverUrl
+  } else {
+    list.push({ ...payload })
+  }
+  savePendingHeartbeats(list)
+}
+
+export function clearPendingHeartbeats(): void {
+  try {
+    localStorage.removeItem(PENDING_HEARTBEATS_KEY)
+  } catch { }
+}
+
 export interface TrackerOptions {
   getBook: () => Book | null
   isSpeaking: () => boolean
@@ -340,28 +385,26 @@ export class ReadingTracker {
   }
 
   private enqueuePendingHeartbeat(payload: RecordHeartbeatPayload) {
-    try {
-      const raw = localStorage.getItem(PENDING_HEARTBEATS_KEY)
-      const list: RecordHeartbeatPayload[] = raw ? JSON.parse(raw) : []
-      list.push(payload)
-      localStorage.setItem(PENDING_HEARTBEATS_KEY, JSON.stringify(list.slice(-50)))
-    } catch { }
+    appendPendingHeartbeat(payload)
   }
 
   private async flushPendingHeartbeats() {
-    try {
-      const raw = localStorage.getItem(PENDING_HEARTBEATS_KEY)
-      if (!raw) return
-      const list: RecordHeartbeatPayload[] = JSON.parse(raw)
-      if (!Array.isArray(list) || list.length === 0) return
+    const list = loadPendingHeartbeats()
+    if (!list.length) return
 
-      localStorage.removeItem(PENDING_HEARTBEATS_KEY)
-      for (const item of list) {
-        await recordReadingHeartbeat(item).catch(() => {
-          this.enqueuePendingHeartbeat(item)
-        })
+    for (const item of [...list]) {
+      try {
+        await recordReadingHeartbeat(item)
+        // 上报成功后从增量池中安全移除
+        const currentList = loadPendingHeartbeats()
+        const key = buildPendingHeartbeatKey(item)
+        const updated = currentList.filter((entry) => buildPendingHeartbeatKey(entry) !== key)
+        savePendingHeartbeats(updated)
+      } catch {
+        // 网络失败保留在池中，下次继续重试
+        break
       }
-    } catch { }
+    }
   }
 
   public destroy() {

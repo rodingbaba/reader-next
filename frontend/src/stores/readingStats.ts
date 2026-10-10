@@ -8,8 +8,44 @@ import {
 } from '../api/readingStats'
 import {
   loadLocalReadingStats,
+  loadPendingHeartbeats,
   getTodayDateString,
 } from '../utils/readingTracker'
+
+const STATS_SUMMARY_SNAPSHOT_KEY = 'reader-stats-summary-snapshot-v1'
+const STATS_BOOKS_SNAPSHOT_KEY = 'reader-stats-books-snapshot-v1'
+
+export function loadStatsSummarySnapshot(): ReadingStatsSummary | null {
+  try {
+    const raw = localStorage.getItem(STATS_SUMMARY_SNAPSHOT_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function saveStatsSummarySnapshot(data: ReadingStatsSummary): void {
+  try {
+    localStorage.setItem(STATS_SUMMARY_SNAPSHOT_KEY, JSON.stringify(data))
+  } catch { }
+}
+
+export function loadStatsBooksSnapshot(): BookReadingStatItem[] {
+  try {
+    const raw = localStorage.getItem(STATS_BOOKS_SNAPSHOT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export function saveStatsBooksSnapshot(data: BookReadingStatItem[]): void {
+  try {
+    localStorage.setItem(STATS_BOOKS_SNAPSHOT_KEY, JSON.stringify(data))
+  } catch { }
+}
 
 export const useReadingStatsStore = defineStore('readingStats', () => {
   const loading = ref(false)
@@ -64,12 +100,27 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
 
       if (remoteSummary) {
         summary.value = remoteSummary
-      }
-      if (remoteBooks) {
-        bookStats.value = remoteBooks
+        saveStatsSummarySnapshot(remoteSummary)
+      } else if (!summary.value) {
+        // 远端不可用，优先尝试从持久化历史快照恢复全量历史与热力图
+        const cached = loadStatsSummarySnapshot()
+        if (cached) {
+          summary.value = cached
+        }
       }
 
-      // 若远端不可用或离线，从本地缓存补充降级数据并智能融合
+      if (remoteBooks) {
+        bookStats.value = remoteBooks
+        saveStatsBooksSnapshot(remoteBooks)
+      } else if (!bookStats.value.length) {
+        // 远端不可用，优先尝试从持久化历史快照恢复全量书籍档案
+        const cachedBooks = loadStatsBooksSnapshot()
+        if (cachedBooks.length) {
+          bookStats.value = cachedBooks
+        }
+      }
+
+      // 智能双向融合：叠加本地未确认的增量心跳（Pending Deltas），确保离线听书/阅读时长绝对不被覆盖！
       mergeWithLocalStats(today)
     } finally {
       loading.value = false
@@ -109,8 +160,10 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
 
   function mergeWithLocalStats(today: string) {
     const local = loadLocalReadingStats()
+    const pendingDeltas = loadPendingHeartbeats()
+
     if (!summary.value) {
-      // 纯本地离线计算
+      // 纯本地离线计算（既无服务端也无快照）
       let totalSecs = 0
       let totalListenSecs = 0
       const dates = Object.keys(local.daily).sort()
@@ -137,21 +190,77 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
         totalBooks: Object.keys(local.books).length,
         dailyStats: dailyList,
       }
+    } else {
+      // 权威叠加：基准（远端或本地快照） + 本地未同步增量（Pending Deltas）
+      // 保证服务端上线后，未上报完成的离线时长依然完整呈现，绝不被历史旧数据覆盖！
+      if (pendingDeltas.length > 0) {
+        let pendingTotalSecs = 0
+        let pendingListenSecs = 0
+        let pendingTodaySecs = 0
+        let pendingTodayListenSecs = 0
+
+        const dailyMap = new Map((summary.value.dailyStats || []).map((d) => [d.readDate, d]))
+
+        for (const delta of pendingDeltas) {
+          pendingTotalSecs += delta.durationSecs
+          if (delta.isListening) {
+            pendingListenSecs += delta.durationSecs
+          }
+          if (delta.readDate === today) {
+            pendingTodaySecs += delta.durationSecs
+            if (delta.isListening) {
+              pendingTodayListenSecs += delta.durationSecs
+            }
+          }
+
+          // 叠加到热力图 dailyStats
+          const readDate = delta.readDate || today
+          const existingDay = dailyMap.get(readDate)
+          if (existingDay) {
+            existingDay.durationSecs += delta.durationSecs
+            if (delta.isListening) {
+              existingDay.listenSecs += delta.durationSecs
+            }
+          } else {
+            const newDay = {
+              readDate,
+              durationSecs: delta.durationSecs,
+              listenSecs: delta.isListening ? delta.durationSecs : 0,
+              bookCount: 1,
+            }
+            summary.value.dailyStats = summary.value.dailyStats || []
+            summary.value.dailyStats.push(newDay)
+            dailyMap.set(readDate, newDay)
+          }
+        }
+
+        summary.value.totalDurationSecs += pendingTotalSecs
+        summary.value.totalListenSecs += pendingListenSecs
+        summary.value.todayDurationSecs += pendingTodaySecs
+        summary.value.todayListenSecs += pendingTodayListenSecs
+      }
     }
 
-    // 智能双向融合本地书籍记录与服务端列表
+    // 智能双向融合单书列表
     const bookMap = new Map(bookStats.value.map((b) => [b.bookUrl, b]))
+
+    // 1. 先叠加未同步增量到单书列表
+    for (const delta of pendingDeltas) {
+      const existing = bookMap.get(delta.bookUrl)
+      if (existing) {
+        existing.totalDurationSecs += delta.durationSecs
+        if (delta.isListening) {
+          existing.totalListenSecs += delta.durationSecs
+        }
+      }
+    }
+
+    // 2. 确保本地书籍全部在列表中
     for (const [url, lb] of Object.entries(local.books)) {
       if (!lb || lb.totalDurationSecs <= 0) continue
 
       const existing = bookMap.get(url)
       if (existing) {
-        if (lb.totalDurationSecs > existing.totalDurationSecs) {
-          existing.totalDurationSecs = lb.totalDurationSecs
-        }
-        if (lb.totalListenSecs > existing.totalListenSecs) {
-          existing.totalListenSecs = lb.totalListenSecs
-        }
         if (lb.lastReadAt) {
           const prevTime = existing.lastReadTime ? Number(existing.lastReadTime) : 0
           if (lb.lastReadAt > prevTime) {
@@ -159,7 +268,6 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
           }
         }
       } else {
-        // 本地有此书，但远端尚未收录（如离线时新读的书），将本地书目平滑并入列表
         const newBook: BookReadingStatItem = {
           bookUrl: lb.bookUrl,
           bookName: lb.bookName,

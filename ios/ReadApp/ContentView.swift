@@ -90,6 +90,7 @@ struct HybridWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = UIColor.clear
         webView.uiDelegate = context.coordinator
+        webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         NetworkMonitor.shared.webView = webView
         
@@ -105,7 +106,7 @@ struct HybridWebView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate {
+    class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
         var parent: HybridWebView
         weak var webView: WKWebView?
         
@@ -171,15 +172,42 @@ struct HybridWebView: UIViewRepresentable {
         }
 
         @objc private func onTTSListeningDuration(_ notification: Notification) {
-            guard let bookUrl = notification.userInfo?["bookUrl"] as? String,
-                  let duration = notification.userInfo?["durationSeconds"] as? Double else { return }
-            let escapedBookUrl = bookUrl.replacingOccurrences(of: "'", with: "\\'")
             DispatchQueue.main.async { [weak self] in
-                self?.webView?.evaluateJavaScript("window.__nativeBridgeTTSDurationSync && window.__nativeBridgeTTSDurationSync({ bookUrl: '\(escapedBookUrl)', durationSeconds: \(duration) })")
+                self?.drainPendingListeningDurations()
             }
         }
 
+        func drainPendingListeningDurations() {
+            guard let webView = self.webView else { return }
+            let pending = TTSManager.shared.getPendingDurations()
+            guard !pending.isEmpty else { return }
+
+            for (bookUrl, duration) in pending {
+                guard duration >= 0.5 else {
+                    TTSManager.shared.acknowledgePendingDuration(bookUrl: bookUrl, duration: duration)
+                    continue
+                }
+                let escapedBookUrl = bookUrl.replacingOccurrences(of: "'", with: "\\'")
+                webView.evaluateJavaScript("window.__nativeBridgeTTSDurationSync && window.__nativeBridgeTTSDurationSync({ bookUrl: '\(escapedBookUrl)', durationSeconds: \(duration) })") { [bookUrl, duration] _, error in
+                    if error == nil {
+                        TTSManager.shared.acknowledgePendingDuration(bookUrl: bookUrl, duration: duration)
+                        LogManager.shared.log("✅ 成功回补后台听书时长: \(bookUrl), \(duration)秒", category: "TTS")
+                    } else {
+                        LogManager.shared.log("⚠️ 回补后台听书时长推迟重试: \(error?.localizedDescription ?? "")", category: "TTS")
+                    }
+                }
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            drainPendingListeningDurations()
+        }
+
         @objc private func onAppWillEnterForeground() {
+            TTSManager.shared.flushListeningDuration(force: true)
+            DispatchQueue.main.async { [weak self] in
+                self?.drainPendingListeningDurations()
+            }
             guard TTSManager.shared.isPlaying else { return }
             TTSManager.shared.ensurePlaybackTimerRunning()
             let chapterIndex = TTSManager.shared.currentChapterIndex

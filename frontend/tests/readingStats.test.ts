@@ -1,6 +1,6 @@
 import { setActivePinia, createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useReadingStatsStore } from '../src/stores/readingStats'
+import { useReadingStatsStore, saveStatsSummarySnapshot } from '../src/stores/readingStats'
 import * as api from '../src/api/readingStats'
 
 vi.mock('../src/api/readingStats', () => ({
@@ -11,6 +11,7 @@ vi.mock('../src/api/readingStats', () => ({
 
 vi.mock('../src/utils/readingTracker', () => ({
   getTodayDateString: () => '2026-09-11',
+  loadPendingHeartbeats: () => [],
   loadLocalReadingStats: () => ({
     daily: {},
     books: {
@@ -29,6 +30,7 @@ vi.mock('../src/utils/readingTracker', () => ({
 
 describe('useReadingStatsStore', () => {
   beforeEach(() => {
+    localStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
@@ -113,5 +115,30 @@ describe('useReadingStatsStore', () => {
     expect(store.focusedBookUrl).toBe('book-1')
     expect(store.bookStats[0].totalDurationSecs).toBe(1740)
     expect(store.bookStats[0].totalListenSecs).toBe(1740)
+  })
+
+  it('restores cached snapshot gracefully when server is offline', async () => {
+    const store = useReadingStatsStore()
+    const mockSnapshot = {
+      totalDurationSecs: 3600,
+      totalListenSecs: 1800,
+      todayDurationSecs: 600,
+      todayListenSecs: 300,
+      totalDays: 5,
+      streakDays: 2,
+      totalBooks: 3,
+      dailyStats: [{ readDate: '2026-09-11', durationSecs: 600, listenSecs: 300, bookCount: 1 }],
+    }
+    saveStatsSummarySnapshot(mockSnapshot)
+
+    vi.mocked(api.getReadingStatsSummary).mockRejectedValue(new Error('Network offline'))
+    vi.mocked(api.getReadingBookStats).mockRejectedValue(new Error('Network offline'))
+
+    await store.fetchStats()
+
+    expect(store.summary).toBeDefined()
+    expect(store.summary?.totalDurationSecs).toBe(3600)
+    expect(store.summary?.todayDurationSecs).toBe(600)
+    expect(store.bookStats.find((b) => b.bookUrl === 'book-new')).toBeDefined()
   })
 })

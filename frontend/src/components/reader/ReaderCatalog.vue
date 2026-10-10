@@ -231,6 +231,7 @@ import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 import { listBrowserCachedChapterUrls } from '../../utils/browserCache'
 import { isLocalTxtBook } from '../../utils/localBook'
+import { isNetworkOnline } from '../../utils/nativeBridge'
 
 const props = withDefaults(defineProps<{
   initialTab?: 'chapters' | 'bookmarks'
@@ -561,6 +562,10 @@ async function goToChapter(index: number) {
 }
 
 async function refreshCatalog() {
+  if (!isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+    appStore.showToast(`当前处于离线模式，已显示本地离线目录 (共 ${store.chapters.length} 章)`, 'warning')
+    return
+  }
   await store.refreshChapters()
   await refreshCachedChapterState()
   scrollToCurrent()
