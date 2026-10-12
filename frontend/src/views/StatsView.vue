@@ -449,6 +449,17 @@ function scrollToHeatmapEnd() {
   }, 100)
 }
 
+function cleanDisplayMetadata(text: string | undefined | null): string {
+  if (!text) return ''
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim()
+}
+
 function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string {
   if (totalSeconds !== undefined && totalSeconds > 0 && totalSeconds < 60) {
     return '< 1 分钟'
@@ -797,8 +808,13 @@ const filteredBookList = computed(() => {
       recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadDate))
     }
 
+    const finalBookName = cleanDisplayMetadata(shelfBook?.name || item.bookName)
+    const finalAuthor = cleanDisplayMetadata(shelfBook?.author || item.author)
+
     return {
       ...item,
+      bookName: finalBookName || item.bookName,
+      author: finalAuthor || item.author,
       shelfBook,
       shelfIndex,
       recentTimestamp,

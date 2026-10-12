@@ -52,8 +52,8 @@ export function saveStatsBooksSnapshot(data: BookReadingStatItem[]): void {
 
 export const useReadingStatsStore = defineStore('readingStats', () => {
   const loading = ref(false)
-  const summary = ref<ReadingStatsSummary | null>(null)
-  const bookStats = ref<BookReadingStatItem[]>([])
+  const summary = ref<ReadingStatsSummary | null>(loadStatsSummarySnapshot())
+  const bookStats = ref<BookReadingStatItem[]>(loadStatsBooksSnapshot())
 
   const totalDurationMinutes = computed(() => {
     return Math.round((summary.value?.totalDurationSecs || 0) / 60)
@@ -89,29 +89,37 @@ export const useReadingStatsStore = defineStore('readingStats', () => {
   const focusedBookUrl = ref<string | null>(null)
 
   async function fetchStats(targetBookUrl?: string | null) {
-    loading.value = true
     const today = getTodayDateString()
     if (targetBookUrl !== undefined) {
       focusedBookUrl.value = targetBookUrl
     }
 
-    // 1. 若检测到网络离线，0ms 立即还原本地离线快照与增量，完全不发起长耗时网络阻塞
-    const isOffline = !isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)
-    if (isOffline) {
+    // 1. 0ms 同步即开呈现（Stale-While-Revalidate）：
+    // 无论当前是否连网，首帧立刻从本地持久化快照与增量池还原全量统计（KPI、7天走势柱状图、单书列表），
+    // 彻底消除 3 秒网络等待导致的灰色空白或界面跳变！
+    if (!summary.value) {
       const cached = loadStatsSummarySnapshot()
       if (cached) summary.value = cached
+    }
+    if (!bookStats.value.length) {
       const cachedBooks = loadStatsBooksSnapshot()
       if (cachedBooks.length) bookStats.value = cachedBooks
-      mergeWithLocalStats(today)
-      loading.value = false
+    }
+    mergeWithLocalStats(today)
+
+    // 若检测到设备处于绝对离线模式，0ms 秒退完成
+    const isOffline = !isNetworkOnline() || (typeof navigator !== 'undefined' && !navigator.onLine)
+    if (isOffline) {
       return { success: false, offline: true }
     }
+
+    loading.value = true
 
     try {
       // 2. Sync-Before-Fetch：先排空本地所有积压心跳增量，保证服务端拥有两端最新合并数据
       await flushAllPendingHeartbeats({ timeout: 2500 }).catch(() => false)
 
-      // 3. 发起远端查询，注入 3.0s 短超时熔断保护，彻底解决服务端离线转圈 120 秒的问题
+      // 3. 后台静默发起远端查询（注入 3.0s 短超时熔断保护，彻底解决服务端离线转圈 120 秒的问题）
       const [remoteSummary, remoteBooks] = await Promise.all([
         getReadingStatsSummary(today, focusedBookUrl.value || undefined, { timeout: 3000 }).catch(() => null),
         getReadingBookStats({ timeout: 3000 }).catch(() => null),
