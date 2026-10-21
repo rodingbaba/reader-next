@@ -1,6 +1,11 @@
-import { getChapterList, getBookContent } from '../api/bookshelf'
+import { getChapterList, getBookContent, deleteBookCache } from '../api/bookshelf'
 import type { Book, BookChapter } from '../types'
-import { setBrowserCachedChapter, setBrowserCachedChapterList, listBrowserCachedChapterUrls } from './browserCache'
+import {
+  setBrowserCachedChapter,
+  setBrowserCachedChapterList,
+  listBrowserCachedChapterUrls,
+  deleteBrowserBookCache,
+} from './browserCache'
 import { appLog } from './appLogger'
 import { isLocalBook } from './localBook'
 
@@ -138,5 +143,19 @@ export async function cacheBookToBrowser(params: {
     total: sliced.length,
     completed,
     newlyCached,
+  }
+}
+
+/**
+ * 统一清除书籍的离线缓存：
+ * 1. 清除当前设备本机（IndexedDB 的 chapters 与 chapter_lists 表，以及已读/TTS/书签等会话缓存）
+ * 2. 对网络书籍同时清理服务端磁盘缓存（本地书文件原样在服务器，无需也不能调 deleteBookCache）
+ */
+export async function clearBookOfflineCache(book: Book | Pick<Book, 'bookUrl' | 'origin'>) {
+  await deleteBrowserBookCache(book.bookUrl)
+  if (!isLocalBook(book)) {
+    await deleteBookCache(book.bookUrl).catch((err) => {
+      appLog('缓存', `清理服务端缓存异常: ${book.bookUrl}`, { err: String(err) })
+    })
   }
 }

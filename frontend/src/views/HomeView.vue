@@ -559,13 +559,14 @@ async function handleRefreshBooks() {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-xl);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--radius-2xl, 24px);
   padding: var(--space-3) var(--space-6);
   display: flex;
   align-items: center;
   gap: var(--space-8);
   z-index: calc(var(--z-sticky) + 5);
-  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 
 .batch-info {
@@ -741,6 +742,7 @@ async function handleRefreshBooks() {
     bottom: calc(104px + var(--space-3));
     gap: var(--space-4);
     justify-content: space-between;
+    border-radius: var(--radius-2xl, 24px);
   }
   .batch-info { display: none; }
 }

@@ -186,6 +186,11 @@ export async function deleteBrowserBookCache(bookUrl: string) {
       if (lastSessionRaw && lastSessionRaw.includes(bookUrl)) {
         localStorage.removeItem('reader-last-session')
       }
+      // 同步更新离线摘要本地快照
+      const snapshot = loadBrowserCacheSummarySnapshot()
+      if (snapshot.some((s) => s.bookUrl === bookUrl)) {
+        saveBrowserCacheSummarySnapshot(snapshot.filter((s) => s.bookUrl !== bookUrl))
+      }
     } catch {
       // 忽略存储访问异常
     }
@@ -223,11 +228,45 @@ export async function listBrowserCacheSummary(): Promise<BrowserBookCacheSummary
         summaryMap.set(record.bookUrl, current)
       })
 
-    return Array.from(summaryMap.values()).sort((a, b) => b.updatedAt - a.updatedAt)
+    const result = Array.from(summaryMap.values()).sort((a, b) => b.updatedAt - a.updatedAt)
+    saveBrowserCacheSummarySnapshot(result)
+    return result
   })
 }
 
+const BROWSER_CACHE_SUMMARY_SNAPSHOT_KEY = 'reader_browser_cache_summary_snapshot'
+
+/** 读取本地离线持久化的缓存摘要快照，用于 0ms 秒开渲染 */
+export function loadBrowserCacheSummarySnapshot(): BrowserBookCacheSummary[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(BROWSER_CACHE_SUMMARY_SNAPSHOT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/** 持久化缓存摘要快照到 localStorage */
+export function saveBrowserCacheSummarySnapshot(summaries: BrowserBookCacheSummary[]) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(BROWSER_CACHE_SUMMARY_SNAPSHOT_KEY, JSON.stringify(summaries))
+  } catch {
+    // 忽略存储超限异常
+  }
+}
+
 export async function clearAllBrowserCache() {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(BROWSER_CACHE_SUMMARY_SNAPSHOT_KEY)
+    } catch {
+      // ignore
+    }
+  }
   return withStore('readwrite', async (store) => {
     await requestToPromise(store.clear())
   })

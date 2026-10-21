@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { cacheBookToBrowser } from './bookCache'
+import { cacheBookToBrowser, clearBookOfflineCache } from './bookCache'
 import * as bookshelfApi from '../api/bookshelf'
 import * as browserCache from './browserCache'
 
@@ -102,3 +102,36 @@ describe('cacheBookToBrowser', () => {
   })
 })
 
+describe('clearBookOfflineCache', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(browserCache.deleteBrowserBookCache).mockResolvedValue(undefined)
+    vi.mocked(bookshelfApi.deleteBookCache).mockResolvedValue(true)
+  })
+
+  it('cleans browser cache and server cache for network book', async () => {
+    const networkBook = {
+      bookUrl: 'https://example.com/book/1',
+      name: '网络小说',
+      origin: 'https://example.com',
+    } as any
+
+    await clearBookOfflineCache(networkBook)
+
+    expect(browserCache.deleteBrowserBookCache).toHaveBeenCalledWith('https://example.com/book/1')
+    expect(bookshelfApi.deleteBookCache).toHaveBeenCalledWith('https://example.com/book/1')
+  })
+
+  it('cleans only browser cache for local book without calling deleteBookCache', async () => {
+    const localBook = {
+      bookUrl: 'local-txt:book123',
+      name: '本地书籍',
+      origin: 'local-txt',
+    } as any
+
+    await clearBookOfflineCache(localBook)
+
+    expect(browserCache.deleteBrowserBookCache).toHaveBeenCalledWith('local-txt:book123')
+    expect(bookshelfApi.deleteBookCache).not.toHaveBeenCalled()
+  })
+})
