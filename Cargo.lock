@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "reader-next"
-version = "1.8.15"
+version = "1.9.0"
 dependencies = [
  "aes",
  "anyhow",
