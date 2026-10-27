@@ -1,6 +1,6 @@
 import http from './http'
 import type { SearchBook } from '../types'
-import { appendAuthQueryParams } from '../utils/secureAccess'
+import { appendAuthQueryParams, resolveNativeAssetUrl } from '../utils/secureAccess'
 
 export function searchBookMulti(params: {
   key: string
@@ -31,7 +31,7 @@ export function searchBookMultiSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/searchBookMultiSSE?${query.toString()}`)
+  return new EventSource(resolveNativeAssetUrl(`/reader3/searchBookMultiSSE?${query.toString()}`))
 }
 
 export function exploreBook(params: {
@@ -77,7 +77,7 @@ export function getAvailableBookSourceSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/getAvailableBookSourceSSE?${query.toString()}`)
+  return new EventSource(resolveNativeAssetUrl(`/reader3/getAvailableBookSourceSSE?${query.toString()}`))
 }
 
 export interface AvailableBookSourceResult {
@@ -117,5 +117,5 @@ export function searchBookSourceSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/searchBookSourceSSE?${query.toString()}`)
+  return new EventSource(resolveNativeAssetUrl(`/reader3/searchBookSourceSSE?${query.toString()}`))
 }

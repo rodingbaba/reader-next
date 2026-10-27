@@ -43,20 +43,28 @@ export function readStoredSecureKey(storage: StorageLike = localStorage) {
  */
 export function resolveNativeAssetUrl(path: string, storage: StorageLike = localStorage) {
   if (!path) return path
-  if (path.startsWith('data:') || path.startsWith('http') || path.startsWith('//')) {
+  if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://') || path.startsWith('//')) {
     return path
   }
   if (!path.startsWith('/')) return path
 
-  const baseUrl = storage.getItem('server_base_url') || ''
+  const baseUrl = (storage.getItem('server_base_url') || '').trim()
   if (!baseUrl) return path
 
   try {
-    const url = new URL(baseUrl)
-    const resolved = new URL(path, url.origin)
+    const serverBase = baseUrl.replace(/\/+$/, '')
+    const originBase = serverBase.endsWith('/reader3')
+      ? serverBase.slice(0, -'/reader3'.length)
+      : serverBase
+    const fullUrl = `${originBase}${path}`
+    const resolved = new URL(fullUrl)
     const { accessToken, secureKey } = buildAuthHeaderValues(storage)
-    if (accessToken) resolved.searchParams.set('accessToken', accessToken)
-    if (secureKey) resolved.searchParams.set('secureKey', secureKey)
+    if (accessToken && !resolved.searchParams.has('accessToken')) {
+      resolved.searchParams.set('accessToken', accessToken)
+    }
+    if (secureKey && !resolved.searchParams.has('secureKey')) {
+      resolved.searchParams.set('secureKey', secureKey)
+    }
     return resolved.toString()
   } catch {
     return path

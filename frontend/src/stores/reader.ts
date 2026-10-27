@@ -2108,6 +2108,7 @@ export const useReaderStore = defineStore('reader', () => {
           appLog('目录', `后台静默检测目录更新: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
           const serverChapters = await getChapterList({
             bookUrl: latestBook.bookUrl,
+            tocUrl: latestBook.tocUrl,
             bookSourceUrl: latestBook.origin,
           }, { timeout: 2500 })
           // 防切书串台守卫
@@ -2154,11 +2155,16 @@ export const useReaderStore = defineStore('reader', () => {
       appLog('目录', `本地无缓存，开始请求远端目录: 《${latestBook.name}》`, { bookUrl: latestBook.bookUrl })
       const serverChapters = await getChapterList({
         bookUrl: latestBook.bookUrl,
+        tocUrl: latestBook.tocUrl,
         bookSourceUrl: latestBook.origin,
       })
       if (currentSeq !== loadBookSeq || book.value?.bookUrl !== latestBook.bookUrl) return
 
       chapters.value = serverChapters
+      if (!serverChapters || serverChapters.length === 0) {
+        loading.value = false
+        throw new Error('书源解析目录为空，目标网站可能已失效或开启了防爬验证')
+      }
       appLog('目录', `远端目录获取成功，共 ${chapters.value.length} 章，准备落盘本地`, { bookUrl: latestBook.bookUrl })
       void setBrowserCachedChapterList(latestBook.bookUrl, chapters.value, chapters.value.length)
         .then(() => cleanupOrphanChapters(latestBook.bookUrl, new Set(chapters.value.map((c) => c.url).filter(Boolean))))
@@ -2314,7 +2320,10 @@ export const useReaderStore = defineStore('reader', () => {
   let loadChapterSeq = 0
 
   async function loadChapter(index: number, forceRefresh = false) {
-    if (!book.value || !chapters.value[index]) return
+    if (!book.value || !chapters.value[index]) {
+      loading.value = false
+      return
+    }
     const currentSeq = ++loadChapterSeq
 
     loading.value = true

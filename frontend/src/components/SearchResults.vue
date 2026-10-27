@@ -112,6 +112,7 @@ const {
 let eventSource: EventSource | null = null
 const showBookDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
+const openingBookUrl = ref('')
 
 const sourceByUrl = computed(() => {
   return new Map(sourceStore.sources.map((source) => [source.bookSourceUrl, source]))
@@ -300,10 +301,20 @@ onUnmounted(() => {
 
 async function handleBookClick(book: Book | SearchBook) {
   const b = book as Book
-  if (b.origin && b.bookUrl) {
-    await readerStore.loadBook(b)
+  if (!b.origin || !b.bookUrl) return
+  if (openingBookUrl.value === b.bookUrl) return
+
+  openingBookUrl.value = b.bookUrl
+
+  try {
+    const loadBookTask = readerStore.loadBook(b)
+    await router.push('/reader')
+    await loadBookTask
     await readerStore.loadChapter(readerStore.currentIndex)
-    router.push('/reader')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '打开书籍失败', 'error')
+  } finally {
+    openingBookUrl.value = ''
   }
 }
 

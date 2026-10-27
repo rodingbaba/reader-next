@@ -1907,11 +1907,13 @@ pub async fn save_book_progress(
         .index
         .ok_or_else(|| AppError::BadRequest("index required".to_string()))?;
 
-    let shelf_book = state
-        .book_service
-        .get_shelf_book(&user_ns, &book_url)
-        .await?
-        .ok_or_else(|| AppError::BadRequest("书籍未加入书架".to_string()))?;
+    let shelf_book = match state.book_service.get_shelf_book(&user_ns, &book_url).await? {
+        Some(b) => b,
+        None => {
+            // 未入架书籍试读进度平滑返回成功，避免客户端重复轮询与错误日志刷屏
+            return Ok(Json(ApiResponse::ok(serde_json::json!("ok"))));
+        }
+    };
 
     let mut updated = shelf_book.clone();
     let mut chapter_title: Option<String> = None;

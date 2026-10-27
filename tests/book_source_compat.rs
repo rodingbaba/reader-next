@@ -701,3 +701,18 @@ fn explore_kinds_accept_relaxed_angle_item_objects() {
         Some(&json!(0.25))
     );
 }
+
+#[test]
+fn url_analyzer_accepts_malformed_key_equals_value_options() {
+    let source = BookSource::default();
+    let spec = analyze_url(
+        r#"/plus/search.php?q={{key}},{"body": "id"="search-form"}"#,
+        "斗罗大陆",
+        1,
+        "https://www.example.com",
+        &source,
+    )
+    .unwrap();
+    assert_eq!(spec.url, "https://www.example.com/plus/search.php?q=%E6%96%97%E7%BD%97%E5%A4%A7%E9%99%86");
+    assert_eq!(spec.body.as_deref(), Some("id=search-form"));
+}

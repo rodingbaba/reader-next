@@ -3,6 +3,7 @@ import {
   appendAuthQueryParams,
   buildAuthHeaderValues,
   computeNeedSecureKey,
+  resolveNativeAssetUrl,
   SECURE_KEY_STORAGE_KEY,
 } from './secureAccess'
 
@@ -56,5 +57,30 @@ describe('secureAccess', () => {
       secureKeyRequired: false,
       adminAuthorized: false,
     })).toBe(false)
+  })
+
+  it('resolves native asset url for app environment with subpath and auth tokens', () => {
+    const storage = {
+      getItem(key: string) {
+        if (key === 'server_base_url') return 'http://192.168.1.100:18080/reader3'
+        if (key === 'accessToken') return 'my-token'
+        if (key === SECURE_KEY_STORAGE_KEY) return 'my-sec-key'
+        return null
+      },
+    }
+
+    const url = resolveNativeAssetUrl('/reader3/searchBookMultiSSE?key=%E6%96%97%E7%BD%97%E5%A4%A7%E9%99%86', storage)
+    expect(url).toBe('http://192.168.1.100:18080/reader3/searchBookMultiSSE?key=%E6%96%97%E7%BD%97%E5%A4%A7%E9%99%86&accessToken=my-token&secureKey=my-sec-key')
+  })
+
+  it('keeps relative path as-is when server_base_url is empty (web mode)', () => {
+    const storage = {
+      getItem() {
+        return null
+      },
+    }
+
+    const path = '/reader3/searchBookMultiSSE?key=test'
+    expect(resolveNativeAssetUrl(path, storage)).toBe(path)
   })
 })

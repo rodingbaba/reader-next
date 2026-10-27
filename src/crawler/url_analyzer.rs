@@ -125,11 +125,40 @@ pub fn analyze_url(
 
 fn parse_url_options(options: &str) -> Result<Value, AppError> {
     let trimmed = options.trim();
-    serde_json::from_str::<Value>(trimmed)
-        .or_else(|_| serde_json::from_str::<Value>(&escape_control_chars_in_json_strings(trimmed)))
-        .or_else(|_| json5::from_str::<Value>(trimmed))
-        .or_else(|_| json5::from_str::<Value>(&escape_control_chars_in_json_strings(trimmed)))
-        .map_err(|e| AppError::BadRequest(format!("invalid url options: {}", e)))
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+    let escaped = escape_control_chars_in_json_strings(trimmed);
+    if let Ok(v) = serde_json::from_str::<Value>(&escaped) {
+        return Ok(v);
+    }
+    if let Ok(v) = json5::from_str::<Value>(trimmed) {
+        return Ok(v);
+    }
+    if let Ok(v) = json5::from_str::<Value>(&escaped) {
+        return Ok(v);
+    }
+
+    // 容错处理：替换非标准 `"key"="value"` 为 `"key=value"`
+    let repaired = repair_malformed_url_options(trimmed);
+    if let Ok(v) = serde_json::from_str::<Value>(&repaired) {
+        return Ok(v);
+    }
+    if let Ok(v) = json5::from_str::<Value>(&repaired) {
+        return Ok(v);
+    }
+
+    // 无法解析时降级为空对象，避免拖垮整个书源搜索与解析流程
+    tracing::warn!("Failed to parse url options '{}', falling back to empty options", trimmed);
+    Ok(Value::Object(Default::default()))
+}
+
+fn repair_malformed_url_options(input: &str) -> String {
+    if let Ok(re) = Regex::new(r#""([^"\r\n]+)"\s*=\s*"([^"\r\n]+)""#) {
+        re.replace_all(input, "\"$1=$2\"").into_owned()
+    } else {
+        input.to_string()
+    }
 }
 
 fn escape_control_chars_in_json_strings(input: &str) -> String {

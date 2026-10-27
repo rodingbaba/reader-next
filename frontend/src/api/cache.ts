@@ -1,5 +1,5 @@
 import http from './http'
-import { appendAuthQueryParams } from '../utils/secureAccess'
+import { appendAuthQueryParams, resolveNativeAssetUrl } from '../utils/secureAccess'
 
 /**
  * SSE-based book caching. Returns an EventSource.
@@ -20,7 +20,7 @@ export function cacheBookSSE(params: {
 
   appendAuthQueryParams(query)
 
-  return new EventSource(`/reader3/cacheBookSSE?${query.toString()}`)
+  return new EventSource(resolveNativeAssetUrl(`/reader3/cacheBookSSE?${query.toString()}`))
 }
 
 /**
