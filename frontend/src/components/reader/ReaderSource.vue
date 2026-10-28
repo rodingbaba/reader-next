@@ -3,32 +3,36 @@
     <div class="source-header">
       <div class="header-left">
         <h3>切换书源</h3>
-        <span class="source-count" v-if="preparedResults.length">{{ preparedResults.length }} 个结果</span>
+        <span class="source-count" v-if="preparedResults.length">{{ preparedResults.length }} 个可用源</span>
       </div>
-      <button class="close-btn" @click="store.closePanel()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
-      </button>
+      <div class="header-right">
+        <button
+          class="refresh-btn"
+          :class="{ spin: searching }"
+          :disabled="searching"
+          title="重新检索全网书源"
+          @click="handleForceRefresh"
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+          <span>重新检索</span>
+        </button>
+        <button class="close-btn" @click="store.closePanel()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
     </div>
     
     <div class="source-list" ref="listRef">
-      <!-- Current Source Header -->
-      <div class="section-label" v-if="currentSource">当前书源</div>
-      <div v-if="currentSource" class="source-item current">
-        <div class="source-name">{{ currentSource.originName || currentSource.origin }}</div>
-        <div class="source-url">{{ currentSource.origin }}</div>
-      </div>
-
-      <div v-if="store.book" class="book-brief">
-        <div class="book-brief-cover">
-          <img v-if="store.book.coverUrl" :src="store.book.coverUrl" :alt="store.book.name">
-          <div v-else class="book-brief-placeholder">{{ store.book.name.slice(0, 1) }}</div>
+      <!-- 紧凑当前书源状态条 -->
+      <div v-if="store.book" class="current-summary-card">
+        <div class="current-label-row">
+          <span class="current-badge">当前在读书源</span>
+          <span class="current-source-name">{{ currentSourceName }}</span>
         </div>
-        <div class="book-brief-main">
-          <div class="book-brief-title">{{ store.book.name }}</div>
-          <div class="book-brief-meta">{{ store.book.author || '未知作者' }}</div>
-          <div class="book-brief-meta" v-if="store.currentChapter?.title">当前章节：{{ store.currentChapter.title }}</div>
-          <div class="book-brief-meta" v-if="store.book.latestChapterTitle">最新章节：{{ store.book.latestChapterTitle }}</div>
-          <div class="book-brief-intro" v-if="store.book.intro">{{ store.book.intro }}</div>
+        <div class="current-progress" v-if="store.currentChapter?.title">
+          当前进度：{{ store.currentChapter.title }}
         </div>
       </div>
 
@@ -41,65 +45,34 @@
       
       <div v-else-if="!preparedResults.length" class="empty">未找到其他书源</div>
       
+      <!-- 极简书源列表项：只展示书源中文名称、最新章节、同步状态与一键切换 -->
       <div
         v-else
         v-for="item in preparedResults"
         :key="item.book.bookUrl + item.book.origin"
-        class="source-item"
-        :class="{ selected: selectedCandidate?.book.bookUrl === item.book.bookUrl && selectedCandidate?.book.origin === item.book.origin }"
-        @click="selectCandidate(item)"
+        class="source-row"
+        @click="handleSwitch(item.book)"
       >
-        <div class="source-main">
-          <div class="source-name-row">
-            <span class="source-name">{{ item.book.origin }}</span>
-            <span class="source-tag" v-if="item.book.kind">{{ item.book.kind }}</span>
-            <span v-if="item.sameLatest" class="compare-badge good">最新章节一致</span>
-            <span v-else-if="item.book.lastChapter" class="compare-badge">章节不同</span>
+        <div class="source-main-info">
+          <div class="source-name-line">
+            <span class="source-title">{{ getSourceName(item.book.origin) }}</span>
+            <span v-if="item.sameLatest" class="status-tag sync">最新章节一致</span>
+            <span v-else-if="item.book.lastChapter" class="status-tag diff">有更新</span>
           </div>
-          <div class="source-book-name" v-if="item.book.name">{{ item.book.name }}</div>
-          <div class="source-author">{{ item.book.author }}</div>
-          <div class="source-intro" v-if="item.book.intro">{{ item.book.intro }}</div>
-          <div class="source-chapter" v-if="item.book.lastChapter">最新: {{ item.book.lastChapter }}</div>
-          <div class="source-update" v-if="item.book.updateTime">更新时间: {{ item.book.updateTime }}</div>
-          <div class="source-compare-line">
-            <span v-if="item.sameName" class="compare-text">书名匹配</span>
-            <span v-if="item.sameAuthor" class="compare-text">作者匹配</span>
-            <span v-if="item.chapterHint" class="compare-text strong">{{ item.chapterHint }}</span>
+          <div class="source-chapter-line">
+            <span class="chapter-text" v-if="item.book.lastChapter">最新：{{ item.book.lastChapter }}</span>
+            <span class="chapter-text muted" v-else>暂无章节更新信息</span>
+            <span class="update-time" v-if="item.book.updateTime">{{ item.book.updateTime }}</span>
           </div>
         </div>
-        <div class="source-action">
-          <button class="switch-btn" @click.stop="handleSwitch(item.book)">切换</button>
-        </div>
+        <button class="switch-action-btn" :disabled="store.loading" @click.stop="handleSwitch(item.book)">
+          切换
+        </button>
       </div>
 
       <div v-if="searching && preparedResults.length" class="inline-loading">
         <div class="spinner small"></div>
-        继续搜索其他书源...
-      </div>
-
-      <div v-if="selectedCandidate" class="compare-panel">
-        <div class="compare-header">
-          <h4>书源对照</h4>
-          <button class="switch-btn primary" :disabled="store.loading" @click="handleSwitch(selectedCandidate.book)">切换到此书源</button>
-        </div>
-        <div class="compare-grid">
-          <div class="compare-card">
-            <div class="compare-title">当前</div>
-            <div class="compare-name">{{ store.book?.name }}</div>
-            <div class="compare-meta">{{ store.book?.author || '未知作者' }}</div>
-            <div class="compare-line">书源：{{ store.book?.originName || store.book?.origin }}</div>
-            <div class="compare-line">当前章节：{{ store.currentChapter?.title || '未知' }}</div>
-            <div class="compare-line">最新章节：{{ store.book?.latestChapterTitle || '未知' }}</div>
-          </div>
-          <div class="compare-card highlight">
-            <div class="compare-title">目标</div>
-            <div class="compare-name">{{ candidatePreview?.name || selectedCandidate.book.name }}</div>
-            <div class="compare-meta">{{ candidatePreview?.author || selectedCandidate.book.author || '未知作者' }}</div>
-            <div class="compare-line">书源：{{ candidatePreview?.originName || selectedCandidate.book.origin }}</div>
-            <div class="compare-line">最新章节：{{ candidatePreview?.latestChapterTitle || selectedCandidate.book.lastChapter || '未知' }}</div>
-            <div class="compare-line compare-intro" v-if="candidatePreview?.intro || selectedCandidate.book.intro">{{ candidatePreview?.intro || selectedCandidate.book.intro }}</div>
-          </div>
-        </div>
+        继续检索其他书源...
       </div>
 
       <div v-if="hasMoreSources && !searching" class="load-more-wrap">
@@ -123,9 +96,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
+import { useSourceStore } from '../../stores/source'
 import { getAvailableBookSourceSSE } from '../../api/search'
-import { getBookInfo } from '../../api/bookshelf'
-import type { Book, SearchBook } from '../../types'
+import type { SearchBook } from '../../types'
 
 type CandidateItem = {
   book: SearchBook
@@ -138,23 +111,36 @@ type CandidateItem = {
 
 const store = useReaderStore()
 const appStore = useAppStore()
+const sourceStore = useSourceStore()
+
 const theme = computed(() => store.currentTheme)
 const searching = ref(false)
 const loadingMore = ref(false)
 const results = ref<SearchBook[]>([])
 const lastIndex = ref(-1)
 const hasMoreSources = ref(true)
-const selectedCandidate = ref<CandidateItem | null>(null)
-const candidatePreview = ref<Book | null>(null)
 const AVAILABLE_CONCURRENT_COUNT = 8
 let availableSourceSSE: EventSource | null = null
 
-const currentSource = computed(() => {
-  if (!store.book) return null
-  return {
-    origin: store.book.origin,
-    originName: store.book.originName
+const sourceMap = computed(() => {
+  return new Map(sourceStore.sources.map((s) => [s.bookSourceUrl, s]))
+})
+
+function getSourceName(origin?: string): string {
+  if (!origin) return '未知书源'
+  const matched = sourceMap.value.get(origin)
+  if (matched?.bookSourceName) return matched.bookSourceName
+  try {
+    const u = new URL(origin)
+    return u.hostname
+  } catch {
+    return origin
   }
+}
+
+const currentSourceName = computed(() => {
+  if (!store.book) return ''
+  return store.book.originName || getSourceName(store.book.origin)
 })
 
 function normalizeText(value?: string) {
@@ -165,7 +151,16 @@ function normalizeText(value?: string) {
 }
 
 function normalizeAuthorText(value?: string) {
-  return normalizeText(value).replace(/^作者/, '')
+  return normalizeText(value)
+    .replace(/^(作者|原著|文)/, '')
+    .replace(/(著|编著|写|整理|录)$/, '')
+}
+
+function isAuthorMatch(candidateAuthor?: string, currentAuthor?: string) {
+  const a1 = normalizeAuthorText(candidateAuthor)
+  const a2 = normalizeAuthorText(currentAuthor)
+  if (!a1 || !a2) return true
+  return a1 === a2 || a1.includes(a2) || a2.includes(a1)
 }
 
 const preparedResults = computed<CandidateItem[]>(() => {
@@ -189,12 +184,26 @@ const preparedResults = computed<CandidateItem[]>(() => {
 })
 
 onMounted(() => {
-  startSearch()
+  if (!sourceStore.sources.length) {
+    sourceStore.fetchSources()
+  }
+  const cached = store.getCachedAvailableSources()
+  if (cached && cached.length > 0) {
+    results.value = [...cached]
+    searching.value = false
+  } else {
+    startSearch()
+  }
 })
 
 onUnmounted(() => {
   closeAvailableSourceSSE()
 })
+
+function handleForceRefresh() {
+  store.clearCachedAvailableSources()
+  startSearch()
+}
 
 function startSearch() {
   if (!store.book) return
@@ -204,8 +213,6 @@ function startSearch() {
   results.value = []
   lastIndex.value = -1
   hasMoreSources.value = true
-  selectedCandidate.value = null
-  candidatePreview.value = null
 
   openAvailableSourceSSE('initial')
 }
@@ -213,10 +220,10 @@ function startSearch() {
 function mergeCandidates(candidates: SearchBook[]) {
   if (!store.book || !candidates.length) return
   const currentBook = store.book
-  const currentAuthor = normalizeAuthorText(currentBook.author)
+  const currentAuthor = currentBook.author
   candidates.forEach((item) => {
     if (item.origin === currentBook.origin) return
-    if (currentAuthor && item.author && normalizeAuthorText(item.author) !== currentAuthor) return
+    if (!isAuthorMatch(item.author, currentAuthor)) return
     const existed = results.value.some((candidate) =>
       candidate.origin === item.origin || (candidate.bookUrl === item.bookUrl && candidate.origin === item.origin),
     )
@@ -224,6 +231,9 @@ function mergeCandidates(candidates: SearchBook[]) {
       results.value.push(item)
     }
   })
+  if (results.value.length > 0) {
+    store.setCachedAvailableSources(results.value)
+  }
 }
 
 type AvailableSourceMode = 'initial' | 'loadMore'
@@ -262,10 +272,6 @@ function applyAvailableSourcePayload(payload: AvailableSourceSSEPayload | null) 
     hasMoreSources.value = payload.hasMore
   }
   mergeCandidates(incoming)
-
-  if (!selectedCandidate.value && preparedResults.value.length) {
-    void selectCandidate(preparedResults.value[0])
-  }
 }
 
 function openAvailableSourceSSE(mode: AvailableSourceMode) {
@@ -316,10 +322,6 @@ function finishAvailableSourceSSE(
     loadingMore.value = false
   }
 
-  if (!selectedCandidate.value && preparedResults.value.length) {
-    void selectCandidate(preparedResults.value[0])
-  }
-
   if (failed) {
     if (mode === 'loadMore') {
       appStore.showToast('加载更多书源失败', 'error')
@@ -339,16 +341,6 @@ function finishAvailableSourceSSE(
   }
 }
 
-async function selectCandidate(item: CandidateItem) {
-  selectedCandidate.value = item
-  candidatePreview.value = null
-  try {
-    candidatePreview.value = await getBookInfo(item.book.bookUrl, item.book.origin)
-  } catch {
-    candidatePreview.value = null
-  }
-}
-
 function loadMoreSources() {
   if (!store.book || loadingMore.value || !hasMoreSources.value) return
 
@@ -359,10 +351,11 @@ function loadMoreSources() {
 
 async function handleSwitch(res: SearchBook) {
   if (store.loading) return
+  const targetName = getSourceName(res.origin)
   try {
     const nextBook = await store.switchSource(res.bookUrl, res.origin)
     store.closePanel()
-    appStore.showToast(`已切换到 ${nextBook?.originName || nextBook?.origin || res.origin}`, 'success')
+    appStore.showToast(`已成功切换到 ${nextBook?.originName || targetName}`, 'success')
   } catch (e: any) {
     appStore.showToast(`切换失败: ${e?.message || '未知错误'}`, 'error')
   }
@@ -382,286 +375,249 @@ async function handleSwitch(res: SearchBook) {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
 }
 
-.header-left { display: flex; align-items: baseline; gap: 8px; }
-.source-header h3 { font-size: 16px; margin: 0; }
-.source-count { font-size: 11px; opacity: 0.5; }
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.source-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.source-count {
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.refresh-btn.spin svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .close-btn {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; color: inherit; opacity: 0.6;
-  background: transparent; border: none; cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.6;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  opacity: 1;
 }
 
 .source-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: 8px 16px 24px;
 }
 
-.book-brief {
-  display: flex;
-  gap: 12px;
-  margin: 8px 16px 14px;
-  padding: 12px;
-  border-radius: 14px;
-  background: rgba(201, 127, 58, 0.08);
-  border: 1px solid rgba(201, 127, 58, 0.14);
-}
-
-.book-brief-cover {
-  width: 56px;
-  height: 76px;
-  flex-shrink: 0;
+/* 紧凑当前书源状态条 */
+.current-summary-card {
+  padding: 10px 14px;
+  margin-bottom: 14px;
   border-radius: 10px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(201, 127, 58, 0.08);
+  border: 1px solid rgba(201, 127, 58, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.book-brief-cover img,
-.book-brief-placeholder {
-  width: 100%;
-  height: 100%;
-}
-
-.book-brief-cover img {
-  object-fit: cover;
-}
-
-.book-brief-placeholder {
+.current-label-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 700;
+  gap: 8px;
 }
 
-.book-brief-main {
+.current-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-primary, #c97f3a);
+  color: #fff;
+}
+
+.current-source-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.current-progress {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.section-label {
+  padding: 4px 4px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.5;
+  font-weight: 600;
+}
+
+/* 极简书源列表行 */
+.source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.source-row:hover {
+  background: rgba(201, 127, 58, 0.06);
+  border-color: rgba(201, 127, 58, 0.2);
+}
+
+.source-main-info {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.book-brief-title {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.book-brief-meta {
-  font-size: 12px;
-  opacity: 0.68;
-  line-height: 1.4;
-}
-
-.book-brief-intro {
-  font-size: 12px;
-  line-height: 1.45;
-  opacity: 0.76;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.section-label {
-  padding: 12px 20px 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.4;
-  font-weight: 600;
-}
-
-.source-item {
+.source-name-line {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
-  border-bottom: 1px solid rgba(0,0,0,0.02);
-  cursor: pointer;
-  transition: background 0.2s;
+  gap: 8px;
 }
 
-.source-item:hover { background: rgba(0,0,0,0.03); }
-.source-item.current { background: rgba(201, 127, 58, 0.04); cursor: default; }
-.source-item.selected {
-  background: rgba(201, 127, 58, 0.08);
-  box-shadow: inset 3px 0 0 var(--color-primary, #c97f3a);
+.source-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.source-main { flex: 1; min-width: 0; }
-.source-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.source-name { font-weight: 600; font-size: 14px; }
-.source-tag { font-size: 10px; opacity: 0.5; border: 1px solid currentColor; padding: 0 3px; border-radius: 3px; }
-.compare-badge {
+.status-tag {
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.status-tag.sync {
+  background: rgba(82, 196, 26, 0.14);
+  color: #3f8f16;
+  font-weight: 500;
+}
+
+.status-tag.diff {
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary, #c97f3a);
+}
+
+.source-chapter-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
   opacity: 0.72;
 }
 
-.compare-badge.good {
-  background: rgba(82, 196, 26, 0.14);
-  color: #3f8f16;
-  opacity: 1;
-}
-
-.source-book-name {
-  font-size: 13px;
-  margin-bottom: 2px;
-  opacity: 0.86;
-}
-
-.source-author { font-size: 11px; opacity: 0.5; margin-bottom: 4px; }
-.source-chapter { font-size: 11px; opacity: 0.7; color: var(--color-primary, #c97f3a); }
-.source-update { font-size: 11px; opacity: 0.48; margin-top: 2px; }
-.source-compare-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.compare-text {
-  font-size: 11px;
-  opacity: 0.62;
-}
-
-.compare-text.strong {
-  color: var(--color-primary, #c97f3a);
-  opacity: 0.92;
-}
-
-.source-intro {
-  font-size: 12px;
-  opacity: 0.68;
-  line-height: 1.45;
-  margin-bottom: 4px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+.chapter-text {
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-.source-url { font-size: 11px; opacity: 0.3; }
+.chapter-text.muted {
+  opacity: 0.5;
+}
 
-.switch-btn {
-  padding: 4px 12px;
+.update-time {
   font-size: 11px;
-  border-radius: 12px;
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.7;
-}
-
-.source-item:hover .switch-btn {
-  background: var(--color-primary, #c97f3a);
-  color: white;
-  border-color: var(--color-primary, #c97f3a);
-  opacity: 1;
-}
-
-.compare-panel {
-  margin: 8px 16px 18px;
-  padding: 14px;
-  border-radius: 16px;
-  background: rgba(201, 127, 58, 0.08);
-  border: 1px solid rgba(201, 127, 58, 0.14);
-}
-
-.compare-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.compare-header h4 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.switch-btn.primary {
-  background: var(--color-primary, #c97f3a);
-  border-color: var(--color-primary, #c97f3a);
-  color: #fff;
-  opacity: 1;
-}
-
-.switch-btn:disabled {
-  cursor: not-allowed;
   opacity: 0.45;
+  flex-shrink: 0;
 }
 
-.compare-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.compare-card {
-  padding: 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.compare-card.highlight {
-  border-color: rgba(201, 127, 58, 0.28);
-  background: rgba(201, 127, 58, 0.12);
-}
-
-.compare-title {
-  margin-bottom: 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  opacity: 0.58;
-}
-
-.compare-name {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.4;
-  margin-bottom: 4px;
-}
-
-.compare-meta {
+.switch-action-btn {
+  padding: 6px 14px;
   font-size: 12px;
-  opacity: 0.68;
-  margin-bottom: 10px;
+  font-weight: 500;
+  border-radius: 16px;
+  border: 1px solid var(--color-primary, #c97f3a);
+  background: var(--color-primary, #c97f3a);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
 }
 
-.compare-line {
-  font-size: 12px;
-  line-height: 1.5;
-  opacity: 0.78;
-  margin-top: 4px;
+.switch-action-btn:hover {
+  opacity: 0.9;
 }
 
-.compare-intro {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.switch-action-btn:active {
+  transform: scale(0.96);
 }
 
 .loading, .empty {
   padding: 40px 20px;
   text-align: center;
-  opacity: 0.5;
-  font-size: 14px;
+  font-size: 13px;
+  opacity: 0.6;
 }
 
 .inline-loading {
@@ -669,90 +625,68 @@ async function handleSwitch(res: SearchBook) {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 20px;
+  padding: 14px;
   font-size: 12px;
-  opacity: 0.55;
+  opacity: 0.6;
 }
 
 .load-more-wrap {
-  padding: 16px 20px 24px;
-  display: flex;
-  justify-content: center;
+  padding: 12px 0 8px;
+  text-align: center;
 }
 
 .load-more-btn {
-  min-width: 120px;
-  padding: 10px 18px;
-  border-radius: 999px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background: transparent;
+  padding: 8px 24px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
   color: inherit;
   cursor: pointer;
-}
-
-.load-more-btn:hover:not(:disabled) {
-  background: rgba(201, 127, 58, 0.08);
-  border-color: var(--color-primary, #c97f3a);
-  color: var(--color-primary, #c97f3a);
-}
-
-.load-more-btn:disabled {
-  opacity: 0.5;
-  cursor: wait;
 }
 
 .spinner {
   width: 24px;
   height: 24px;
-  border: 2px solid rgba(0,0,0,0.1);
+  border: 2px solid rgba(0, 0, 0, 0.1);
   border-top-color: var(--color-primary, #c97f3a);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
   margin: 0 auto 12px;
 }
 
-.inline-loading .spinner,
 .spinner.small {
   width: 14px;
   height: 14px;
-  margin: 0;
   border-width: 2px;
+  margin: 0;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 .switch-overlay {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  z-index: 20;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  backdrop-filter: blur(2px);
 }
 
-.switch-overlay p { margin-top: 16px; font-size: 14px; opacity: 0.8; }
+.switch-overlay p {
+  margin-top: 12px;
+  font-size: 13px;
+  opacity: 0.8;
+}
 
-@media (max-width: 640px) {
-  .source-item {
-    padding: 12px 16px;
-    align-items: flex-start;
-  }
-
-  .source-action {
-    padding-top: 2px;
-  }
-
-  .compare-panel {
-    margin: 8px 12px 16px;
-    padding: 12px;
-  }
-
-  .compare-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .compare-grid {
-    grid-template-columns: 1fr;
-  }
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.2s;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 </style>

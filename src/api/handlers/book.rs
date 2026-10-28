@@ -34,9 +34,9 @@ use tokio_stream::wrappers::ReceiverStream;
 
 const DEFAULT_AVAILABLE_RESULT_LIMIT: usize = 20;
 const MAX_AVAILABLE_RESULT_LIMIT: usize = 100;
-const DEFAULT_AVAILABLE_CONCURRENT_COUNT: usize = 8;
-const MAX_AVAILABLE_CONCURRENT_COUNT: usize = 20;
-const AVAILABLE_SOURCE_SSE_RESULT_LIMIT: usize = 5;
+const DEFAULT_AVAILABLE_CONCURRENT_COUNT: usize = 16;
+const MAX_AVAILABLE_CONCURRENT_COUNT: usize = 24;
+const AVAILABLE_SOURCE_SSE_RESULT_LIMIT: usize = 20;
 const DEFAULT_GLOBAL_EXPLORE_LIMIT: usize = 20;
 const MAX_GLOBAL_EXPLORE_LIMIT: usize = 100;
 const DEFAULT_GLOBAL_EXPLORE_CONCURRENT: usize = 16;
@@ -295,6 +295,24 @@ pub async fn search_book(
     )))
 }
 
+fn is_searchable_book_source(source: &BookSource) -> bool {
+    if !source.enabled.unwrap_or(true) {
+        return false;
+    }
+    // 仅保留纯文本小说类型（book_source_type: 0 或 None），过滤掉 1:音频/有声、2:图片/漫画、3:文件
+    if source.book_source_type.unwrap_or(0) != 0 {
+        return false;
+    }
+    if let Some(ref search_url) = source.search_url {
+        if search_url.trim().is_empty() {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    true
+}
+
 pub async fn search_book_multi(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -316,7 +334,9 @@ pub async fn search_book_multi(
         let mut out = Vec::new();
         for url in urls {
             if let Some(s) = state.book_source_service.get(&user_ns, &url).await? {
-                out.push(s);
+                if is_searchable_book_source(&s) {
+                    out.push(s);
+                }
             }
         }
         out
@@ -325,6 +345,7 @@ pub async fn search_book_multi(
         if let Some(ref group) = req.book_source_group {
             list.retain(|s| s.book_source_group.as_deref().unwrap_or("").contains(group));
         }
+        list.retain(is_searchable_book_source);
         list
     };
 
@@ -1778,25 +1799,26 @@ pub async fn set_book_source(
     updated.origin_name = Some(new_source.book_source_name.clone());
     updated.toc_url = None;
 
-    if let Some(candidates) = state
+    let cached_candidates = state
         .book_service
         .load_book_sources_cache(&user_ns, &old_book_url)
-        .await?
-    {
+        .await?;
+
+    if let Some(ref candidates) = cached_candidates {
         if let Some(candidate) = candidates
-            .into_iter()
+            .iter()
             .find(|item| item.book_url == new_book_url)
         {
             if !candidate.name.trim().is_empty() {
-                updated.name = candidate.name;
+                updated.name = candidate.name.clone();
             }
             if !candidate.author.trim().is_empty() {
-                updated.author = candidate.author;
+                updated.author = candidate.author.clone();
             }
-            updated.cover_url = candidate.cover_url.or(updated.cover_url);
-            updated.intro = candidate.intro.or(updated.intro);
-            updated.kind = candidate.kind.or(updated.kind);
-            updated.latest_chapter_title = candidate.last_chapter.or(updated.latest_chapter_title);
+            updated.cover_url = candidate.cover_url.clone().or(updated.cover_url);
+            updated.intro = candidate.intro.clone().or(updated.intro);
+            updated.kind = candidate.kind.clone().or(updated.kind);
+            updated.latest_chapter_title = candidate.last_chapter.clone().or(updated.latest_chapter_title);
         }
     }
 
@@ -1817,6 +1839,13 @@ pub async fn set_book_source(
     }
 
     let saved = state.book_service.save_book(&user_ns, updated).await?;
+    // 换源继承：将旧书源搜出的全部可用源缓存池自动同步继承给新书源，避免用户二次换源重复全网等待
+    if let Some(ref candidates) = cached_candidates {
+        let _ = state
+            .book_service
+            .save_book_sources_cache(&user_ns, &saved.book_url, candidates)
+            .await;
+    }
     if old_book_url != saved.book_url {
         let delete_old = Book {
             book_url: old_book_url,
@@ -2618,10 +2647,10 @@ pub async fn search_book_multi_sse(
 
         let sources = if let Some(url) = book_source_url {
             match state_clone.book_source_service.get(&user_ns, &url).await {
-                Ok(Some(s)) => vec![s],
+                Ok(Some(s)) if is_searchable_book_source(&s) => vec![s],
                 _ => {
                     let _ = tx
-                        .send(Event::default().event("error").data(json_err("未配置书源")))
+                        .send(Event::default().event("error").data(json_err("未配置书源或该书源不可用")))
                         .await;
                     let _ = tx
                         .send(Event::default().event("end").data(json_end(last_index)))
@@ -2637,6 +2666,7 @@ pub async fn search_book_multi_sse(
                             s.book_source_group.as_deref().unwrap_or("").contains(group)
                         });
                     }
+                    list.retain(is_searchable_book_source);
                     if list.is_empty() {
                         let _ = tx
                             .send(
@@ -2943,7 +2973,8 @@ pub async fn get_available_book_source(
             }
         }
     }
-    let sources = state.book_source_service.list(&user_ns).await?;
+    let mut sources = state.book_source_service.list(&user_ns).await?;
+    sources.retain(|s| is_searchable_book_source(s) && s.book_source_url != book.origin);
     if sources.is_empty() {
         if paged_request {
             return Ok(Json(ApiResponse::ok(
@@ -3126,7 +3157,8 @@ pub async fn get_available_book_source_sse(
         }
     }
 
-    let sources = state.book_source_service.list(&user_ns).await?;
+    let mut sources = state.book_source_service.list(&user_ns).await?;
+    sources.retain(|s| is_searchable_book_source(s) && s.book_source_url != book.origin);
     let state_clone = state.clone();
     tokio::spawn(async move {
         if sources.is_empty() {
@@ -3160,9 +3192,12 @@ pub async fn get_available_book_source_sse(
                 let target_author = book.author.clone();
                 let user_ns_value = user_ns.clone();
                 tasks.spawn(async move {
-                    let res = svc
-                        .search_book(&user_ns_value, &source, &target_name, 1)
-                        .await;
+                    let search_fut = svc
+                        .search_book(&user_ns_value, &source, &target_name, 1);
+                    let res = match tokio::time::timeout(std::time::Duration::from_secs(5), search_fut).await {
+                        Ok(r) => r,
+                        Err(_) => Err(AppError::Internal(anyhow::anyhow!("search timeout"))),
+                    };
                     (source_index as i32, res, target_name, target_author)
                 });
                 next_index += 1;
@@ -3666,25 +3701,116 @@ fn available_source_matches_target(
     target_name: &str,
     target_author: &str,
 ) -> bool {
-    normalize_available_book_name(&book.name) == normalize_available_book_name(target_name)
-        && normalize_available_author(&book.author) == normalize_available_author(target_author)
+    let norm_book_name = normalize_available_book_name(&book.name);
+    let norm_target_name = normalize_available_book_name(target_name);
+    if norm_book_name != norm_target_name {
+        return false;
+    }
+
+    let norm_book_author = normalize_available_author(&book.author);
+    let norm_target_author = normalize_available_author(target_author);
+
+    // 如果双方都有明确作者，允许相等或包含匹配（如“唐家三少” vs “唐家三少著”）
+    if !norm_book_author.is_empty() && !norm_target_author.is_empty() {
+        norm_book_author == norm_target_author
+            || norm_book_author.contains(&norm_target_author)
+            || norm_target_author.contains(&norm_book_author)
+    } else {
+        // 其中一方作者为空时，书名完全一致即视为可用候选源
+        true
+    }
 }
 
 fn normalize_available_book_name(value: &str) -> String {
-    value.chars().filter(|ch| !ch.is_whitespace()).collect()
+    let mut cleaned = value.replace("<em>", "").replace("</em>", "");
+    for pat in &[
+        "[全本]", "（全本）", "(全本)", "【全本】", "[精校]", "（精校）", "(精校)",
+        "【精校】", "精校版", "txt下载", "全文阅读", "最新章节",
+    ] {
+        cleaned = cleaned.replace(pat, "");
+    }
+    cleaned
+        .chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !matches!(
+                    ch,
+                    '《' | '》'
+                        | '('
+                        | ')'
+                        | '（'
+                        | '）'
+                        | '['
+                        | ']'
+                        | '【'
+                        | '】'
+                        | '<'
+                        | '>'
+                        | '"'
+                        | '\''
+                        | '“'
+                        | '”'
+                        | '‘'
+                        | '’'
+                        | '：'
+                        | ':'
+                        | ','
+                        | '，'
+                        | '。'
+                        | '.'
+                        | '!'
+                        | '！'
+                        | '?'
+                        | '？'
+                        | '-'
+                        | '_'
+                        | '/'
+                        | '\\'
+                )
+        })
+        .collect::<String>()
+        .to_lowercase()
 }
 
 fn normalize_available_author(value: &str) -> String {
-    let compact: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
-    let without_label = compact
-        .strip_prefix("作者：")
-        .or_else(|| compact.strip_prefix("作者:"))
-        .or_else(|| compact.strip_prefix("作者"))
-        .unwrap_or(&compact);
-    without_label
-        .trim_start_matches(['：', ':'])
-        .trim()
-        .to_string()
+    let compact: String = value
+        .chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !matches!(
+                    ch,
+                    '：' | ':'
+                        | '/'
+                        | '\\'
+                        | '-'
+                        | '_'
+                        | '('
+                        | ')'
+                        | '（'
+                        | '）'
+                        | '['
+                        | ']'
+                        | '【'
+                        | '】'
+                        | '《'
+                        | '》'
+                )
+        })
+        .collect();
+    let mut res = compact.to_lowercase();
+    for prefix in &["作者", "原著", "文"] {
+        if let Some(stripped) = res.strip_prefix(prefix) {
+            res = stripped.to_string();
+            break;
+        }
+    }
+    for suffix in &["著", "编著", "写", "整理", "录", "制作"] {
+        if let Some(stripped) = res.strip_suffix(suffix) {
+            res = stripped.to_string();
+            break;
+        }
+    }
+    res
 }
 
 fn take_available_source_cached_matches(
@@ -3752,9 +3878,10 @@ fn take_available_source_sse_matches(
 #[cfg(test)]
 mod tests {
     use super::{
-        book_matches_delete_target, build_available_book_source_response,
-        cache_count_for_shelf_display, fallback_available_book, merge_global_explore_books,
-        merge_search_results, select_global_explore_kind, should_use_available_source_cache,
+        available_source_matches_target, book_matches_delete_target,
+        build_available_book_source_response, cache_count_for_shelf_display,
+        fallback_available_book, merge_global_explore_books, merge_search_results,
+        select_global_explore_kind, should_use_available_source_cache,
         take_available_source_cached_matches, take_available_source_sse_matches,
         take_search_book_multi_sse_batch, GetAvailableBookSourceRequest, GlobalExploreBookHit,
     };
@@ -4000,6 +4127,30 @@ mod tests {
         );
 
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn available_source_matches_tolerates_symbols_and_author_suffixes() {
+        let b1 = SearchBook {
+            name: "《斗罗大陆》".to_string(),
+            author: "唐家三少 著".to_string(),
+            ..SearchBook::default()
+        };
+        assert!(available_source_matches_target(&b1, "斗罗大陆", "唐家三少"));
+
+        let b2 = SearchBook {
+            name: "斗罗大陆[全本]".to_string(),
+            author: "作者：唐家三少".to_string(),
+            ..SearchBook::default()
+        };
+        assert!(available_source_matches_target(&b2, "斗罗大陆", "唐家三少"));
+
+        let b3 = SearchBook {
+            name: "斗罗大陆".to_string(),
+            author: "".to_string(),
+            ..SearchBook::default()
+        };
+        assert!(available_source_matches_target(&b3, "斗罗大陆", "唐家三少"));
     }
 
     #[test]

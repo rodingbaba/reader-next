@@ -21,7 +21,7 @@ import {
 } from '../api/bookmark'
 import { getReplaceRules } from '../api/replaceRule'
 import { getSpeechConfig, saveSpeechConfig as apiSaveSpeechConfig } from '../api/speechConfig'
-import type { Book, BookChapter, Bookmark, ReplaceRule } from '../types'
+import type { Book, BookChapter, Bookmark, ReplaceRule, SearchBook } from '../types'
 import {
   getBrowserCachedChapter,
   setBrowserCachedChapter,
@@ -347,6 +347,34 @@ export const useReaderStore = defineStore('reader', () => {
   const readChapterKeys = ref<Set<string>>(new Set())
   const progressDirty = ref(false)
   const lastServerProgressKey = ref('')
+
+  // ─── 跨源候选池缓存（按书名+作者维度缓存可用源，换源不丢失） ───
+  const availableSourcesPool = ref<Map<string, SearchBook[]>>(new Map())
+
+  function getBookSourcePoolKey(name?: string, author?: string): string {
+    const n = (name || '').trim().toLowerCase()
+    const a = (author || '').trim().toLowerCase().replace(/^(作者|原著|文)[:：]?/, '').replace(/(著|编著|写)$/, '')
+    return `${n}::${a}`
+  }
+
+  function getCachedAvailableSources(name?: string, author?: string): SearchBook[] | null {
+    const key = getBookSourcePoolKey(name || book.value?.name, author || book.value?.author)
+    if (!key || key === '::') return null
+    return availableSourcesPool.value.get(key) || null
+  }
+
+  function setCachedAvailableSources(candidates: SearchBook[], name?: string, author?: string) {
+    const key = getBookSourcePoolKey(name || book.value?.name, author || book.value?.author)
+    if (!key || key === '::') return
+    availableSourcesPool.value.set(key, [...candidates])
+  }
+
+  function clearCachedAvailableSources(name?: string, author?: string) {
+    const key = getBookSourcePoolKey(name || book.value?.name, author || book.value?.author)
+    if (key && key !== '::') {
+      availableSourcesPool.value.delete(key)
+    }
+  }
 
   // ─── 离线进度 Outbox 队列与调度器 ───
   // 断网时未发送成功的 saveBookProgress 存入本地队列，网络恢复后智能退避补推
@@ -2740,5 +2768,9 @@ export const useReaderStore = defineStore('reader', () => {
     displayContent, processContentForDisplay,
     isAutoScrolling,
     initSpeechConfig,
+    availableSourcesPool,
+    getCachedAvailableSources,
+    setCachedAvailableSources,
+    clearCachedAvailableSources,
   }
 })

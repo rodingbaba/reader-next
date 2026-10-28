@@ -2,7 +2,11 @@
   <div id="app">
     <AppTopBar v-if="showHeader" />
     <main class="app-main" :class="{ 'with-bottom-nav': showBottomNav, 'without-header': !showHeader }">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <keep-alive :include="['HomeView', 'ExploreView', 'StatsView']">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </main>
     <AppBottomNav v-if="showBottomNav" />
     <!-- 废弃 ServerConfigModal：统一由 LoginModal 承载服务器地址 + 登录 -->

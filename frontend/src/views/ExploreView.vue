@@ -18,6 +18,27 @@
           <span v-else class="no-sources-text">无带有发现规则的书源</span>
         </div>
       </div>
+      <div class="header-right">
+        <button
+          class="manual-refresh-btn"
+          type="button"
+          :disabled="store.loading || store.refreshing"
+          title="刷新当前分类书籍"
+          aria-label="刷新当前分类书籍"
+          @click="handleManualRefresh"
+        >
+          <svg
+            :class="{ spin: store.refreshing || store.loading }"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+          </svg>
+          <span class="refresh-text">{{ store.refreshing ? '刷新中...' : '刷新' }}</span>
+        </button>
+      </div>
     </div>
 
     <div class="explore-body">
@@ -68,6 +89,7 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'ExploreView' })
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExploreStore } from '../stores/explore'
@@ -138,6 +160,15 @@ async function handleAddToShelf(book: Book | SearchBook) {
     appStore.showToast((e as Error).message, 'error')
   }
 }
+
+async function handleManualRefresh() {
+  try {
+    await store.refreshCurrentCategory()
+    appStore.showToast('分类推荐已刷新', 'success')
+  } catch (e: any) {
+    appStore.showToast(e?.message || '刷新失败', 'error')
+  }
+}
 </script>
 
 <style scoped>
@@ -157,6 +188,41 @@ async function handleAddToShelf(book: Book | SearchBook) {
   align-items: center;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
+}
+
+.manual-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.manual-refresh-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(201, 127, 58, 0.06);
+}
+
+.manual-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.manual-refresh-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.manual-refresh-btn svg.spin {
+  animation: spin 0.9s linear infinite;
 }
 
 .header-left h2 {

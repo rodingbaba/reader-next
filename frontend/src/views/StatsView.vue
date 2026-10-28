@@ -357,6 +357,7 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'StatsView' })
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import CustomSelect from '../components/CustomSelect.vue'

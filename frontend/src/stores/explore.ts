@@ -22,6 +22,53 @@ const GLOBAL_EXPLORE_CATEGORIES: ExploreCategory[] = [
   { title: '悬疑', url: 'suspense' },
 ]
 
+export interface CategoryCacheItem {
+  books: SearchBook[]
+  page: number
+  globalCursor: number
+  hasMore: boolean
+  updatedAt: number
+}
+
+const EXPLORE_CACHE_STORAGE_PREFIX = 'reader_explore_cache_v1_'
+
+function getCacheKey(sourceUrl: string, categoryUrl: string): string {
+  return `${sourceUrl}::${categoryUrl}`
+}
+
+function loadPersistentCache(key: string): CategoryCacheItem | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    const raw = localStorage.getItem(EXPLORE_CACHE_STORAGE_PREFIX + key)
+    if (!raw) return null
+    return JSON.parse(raw) as CategoryCacheItem
+  } catch {
+    return null
+  }
+}
+
+function savePersistentCache(key: string, item: CategoryCacheItem) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    const toSave: CategoryCacheItem = {
+      ...item,
+      books: item.books.slice(0, 60), // 最多缓存 60 本书快照，保护存储配额
+    }
+    localStorage.setItem(EXPLORE_CACHE_STORAGE_PREFIX + key, JSON.stringify(toSave))
+  } catch {
+    // 忽略配额超限异常
+  }
+}
+
+function removePersistentCache(key: string) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.removeItem(EXPLORE_CACHE_STORAGE_PREFIX + key)
+  } catch {
+    // ignore
+  }
+}
+
 export const useExploreStore = defineStore('explore', () => {
   const sourceStore = useSourceStore()
 
@@ -30,12 +77,16 @@ export const useExploreStore = defineStore('explore', () => {
   
   const books = ref<SearchBook[]>([])
   const loading = ref(false)
+  const refreshing = ref(false)
   const page = ref(1)
   const globalCursor = ref(0)
   const hasMore = ref(true)
   const error = ref<string | null>(null)
   const categories = ref<ExploreCategory[]>([])
   let categoryLoadId = 0
+
+  // 内存级分类缓存映射
+  const categoryCacheMap = ref<Map<string, CategoryCacheItem>>(new Map())
 
   // 筛选出启用了 explore 的书源
   const exploreSources = computed(() => {
@@ -49,6 +100,30 @@ export const useExploreStore = defineStore('explore', () => {
 
   const globalExploreSourceUrl = computed(() => GLOBAL_EXPLORE_SOURCE_URL)
   const isGlobalMode = computed(() => activeSourceUrl.value === GLOBAL_EXPLORE_SOURCE_URL)
+
+  function getSnapshot(key: string): CategoryCacheItem | null {
+    if (categoryCacheMap.value.has(key)) {
+      return categoryCacheMap.value.get(key)!
+    }
+    const persistent = loadPersistentCache(key)
+    if (persistent) {
+      categoryCacheMap.value.set(key, persistent)
+      return persistent
+    }
+    return null
+  }
+
+  function commitSnapshot(key: string) {
+    const item: CategoryCacheItem = {
+      books: books.value,
+      page: page.value,
+      globalCursor: globalCursor.value,
+      hasMore: hasMore.value,
+      updatedAt: Date.now(),
+    }
+    categoryCacheMap.value.set(key, item)
+    savePersistentCache(key, item)
+  }
 
   async function ensureActiveSource() {
     if (exploreSources.value.length === 0) {
@@ -148,10 +223,24 @@ export const useExploreStore = defineStore('explore', () => {
   async function setCategory(url: string) {
     const nextUrl = url.trim()
     if (!nextUrl) return
-    if (activeCategoryUrl.value !== nextUrl) {
-      activeCategoryUrl.value = nextUrl
-      await resetAndFetch()
+    if (activeCategoryUrl.value === nextUrl && books.value.length > 0) return
+
+    activeCategoryUrl.value = nextUrl
+    const cacheKey = getCacheKey(activeSourceUrl.value, nextUrl)
+    const cached = getSnapshot(cacheKey)
+
+    // 优先命中本地持久化与内存缓存：不刷新尽量保持，0ms 即开即显，支持弱网/离线浏览
+    if (cached && cached.books.length > 0) {
+      books.value = [...cached.books]
+      page.value = cached.page
+      globalCursor.value = cached.globalCursor
+      hasMore.value = cached.hasMore
+      error.value = null
+      return
     }
+
+    // 首次访问该分类无缓存时，触发拉取
+    await resetAndFetch()
   }
 
   async function resetAndFetch() {
@@ -163,11 +252,29 @@ export const useExploreStore = defineStore('explore', () => {
     await fetchMore()
   }
 
+  /**
+   * 用户手工刷新当前分类：显式清除当前分类缓存并重新全网抓取
+   */
+  async function refreshCurrentCategory() {
+    if (refreshing.value || !activeSourceUrl.value || !activeCategoryUrl.value) return
+    const cacheKey = getCacheKey(activeSourceUrl.value, activeCategoryUrl.value)
+    categoryCacheMap.value.delete(cacheKey)
+    removePersistentCache(cacheKey)
+
+    refreshing.value = true
+    try {
+      await resetAndFetch()
+    } finally {
+      refreshing.value = false
+    }
+  }
+
   async function fetchMore() {
     if (loading.value || !hasMore.value || !activeSourceUrl.value || !activeCategoryUrl.value) return
 
     loading.value = true
     error.value = null
+    const cacheKey = getCacheKey(activeSourceUrl.value, activeCategoryUrl.value)
     try {
       if (isGlobalMode.value) {
         const result = await exploreBookGlobal({
@@ -182,6 +289,7 @@ export const useExploreStore = defineStore('explore', () => {
         }
         globalCursor.value = result.nextCursor
         hasMore.value = result.hasMore
+        commitSnapshot(cacheKey)
         return
       }
 
@@ -197,6 +305,7 @@ export const useExploreStore = defineStore('explore', () => {
       } else {
         hasMore.value = false
       }
+      commitSnapshot(cacheKey)
     } catch (err: any) {
       error.value = err.message || '加载失败'
       hasMore.value = false
@@ -222,6 +331,7 @@ export const useExploreStore = defineStore('explore', () => {
     activeCategoryUrl,
     books,
     loading,
+    refreshing,
     page,
     hasMore,
     error,
@@ -235,5 +345,6 @@ export const useExploreStore = defineStore('explore', () => {
     setCategory,
     fetchMore,
     resetAndFetch,
+    refreshCurrentCategory,
   }
 })

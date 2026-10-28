@@ -185,6 +185,7 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({ name: 'HomeView' })
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '../stores/bookshelf'
