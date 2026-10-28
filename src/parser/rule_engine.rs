@@ -262,6 +262,15 @@ impl RuleEngine {
             let rule = source.rule_content.clone().unwrap_or_default();
             let mut content_body = body.to_string();
 
+            // 标准化 HTML 换行与段落标签，防止单行 HTML 下书源正则贪婪通配（如 .*）跨段误杀整章正文
+            if content_body.contains("<br") || content_body.contains("</p>") {
+                content_body = content_body
+                    .replace("<br>", "<br>\n")
+                    .replace("<br/>", "<br/>\n")
+                    .replace("<br />", "<br />\n")
+                    .replace("</p>", "</p>\n");
+            }
+
             if let Some(source_regex) = rule
                 .source_regex
                 .as_deref()
@@ -291,14 +300,15 @@ impl RuleEngine {
                 }
 
                 let content_rule = self.process_inline_js(&content_rule, &content_body, base_url);
+                let (pure_rule, regex_part) = split_legado_regex(&content_rule);
 
-                let mode = self.detect_mode(&content_rule, &content_body);
+                let mode = self.detect_mode(&pure_rule, &content_body);
                 let mut content = match mode {
                     ParseMode::JsonPath => {
                         if let Ok(v) = serde_json::from_str::<Value>(&content_body) {
                             jsonpath::jsonpath_first_string(
                                 &v,
-                                self.strip_mode_prefix(&content_rule),
+                                self.strip_mode_prefix(&pure_rule),
                             )
                             .unwrap_or_default()
                         } else {
@@ -306,7 +316,7 @@ impl RuleEngine {
                         }
                     }
                     ParseMode::XPath => {
-                        html::select_xpath(&content_body, self.strip_mode_prefix(&content_rule))
+                        html::select_xpath(&content_body, self.strip_mode_prefix(&pure_rule))
                             .first()
                             .cloned()
                             .unwrap_or_default()
@@ -314,10 +324,14 @@ impl RuleEngine {
                     _ => {
                         let doc = html::parse_document(&content_body);
                         let result =
-                            html::select_all_text(&doc, self.strip_mode_prefix(&content_rule));
+                            html::select_all_text(&doc, self.strip_mode_prefix(&pure_rule));
                         result.unwrap_or_default()
                     }
                 };
+
+                if let Some(reg) = regex_part {
+                    content = apply_legado_regex(&content, reg);
+                }
 
                 if let Some(replace) = rule.replace_regex.as_deref() {
                     content = apply_legado_regex(&content, replace);
@@ -1970,16 +1984,20 @@ fn apply_legado_regex(text: &str, regex_part: &str) -> String {
 
     let mut out = text.to_string();
     let mut i = start_idx;
-    while i + 1 < parts.len() {
+    while i < parts.len() {
         let regex = parts[i];
         if regex.is_empty() {
             i += 1;
             continue;
         }
 
-        let replace = parts[i + 1];
+        let replace = if i + 1 < parts.len() {
+            parts[i + 1]
+        } else {
+            ""
+        };
 
-        if first_only && i + 2 >= parts.len() {
+        if first_only && (i + 2 >= parts.len() || i + 1 >= parts.len()) {
             // Last replacement with ### suffix - first match only
             out = apply_regex_replace_first(&out, regex, replace);
         } else {
@@ -2523,5 +2541,33 @@ mod tests {
         );
         assert_eq!(book.name, "Book-Alias");
         assert_eq!(book.author, "Tester");
+    }
+
+    #[test]
+    fn test_content_rule_with_legado_regex_and_br_newlines() {
+        use crate::model::rule::ContentRule;
+
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "TestBQG".to_string(),
+            book_source_url: "http://example.com/".to_string(),
+            rule_content: Some(ContentRule {
+                content: Some("id.content@html##最新网址.*com".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // 包含首尾最新网址，中间段落使用 <br> 分隔，验证不会因贪婪匹配吞空正文
+        let body = r#"
+            <div id="content">
+                <div id="center_tip"><b>最新网址：www.iinbqg.com</b></div>
+                大奉京兆府，监牢。<br /><br />许七安幽幽醒来。
+                <div id="center_tip"><b>最新网址：www.iinbqg.com</b></div>
+            </div>
+        "#;
+        let content = engine.content(&source, body, "http://example.com/read/1.html");
+        assert!(content.contains("大奉京兆府"));
+        assert!(content.contains("许七安幽幽醒来"));
+        assert!(!content.contains("最新网址：www.iinbqg.com"));
     }
 }

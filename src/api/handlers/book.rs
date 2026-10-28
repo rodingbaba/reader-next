@@ -3703,29 +3703,46 @@ fn available_source_matches_target(
 ) -> bool {
     let norm_book_name = normalize_available_book_name(&book.name);
     let norm_target_name = normalize_available_book_name(target_name);
-    if norm_book_name != norm_target_name {
-        return false;
-    }
 
     let norm_book_author = normalize_available_author(&book.author);
     let norm_target_author = normalize_available_author(target_author);
 
-    // 如果双方都有明确作者，允许相等或包含匹配（如“唐家三少” vs “唐家三少著”）
-    if !norm_book_author.is_empty() && !norm_target_author.is_empty() {
+    // 作者校验
+    let author_matches = if !norm_book_author.is_empty() && !norm_target_author.is_empty() {
         norm_book_author == norm_target_author
             || norm_book_author.contains(&norm_target_author)
             || norm_target_author.contains(&norm_book_author)
     } else {
-        // 其中一方作者为空时，书名完全一致即视为可用候选源
+        // 其中一方作者为空时，先放行书名匹配
         true
+    };
+
+    if !author_matches {
+        return false;
     }
+
+    // 书名完全一致直接命中
+    if norm_book_name == norm_target_name {
+        return true;
+    }
+
+    // 作者一致时，兼容尾随罗马数字或第一部等标识（如“斗罗大陆1” / “斗罗大陆i”）
+    if !norm_target_name.is_empty() {
+        let stripped_first = norm_book_name.trim_end_matches(['1', 'i', 'ⅰ', '一']);
+        if stripped_first == norm_target_name {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn normalize_available_book_name(value: &str) -> String {
     let mut cleaned = value.replace("<em>", "").replace("</em>", "");
     for pat in &[
         "[全本]", "（全本）", "(全本)", "【全本】", "[精校]", "（精校）", "(精校)",
-        "【精校】", "精校版", "txt下载", "全文阅读", "最新章节",
+        "【精校】", "精校版", "txt下载", "全文阅读", "最新章节", "实体书版", "完整版",
+        "校对版", "无删减", "无删节", "未删节", "第1部", "第一部", "第1卷", "第一卷",
     ] {
         cleaned = cleaned.replace(pat, "");
     }

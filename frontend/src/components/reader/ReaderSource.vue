@@ -119,7 +119,7 @@ const loadingMore = ref(false)
 const results = ref<SearchBook[]>([])
 const lastIndex = ref(-1)
 const hasMoreSources = ref(true)
-const AVAILABLE_CONCURRENT_COUNT = 8
+const AVAILABLE_CONCURRENT_COUNT = 16
 let availableSourceSSE: EventSource | null = null
 
 const sourceMap = computed(() => {
@@ -145,6 +145,7 @@ const currentSourceName = computed(() => {
 
 function normalizeText(value?: string) {
   return (value || '')
+    .replace(/(?:\[全本\]|（全本）|\(全本\)|【全本】|\[精校\]|（精校）|\(精校\)|【精校】|精校版|txt下载|全文阅读|最新章节|实体书版|完整版|校对版|无删减|无删节|未删节|第1部|第一部|第1卷|第一卷)/gi, '')
     .replace(/\s+/g, '')
     .replace(/[：:,.，。！？!?\-—_()（）【】\[\]<>《》'"“”‘’]/g, '')
     .toLowerCase()
@@ -171,8 +172,9 @@ const preparedResults = computed<CandidateItem[]>(() => {
 
   return results.value
     .map((book) => {
-      const sameName = normalizeText(book.name) === currentName
-      const sameAuthor = normalizeAuthorText(book.author) === currentAuthor
+      const n1 = normalizeText(book.name)
+      const sameName = n1 === currentName || (n1.replace(/[1iⅰ一]$/, '') === currentName)
+      const sameAuthor = isAuthorMatch(book.author, currentAuthor)
       const sameLatest = !!currentLatest && normalizeText(book.lastChapter) === currentLatest
       const chapterHint = sameLatest
         ? '可无缝续读'
