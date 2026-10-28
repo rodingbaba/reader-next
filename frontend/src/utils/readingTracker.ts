@@ -286,6 +286,7 @@ export interface TrackerOptions {
   getBook: () => Book | null
   isSpeaking: () => boolean
   isPaused: () => boolean
+  isShelfBook?: () => boolean
 }
 
 export class ReadingTracker {
@@ -370,6 +371,7 @@ export class ReadingTracker {
   }
 
   public recordExternalListening(seconds: number, specificBookUrl?: string) {
+    if (this.options.isShelfBook && !this.options.isShelfBook()) return
     const book = this.options.getBook()
     const targetUrl = specificBookUrl || book?.bookUrl
     if (!targetUrl) return
@@ -450,6 +452,10 @@ export class ReadingTracker {
    */
   private settleElapsed(isFlushing: boolean = false): number {
     if (this.isDestroyed && !isFlushing) return 0
+    if (this.options.isShelfBook && !this.options.isShelfBook()) {
+      this.lastTickAt = Date.now()
+      return 0
+    }
     const now = Date.now()
     let elapsed = Math.round((now - this.lastTickAt) / 1000)
     this.lastTickAt = now
@@ -539,6 +545,12 @@ export class ReadingTracker {
   }
 
   public flushNow() {
+    if (this.options.isShelfBook && !this.options.isShelfBook()) {
+      this.unsyncedSecs = 0
+      this.unsyncedListenSecs = 0
+      this.currentChapterDelta = 0
+      return
+    }
     // 离开或销毁时立即结算自上次以来的流逝秒数（即使只读了 3~10 秒也能被捕获）
     this.settleElapsed(true)
 

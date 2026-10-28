@@ -243,6 +243,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/reader3/stats/record", post(handlers::record_reading_heartbeat))
         .route("/reader3/stats/summary", get(handlers::get_reading_summary))
         .route("/reader3/stats/books", get(handlers::get_reading_book_stats))
+        .route("/reader3/stats/prune", post(handlers::prune_reading_stats))
         .route(AI_BOOK_MEMORY_ROUTE, get(handlers::get_ai_book_memory))
         .route(
             AI_BOOK_CHAPTER_MEMORY_ROUTE,

@@ -76,3 +76,10 @@ export function getReadingBookStats(config?: { timeout?: number }) {
   return http.get<BookReadingStatItem[]>('stats/books', config).then((r) => r.data)
 }
 
+/**
+ * 清理未加入书架的非书架历史阅读统计记录
+ */
+export function pruneNonShelfReadingStats(config?: { timeout?: number }) {
+  return http.post<{ deletedCount: number }>('stats/prune', {}, config).then((r) => r.data)
+}
+

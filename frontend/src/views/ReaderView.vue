@@ -1111,6 +1111,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, defin
 
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
+import { useBookshelfStore } from '../stores/bookshelf'
 import { useAiBookStore } from '../stores/aiBook'
 import { useAppStore } from '../stores/app'
 import { getBookInfo } from '../api/bookshelf'
@@ -1159,8 +1160,24 @@ const ReaderSearchPanel = defineAsyncComponent(() => import('../components/reade
 
 const router = useRouter()
 const store = useReaderStore()
+const bookshelfStore = useBookshelfStore()
 const aiBookStore = useAiBookStore()
 const appStore = useAppStore()
+
+function checkIsShelfBook(bookUrl?: string): boolean {
+  if (!bookUrl) return false
+  if (bookshelfStore.books.some((b) => b.bookUrl === bookUrl)) return true
+  try {
+    const raw = localStorage.getItem('reader_bookshelf_cache')
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.some((b: any) => b.bookUrl === bookUrl)) {
+        return true
+      }
+    }
+  } catch {}
+  return false
+}
 const READER_POSITION_PREFIX = 'reader-position:'
 const SERVER_PROGRESS_AUTOSAVE_MS = 10000
 
@@ -3045,6 +3062,7 @@ onMounted(async () => {
     getBook: () => store.book,
     isSpeaking: () => store.isSpeaking,
     isPaused: () => store.isPaused,
+    isShelfBook: () => checkIsShelfBook(store.book?.bookUrl),
   });
   (window as any).__nativeBridgeTTSStateChange = (state: string) => {
     if (state === 'playing') {

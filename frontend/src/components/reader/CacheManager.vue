@@ -13,17 +13,12 @@
     </div>
 
     <div class="cache-body">
-      <!-- 统一摘要卡片：本机已离线 X 章，网络书辅助显示云端就绪 Y 章 -->
-      <div class="summary-grid" :class="{ 'single-col': isLocalBookItem || serverCachedCount === 0 }">
+      <!-- 统一摘要卡片：已离线 X 章 -->
+      <div class="summary-grid single-col">
         <div class="summary-card primary-card">
-          <span class="summary-label">本机已离线</span>
+          <span class="summary-label">已离线</span>
           <strong>{{ browserCachedCount }}</strong>
           <small>离线可读章节</small>
-        </div>
-        <div v-if="!isLocalBookItem && serverCachedCount > 0" class="summary-card">
-          <span class="summary-label">云端就绪</span>
-          <strong>{{ serverCachedCount }}</strong>
-          <small>服务端已缓存</small>
         </div>
       </div>
 
@@ -46,7 +41,7 @@
       <!-- 统一离线下载选项 -->
       <div v-else class="cache-sections">
         <div class="info-card">
-          <p>离线下载到本机后，断网仍可流畅阅读。网络书籍下载时会自动协同缓存到云端，随存随读。</p>
+          <p>离线数据保存在本机，断网仍可流畅阅读，多端自动同步。</p>
         </div>
 
         <section class="cache-section">
@@ -55,6 +50,10 @@
             <button class="link-btn" @click="refreshStats">刷新</button>
           </div>
           <div class="option-list">
+            <button class="cache-opt" @click="startDownload(10)">
+              <span class="label">下载后续 10 章</span>
+              <span class="sub">极速缓存，适合短期追更</span>
+            </button>
             <button class="cache-opt" @click="startDownload(50)">
               <span class="label">下载后续 50 章</span>
               <span class="sub">适合当前追更</span>
@@ -83,10 +82,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
 import { useOfflineDownloadStore } from '../../stores/offlineDownload'
-import { getBookshelfWithCacheInfo } from '../../api/bookshelf'
 import { countBrowserBookCache } from '../../utils/browserCache'
 import { resolveBookChapters, clearBookOfflineCache } from '../../utils/bookCache'
-import { isLocalBook } from '../../utils/localBook'
 
 const store = useReaderStore()
 const appStore = useAppStore()
@@ -94,9 +91,7 @@ const offlineStore = useOfflineDownloadStore()
 const theme = computed(() => store.currentTheme)
 
 const isDownloading = computed(() => offlineStore.isBookDownloading(store.book?.bookUrl))
-const serverCachedCount = ref(0)
 const browserCachedCount = ref(0)
-const isLocalBookItem = computed(() => isLocalBook(store.book))
 
 onMounted(() => {
   refreshStats()
@@ -111,19 +106,7 @@ watch(isDownloading, (downloading, wasDownloading) => {
 
 async function refreshStats() {
   if (!store.book) return
-  // 本地书：只统计本机离线数
-  if (isLocalBookItem.value) {
-    serverCachedCount.value = 0
-    browserCachedCount.value = await countBrowserBookCache(store.book.bookUrl).catch(() => 0)
-    return
-  }
-  const [serverList, browserCount] = await Promise.all([
-    getBookshelfWithCacheInfo().catch(() => []),
-    countBrowserBookCache(store.book.bookUrl).catch(() => 0),
-  ])
-  const matched = serverList.find((book) => book.bookUrl === store.book?.bookUrl)
-  serverCachedCount.value = matched?.cachedChapterCount || 0
-  browserCachedCount.value = browserCount
+  browserCachedCount.value = await countBrowserBookCache(store.book.bookUrl).catch(() => 0)
 }
 
 async function startDownload(count: number) {

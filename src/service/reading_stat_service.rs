@@ -295,6 +295,47 @@ impl ReadingStatService {
 
         Ok(list)
     }
+
+    pub async fn prune_non_shelf_stats(
+        &self,
+        user_ns: &str,
+        shelf_book_urls: &[String],
+    ) -> Result<u64, AppError> {
+        if shelf_book_urls.is_empty() {
+            let result = sqlx::query(
+                r#"
+                DELETE FROM reading_sessions
+                WHERE user_ns = ?1;
+                "#,
+            )
+            .bind(user_ns)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+
+            return Ok(result.rows_affected());
+        }
+
+        let placeholders: Vec<String> = (2..=shelf_book_urls.len() + 1)
+            .map(|i| format!("?{}", i))
+            .collect();
+        let query_str = format!(
+            "DELETE FROM reading_sessions WHERE user_ns = ?1 AND book_url NOT IN ({});",
+            placeholders.join(",")
+        );
+
+        let mut query = sqlx::query(&query_str).bind(user_ns);
+        for url in shelf_book_urls {
+            query = query.bind(url);
+        }
+
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 fn calculate_streak(active_dates: &[String], today_str: &str) -> i64 {

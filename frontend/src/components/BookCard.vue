@@ -79,14 +79,9 @@
         </p>
       </div>
 
-      <div class="card-footer">
-        <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
-          <span v-if="browserCachedCount > 0" class="cache-chip primary">离线 {{ browserCachedCount }} 章</span>
-          <span v-if="serverCachedCount > 0" class="cache-chip">服务端 {{ serverCachedCount }} 章</span>
-        </div>
+      <div v-if="isSearch" class="card-footer">
         <!-- Search mode: add to shelf -->
         <button
-          v-if="isSearch"
           class="add-shelf-btn"
           @click.stop="$emit('addToShelf', book)"
         >
@@ -103,7 +98,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { getCoverUrl } from '../api/bookshelf'
-import { isLocalTxtBook } from '../utils/localBook'
 import { getCoverCache, cacheCoverFromUrl, getCoverMemoryCache } from '../utils/browserCache'
 import { appLog } from '../utils/appLogger'
 import type { Book, SearchBook } from '../types'
@@ -293,8 +287,6 @@ const unreadCount = computed(() => {
   return Math.max(0, b.totalChapterNum - 1 - b.durChapterIndex)
 })
 
-const browserCachedCount = computed(() => isLocalTxtBook(asBook.value) ? 0 : Math.max(0, asBook.value.browserCachedChapterCount || 0))
-const serverCachedCount = computed(() => isLocalTxtBook(asBook.value) ? 0 : Math.max(0, asBook.value.cachedChapterCount || 0))
 const latestChapterText = computed(() => {
   if (props.isSearch) {
     return asSearchBook.value.lastChapter || asBook.value.latestChapterTitle || ''

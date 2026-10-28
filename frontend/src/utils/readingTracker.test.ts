@@ -348,5 +348,39 @@ describe('readingTracker utility', () => {
     // 成功后 pending 池子应为空
     expect(loadPendingHeartbeats()).toEqual([])
   })
+
+  it('keeps silent when book is not in shelf (preview/explore mode)', async () => {
+    vi.useFakeTimers()
+    vi.mocked(readingStatsApi.recordReadingHeartbeat).mockClear()
+
+    const book = {
+      bookUrl: 'book://preview-book',
+      name: '预览小说',
+      author: '作者',
+    } as any
+
+    const tracker = new ReadingTracker({
+      getBook: () => book,
+      isSpeaking: () => false,
+      isPaused: () => false,
+      isShelfBook: () => false, // 未加入书架
+    })
+
+    // 前进 60 秒
+    vi.advanceTimersByTime(60 * 1000)
+
+    // 离开页面时立即 flush
+    tracker.flushNow()
+
+    // 严禁调用网络上报
+    expect(readingStatsApi.recordReadingHeartbeat).not.toHaveBeenCalled()
+
+    // 严禁写入本地持久账本
+    const local = loadLocalReadingStats()
+    expect(local.books['book://preview-book']).toBeUndefined()
+
+    tracker.destroy()
+    vi.useRealTimers()
+  })
 })
 

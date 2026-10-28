@@ -18,17 +18,41 @@
           <input
             :value="remoteUrl"
             type="text"
-            placeholder="输入远程书源合集链接"
+            class="remote-url-input"
+            placeholder="输入远程书源合集链接 (URL)"
             @input="$emit('update:remoteUrl', ($event.target as HTMLInputElement).value)"
           />
-          <button class="action-btn primary" type="button" @click="$emit('sync')">立即同步</button>
-          <button class="action-btn" type="button" @click="$emit('save')">保存订阅</button>
+          <input
+            :value="remoteTitle"
+            type="text"
+            class="remote-title-input"
+            placeholder="合集别名 (可选)"
+            @input="$emit('update:remoteTitle', ($event.target as HTMLInputElement).value)"
+          />
+          <div class="remote-btn-group">
+            <button class="action-btn primary" type="button" @click="$emit('sync')">立即同步</button>
+            <button class="action-btn" type="button" @click="$emit('save')">保存订阅</button>
+          </div>
         </div>
 
         <div v-if="subscriptions.length" class="subscription-list">
           <article v-for="item in subscriptions" :key="item.url" class="subscription-item">
             <div class="subscription-main">
-              <span class="subscription-url">{{ item.url }}</span>
+              <div class="subscription-title-row">
+                <span v-if="item.title" class="subscription-title">{{ item.title }}</span>
+                <span class="subscription-url" :class="{ 'as-secondary': !!item.title }">{{ item.url }}</span>
+                <button
+                  class="edit-alias-btn"
+                  type="button"
+                  :title="item.title ? '修改别名' : '设置别名'"
+                  @click="handleEditAlias(item)"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                  </svg>
+                  <span class="btn-text">{{ item.title ? '改名' : '设别名' }}</span>
+                </button>
+              </div>
               <span v-if="item.lastSyncedAt" class="subscription-time">上次同步 {{ formatTime(item.lastSyncedAt) }}</span>
             </div>
             <div class="subscription-actions">
@@ -46,26 +70,38 @@
 <script setup lang="ts">
 export type SourceSubscription = {
   url: string
+  title?: string
   lastSyncedAt?: number
 }
 
 defineProps<{
   visible: boolean
   remoteUrl: string
+  remoteTitle?: string
   subscriptions: SourceSubscription[]
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'update:remoteUrl': [value: string]
+  'update:remoteTitle': [value: string]
   sync: []
   save: []
   'sync-subscription': [url: string]
+  'update-subscription-title': [payload: { url: string; title: string }]
   'remove-subscription': [url: string]
   close: []
 }>()
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleString()
+}
+
+function handleEditAlias(item: SourceSubscription) {
+  const current = item.title || ''
+  const input = window.prompt('设置合集别名：', current)
+  if (input !== null) {
+    emit('update-subscription-title', { url: item.url, title: input.trim() })
+  }
 }
 </script>
 
@@ -82,7 +118,7 @@ function formatTime(ts: number) {
 }
 
 .subscription-panel {
-  width: min(720px, 100%);
+  width: min(760px, 100%);
   max-height: min(78vh, 720px);
   display: flex;
   flex-direction: column;
@@ -115,17 +151,36 @@ function formatTime(ts: number) {
 
 .remote-form {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.remote-form input {
-  flex: 1;
+.remote-url-input {
+  flex: 2 1 240px;
   min-width: 0;
   min-height: 40px;
   padding: 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
+  font-size: 13px;
+}
+
+.remote-title-input {
+  flex: 1 1 150px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: 13px;
+}
+
+.remote-btn-group {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .subscription-list {
@@ -149,6 +204,22 @@ function formatTime(ts: number) {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 2px;
+}
+
+.subscription-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.subscription-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
 }
 
 .subscription-url {
@@ -156,6 +227,37 @@ function formatTime(ts: number) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.subscription-url.as-secondary {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.edit-alias-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  white-space: nowrap;
+}
+
+.edit-alias-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.edit-alias-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary-border);
+  background: var(--color-bg-hover);
 }
 
 .subscription-time,
@@ -168,6 +270,7 @@ function formatTime(ts: number) {
 .subscription-actions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .action-btn,
@@ -241,6 +344,14 @@ function formatTime(ts: number) {
   .subscription-item {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .remote-btn-group {
+    width: 100%;
+  }
+
+  .remote-btn-group button {
+    flex: 1;
   }
 }
 </style>

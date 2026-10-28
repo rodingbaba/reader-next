@@ -87,11 +87,13 @@
 
     <SourceSubscriptionPanel
       v-model:remote-url="remoteUrl"
+      v-model:remote-title="remoteTitle"
       :visible="subscriptionPanelVisible"
       :subscriptions="subscriptions"
       @sync="importRemoteSource"
       @save="saveSubscription"
       @sync-subscription="syncSubscription"
+      @update-subscription-title="updateSubscriptionTitle"
       @remove-subscription="removeSubscription"
       @close="subscriptionPanelVisible = false"
     />
@@ -151,6 +153,7 @@ import { storeToRefs } from 'pinia'
 
 type SourceSubscription = {
   url: string
+  title?: string
   lastSyncedAt?: number
 }
 
@@ -176,6 +179,7 @@ const selectedSourceUrls = ref(new Set<string>())
 
 const subscriptionPanelVisible = ref(false)
 const remoteUrl = ref('')
+const remoteTitle = ref('')
 const subscriptions = ref<SourceSubscription[]>(loadSubscriptions())
 
 const editingSource = ref<BookSource | null>(null)
@@ -539,15 +543,39 @@ function saveSubscription() {
     appStore.showToast('请输入远程书源链接', 'warning')
     return
   }
-  if (!subscriptions.value.find((item) => item.url === remoteUrl.value)) {
-    subscriptions.value.unshift({ url: remoteUrl.value })
+  const trimmedTitle = remoteTitle.value.trim()
+  const existing = subscriptions.value.find((item) => item.url === remoteUrl.value)
+  if (existing) {
+    if (trimmedTitle) {
+      existing.title = trimmedTitle
+      persistSubscriptions()
+      appStore.showToast(`已更新别名: ${trimmedTitle}`, 'success')
+    } else {
+      appStore.showToast('该订阅已存在', 'warning')
+    }
+    return
+  }
+  subscriptions.value.unshift({
+    url: remoteUrl.value,
+    title: trimmedTitle || undefined,
+  })
+  persistSubscriptions()
+  appStore.showToast('订阅已保存', 'success')
+}
+
+function updateSubscriptionTitle(payload: { url: string; title: string }) {
+  const item = subscriptions.value.find((s) => s.url === payload.url)
+  if (item) {
+    item.title = payload.title.trim() || undefined
     persistSubscriptions()
-    appStore.showToast('订阅已保存', 'success')
+    appStore.showToast('别名已更新', 'success')
   }
 }
 
 async function syncSubscription(url: string) {
   remoteUrl.value = url
+  const item = subscriptions.value.find((s) => s.url === url)
+  remoteTitle.value = item?.title || ''
   await importRemoteSource()
 }
 
@@ -558,10 +586,18 @@ function removeSubscription(url: string) {
 
 function touchSubscription(url: string) {
   const existing = subscriptions.value.find((item) => item.url === url)
+  const trimmedTitle = remoteTitle.value.trim()
   if (existing) {
     existing.lastSyncedAt = Date.now()
+    if (!existing.title && trimmedTitle) {
+      existing.title = trimmedTitle
+    }
   } else {
-    subscriptions.value.unshift({ url, lastSyncedAt: Date.now() })
+    subscriptions.value.unshift({
+      url,
+      title: trimmedTitle || undefined,
+      lastSyncedAt: Date.now(),
+    })
   }
   persistSubscriptions()
 }

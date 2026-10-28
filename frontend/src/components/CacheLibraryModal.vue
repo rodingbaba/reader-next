@@ -37,6 +37,7 @@
               <div class="cache-scope">
                 <span class="scope-label">默认范围</span>
                 <div class="scope-options">
+                  <button class="scope-btn" :class="{ active: cacheCount === 10 }" @click="cacheCount = 10">10章</button>
                   <button class="scope-btn" :class="{ active: cacheCount === 50 }" @click="cacheCount = 50">50章</button>
                   <button class="scope-btn" :class="{ active: cacheCount === 100 }" @click="cacheCount = 100">100章</button>
                   <button class="scope-btn" :class="{ active: cacheCount === 0 }" @click="cacheCount = 0">全本</button>
