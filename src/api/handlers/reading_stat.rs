@@ -67,38 +67,8 @@ pub async fn get_reading_book_stats(
     )
     .await?;
 
-    let shelf = state.book_service.get_bookshelf(&user_ns).await.unwrap_or_default();
-    let shelf_book_urls: Vec<String> = shelf.into_iter().map(|b| b.book_url).collect();
-    let _ = state
-        .reading_stat_service
-        .prune_non_shelf_stats(&user_ns, &shelf_book_urls)
-        .await;
-
     let res = state.reading_stat_service.get_book_stats(&user_ns).await?;
     Ok(Json(ApiResponse::ok(res)))
-}
-
-pub async fn prune_reading_stats(
-    State(state): State<AppState>,
-    auth: AuthContext,
-) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(
-        &state,
-        auth.access_token(),
-        auth.secure_key(),
-        auth.user_ns(),
-    )
-    .await?;
-
-    let shelf = state.book_service.get_bookshelf(&user_ns).await.unwrap_or_default();
-    let shelf_book_urls: Vec<String> = shelf.into_iter().map(|b| b.book_url).collect();
-    let rows_affected = state
-        .reading_stat_service
-        .prune_non_shelf_stats(&user_ns, &shelf_book_urls)
-        .await?;
-    Ok(Json(ApiResponse::ok(serde_json::json!({
-        "deletedCount": rows_affected
-    }))))
 }
 
 async fn resolve_user_ns(

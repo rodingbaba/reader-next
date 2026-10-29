@@ -65,6 +65,8 @@
 
             <SourceEditorPanel
               class="editor-slot"
+              :class="{ 'is-collapsed': isEditorCollapsed }"
+              v-model:collapsed="isEditorCollapsed"
               :source="editingSource"
               :editor-text="editorText"
               :can-login="canLoginSource"
@@ -183,6 +185,7 @@ const remoteTitle = ref('')
 const subscriptions = ref<SourceSubscription[]>(loadSubscriptions())
 
 const editingSource = ref<BookSource | null>(null)
+const isEditorCollapsed = ref(true)
 const editorText = ref(JSON.stringify(createEmptySource(), null, 2))
 const sourceLoginLoading = ref(false)
 const loginPreviewVisible = ref(false)
@@ -398,11 +401,13 @@ function hasSourceGroup(source: BookSource, groupName: string) {
 }
 
 function createSource() {
+  isEditorCollapsed.value = false
   editingSource.value = null
   editorText.value = JSON.stringify(createEmptySource(), null, 2)
 }
 
 function editSource(source: BookSource) {
+  isEditorCollapsed.value = false
   editingSource.value = source
   editorText.value = JSON.stringify(source, null, 2)
 }
@@ -819,12 +824,22 @@ watch(() => props.modelValue, (v) => {
 
   .editor-slot {
     order: -1;
-    min-height: 360px;
+    min-height: 0;
     max-height: min(58vh, 560px);
   }
 
+  .editor-slot:not(.is-collapsed) {
+    min-height: 320px;
+  }
+
+  .editor-slot.is-collapsed {
+    min-height: 0;
+    max-height: none;
+    margin-bottom: 6px;
+  }
+
   .source-list-slot {
-    max-height: min(46vh, 460px);
+    max-height: min(68vh, 680px);
   }
 
   .modal-footer {

@@ -62,12 +62,35 @@
           </article>
         </div>
         <div v-else class="subscription-empty">还没有保存的远程订阅。</div>
+
+        <!-- 自定义别名编辑弹窗（脱离对 window.prompt 的依赖） -->
+        <div v-if="aliasDialog.visible" class="alias-dialog-backdrop" @click.self="closeAliasDialog">
+          <div class="alias-dialog-box">
+            <h4 class="alias-dialog-title">设置书源合集别名</h4>
+            <input
+              ref="aliasInputRef"
+              v-model="aliasDialog.value"
+              class="alias-dialog-input"
+              type="text"
+              placeholder="请输入合集别名（如：精品书源）"
+              maxlength="40"
+              @keydown.enter="confirmAliasDialog"
+              @keydown.esc="closeAliasDialog"
+            />
+            <div class="alias-dialog-actions">
+              <button class="mini-btn" type="button" @click="closeAliasDialog">取消</button>
+              <button class="action-btn primary small-btn" type="button" @click="confirmAliasDialog">确定</button>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
+import { nextTick, ref } from 'vue'
+
 export type SourceSubscription = {
   url: string
   title?: string
@@ -92,16 +115,44 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const aliasDialog = ref<{
+  visible: boolean
+  url: string
+  value: string
+}>({
+  visible: false,
+  url: '',
+  value: '',
+})
+const aliasInputRef = ref<HTMLInputElement | null>(null)
+
 function formatTime(ts: number) {
   return new Date(ts).toLocaleString()
 }
 
 function handleEditAlias(item: SourceSubscription) {
-  const current = item.title || ''
-  const input = window.prompt('设置合集别名：', current)
-  if (input !== null) {
-    emit('update-subscription-title', { url: item.url, title: input.trim() })
+  aliasDialog.value = {
+    visible: true,
+    url: item.url,
+    value: item.title || '',
   }
+  nextTick(() => {
+    aliasInputRef.value?.focus()
+    aliasInputRef.value?.select()
+  })
+}
+
+function closeAliasDialog() {
+  aliasDialog.value.visible = false
+}
+
+function confirmAliasDialog() {
+  if (!aliasDialog.value.visible) return
+  emit('update-subscription-title', {
+    url: aliasDialog.value.url,
+    title: aliasDialog.value.value.trim(),
+  })
+  aliasDialog.value.visible = false
 }
 </script>
 
@@ -158,23 +209,25 @@ function handleEditAlias(item: SourceSubscription) {
 .remote-url-input {
   flex: 2 1 240px;
   min-width: 0;
-  min-height: 40px;
+  height: 40px;
   padding: 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
   font-size: 13px;
+  box-sizing: border-box;
 }
 
 .remote-title-input {
   flex: 1 1 150px;
   min-width: 0;
-  min-height: 40px;
+  height: 40px;
   padding: 0 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
   font-size: 13px;
+  box-sizing: border-box;
 }
 
 .remote-btn-group {
@@ -335,6 +388,69 @@ function handleEditAlias(item: SourceSubscription) {
   opacity: 0;
 }
 
+.alias-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 10;
+  backdrop-filter: blur(2px);
+}
+
+.alias-dialog-box {
+  width: 100%;
+  max-width: 340px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.alias-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.alias-dialog-input {
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  padding: 0 12px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--duration-fast);
+}
+
+.alias-dialog-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.15);
+}
+
+.alias-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.small-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 @media (max-width: 640px) {
   .subscription-backdrop {
     padding: 12px;
@@ -344,6 +460,13 @@ function handleEditAlias(item: SourceSubscription) {
   .subscription-item {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .remote-url-input,
+  .remote-title-input {
+    flex: none;
+    width: 100%;
+    height: 40px;
   }
 
   .remote-btn-group {

@@ -109,12 +109,12 @@
                 <span class="kpi-val kpi-chapter-val" :title="focusedBookChapterText">{{ focusedBookChapterText }}</span>
               </template>
               <template v-else>
-                <span class="kpi-val">{{ totalShelfReadBooksCount }}</span>
+                <span class="kpi-val">{{ totalAllReadBooksCount }}</span>
                 <span class="kpi-unit">本</span>
               </template>
             </div>
             <div class="kpi-subtext">
-              {{ focusedBookInfo ? (focusedBookInfo.author ? `作者: ${focusedBookInfo.author}` : '书架足迹') : '书架足迹档案' }}
+              {{ focusedBookInfo ? (focusedBookInfo.author ? `作者: ${focusedBookInfo.author}` : '书籍足迹') : '全库足迹档案' }}
             </div>
           </div>
         </div>
@@ -268,18 +268,26 @@
                 <button
                   type="button"
                   class="filter-tab-btn"
-                  :class="{ active: durationFilter === 'gt1h' }"
-                  @click="durationFilter = 'gt1h'"
+                  :class="{ active: durationFilter === 'all' }"
+                  @click="setDurationFilter('all')"
                 >
-                  大于 1 小时
+                  全部
                 </button>
                 <button
                   type="button"
                   class="filter-tab-btn"
-                  :class="{ active: durationFilter === 'all' }"
-                  @click="durationFilter = 'all'"
+                  :class="{ active: durationFilter === 'top10' }"
+                  @click="setDurationFilter('top10')"
                 >
-                  全部
+                  Top10
+                </button>
+                <button
+                  type="button"
+                  class="filter-tab-btn"
+                  :class="{ active: durationFilter === 'top30' }"
+                  @click="setDurationFilter('top30')"
+                >
+                  Top30
                 </button>
               </div>
 
@@ -332,6 +340,9 @@
                     <span v-if="item.shelfBook?.durChapterTitle" class="item-progress-badge">
                       {{ item.shelfBook.durChapterTitle }}
                     </span>
+                    <span v-else class="item-removed-badge">
+                      已移出书架
+                    </span>
                   </div>
                   <div class="item-author">{{ item.author || '未知作者' }}</div>
                   <div class="item-meta">
@@ -348,9 +359,10 @@
                 </div>
               </div>
 
-              <!-- 右侧独立操作区：完全独立兄弟节点，点击打开阅读器，绝不触发聚焦 -->
+              <!-- 右侧独立操作区：如果在书架上可继续阅读，已移出书架标记已移除且禁止阅读 -->
               <div class="item-action">
                 <button
+                  v-if="item.shelfBook"
                   type="button"
                   class="continue-btn"
                   :disabled="openingBookUrl === item.bookUrl"
@@ -358,6 +370,9 @@
                 >
                   {{ openingBookUrl === item.bookUrl ? '打开中...' : '继续阅读' }}
                 </button>
+                <span v-else class="item-removed-tag">
+                  已移除
+                </span>
               </div>
             </div>
           </div>
@@ -384,7 +399,7 @@ import { useReadingStatsStore } from '../stores/readingStats'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { useReaderStore } from '../stores/reader'
 import { useAppStore } from '../stores/app'
-import { getTodayDateString, loadLocalReadingStats, saveLocalReadingStats } from '../utils/readingTracker'
+import { getTodayDateString, loadLocalReadingStats } from '../utils/readingTracker'
 import { loadRecentReadBooks } from '../utils/recentBooks'
 import { getBookInitial } from '../utils/bookCoverFallback'
 
@@ -394,8 +409,26 @@ const statsStore = useReadingStatsStore()
 const shelfStore = useBookshelfStore()
 const readerStore = useReaderStore()
 
+export type BookFilterType = 'all' | 'top10' | 'top30'
+const STATS_BOOK_FILTER_KEY = 'reader_stats_duration_filter'
+
+function getSavedDurationFilter(): BookFilterType {
+  try {
+    const saved = localStorage.getItem(STATS_BOOK_FILTER_KEY)
+    if (saved === 'top10' || saved === 'top30') return saved
+  } catch {}
+  return 'all'
+}
+
 const sortBy = ref<'duration' | 'recent'>('duration')
-const durationFilter = ref<'gt1h' | 'all'>('gt1h')
+const durationFilter = ref<BookFilterType>(getSavedDurationFilter())
+
+function setDurationFilter(type: BookFilterType) {
+  durationFilter.value = type
+  try {
+    localStorage.setItem(STATS_BOOK_FILTER_KEY, type)
+  } catch {}
+}
 const searchKeyword = ref('')
 const selectedDateDetail = ref<any>(null)
 const openingBookUrl = ref('')
@@ -444,7 +477,6 @@ onMounted(async () => {
     statsStore.fetchStats(),
     shelfStore.fetchBooks().catch(() => undefined),
   ])
-  autoCleanLocalNonShelfStats()
   scrollToHeatmapEnd()
 })
 
@@ -454,7 +486,6 @@ onUnmounted(() => {
 
 async function handleRefresh() {
   const result = await statsStore.fetchStats()
-  autoCleanLocalNonShelfStats()
   if (result?.offline) {
     appStore.showToast('当前处于离线模式，已显示本地离线统计', 'warning')
   } else if (result?.success) {
@@ -463,52 +494,6 @@ async function handleRefresh() {
     appStore.showToast('服务端未连通，已显示本地离线统计', 'warning')
   }
 }
-
-function autoCleanLocalNonShelfStats() {
-  const shelfUrls = new Set(shelfStore.books.map((b) => b.bookUrl))
-  if (shelfUrls.size === 0) return
-  const local = loadLocalReadingStats()
-  let localChanged = false
-
-  for (const url of Object.keys(local.books)) {
-    if (!shelfUrls.has(url)) {
-      delete local.books[url]
-      localChanged = true
-    }
-  }
-  for (const day of Object.values(local.daily)) {
-    if (day.books) {
-      for (const url of Object.keys(day.books)) {
-        if (!shelfUrls.has(url)) {
-          delete day.books[url]
-          localChanged = true
-        }
-      }
-    }
-  }
-  if (localChanged) {
-    saveLocalReadingStats(local)
-    localStorage.removeItem('reader-stats-books-snapshot-v1')
-  }
-}
-
-const totalShelfReadBooksCount = computed(() => {
-  const shelfUrls = new Set(shelfStore.books.map((b) => b.bookUrl))
-  const localStats = loadLocalReadingStats()
-  const readBookUrls = new Set<string>()
-
-  for (const b of statsStore.bookStats) {
-    if (b.totalDurationSecs > 0 && shelfUrls.has(b.bookUrl)) {
-      readBookUrls.add(b.bookUrl)
-    }
-  }
-  for (const [url, lb] of Object.entries(localStats.books)) {
-    if (lb.totalDurationSecs > 0 && shelfUrls.has(url)) {
-      readBookUrls.add(url)
-    }
-  }
-  return readBookUrls.size
-})
 
 function scrollToHeatmapEnd() {
   setTimeout(() => {
@@ -528,6 +513,139 @@ function cleanDisplayMetadata(text: string | undefined | null): string {
     .replace(/&#39;/g, "'")
     .trim()
 }
+
+function parseRecentTimestamp(val: number | string | undefined): number {
+  if (!val) return 0
+  if (typeof val === 'number') {
+    return val > 1e11 ? val : val * 1000
+  }
+  const num = Number(val)
+  if (!isNaN(num) && num > 0) {
+    return num > 1e11 ? num : num * 1000
+  }
+  const parsed = new Date(val).getTime()
+  return isNaN(parsed) ? 0 : parsed
+}
+
+// ─── 全量有效阅读书籍集合（不受搜索过滤和 Top 榜截取影响，与 13 本完全对齐） ───
+const allReadBooks = computed(() => {
+  const shelfMap = new Map(shelfStore.books.map((b) => [b.bookUrl, b]))
+  const shelfOrderMap = new Map(shelfStore.books.map((b, i) => [b.bookUrl, i]))
+  const recentList = loadRecentReadBooks()
+  const recentMap = new Map(
+    recentList.map((b) => [b.bookUrl, b.recentReadAt || b.durChapterTime || 0]),
+  )
+  const localStats = loadLocalReadingStats()
+
+  // 1. 初始化聚合 Map，优先以服务端实际读过（时长>0）的 bookStats 为基底
+  const mergedMap = new Map<string, any>()
+  for (const item of statsStore.bookStats) {
+    if (item.totalDurationSecs > 0) {
+      mergedMap.set(item.bookUrl, { ...item })
+    }
+  }
+
+  // 2. 本地缓存中若有产生有效阅读时长（>0秒）的书目，平滑并入
+  for (const [url, lb] of Object.entries(localStats.books)) {
+    if (lb.totalDurationSecs > 0) {
+      const existing = mergedMap.get(url)
+      if (existing) {
+        if (lb.totalDurationSecs > existing.totalDurationSecs) {
+          existing.totalDurationSecs = lb.totalDurationSecs
+        }
+        if (lb.totalListenSecs > existing.totalListenSecs) {
+          existing.totalListenSecs = lb.totalListenSecs
+        }
+        if (lb.lastReadAt) {
+          existing.lastReadTime = Math.max(
+            parseRecentTimestamp(existing.lastReadTime),
+            lb.lastReadAt,
+          )
+        }
+      } else {
+        mergedMap.set(url, {
+          bookUrl: lb.bookUrl,
+          bookName: lb.bookName,
+          author: lb.author || '',
+          coverUrl: lb.coverUrl,
+          totalDurationSecs: lb.totalDurationSecs,
+          totalListenSecs: lb.totalListenSecs,
+          firstReadDate: lb.lastReadDate,
+          lastReadDate: lb.lastReadDate,
+          lastReadTime: lb.lastReadAt,
+          totalDays: 1,
+          totalChaptersRead: 0,
+        })
+      }
+    }
+  }
+
+  // 3. 仲裁每本书的高精度毫秒阅读时间戳与元数据
+  const list = Array.from(mergedMap.values()).map((item) => {
+    const shelfBook = shelfMap.get(item.bookUrl)
+    const shelfIndex = shelfOrderMap.get(item.bookUrl)
+
+    let recentTimestamp = 0
+    if (shelfBook?.durChapterTime) {
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(shelfBook.durChapterTime))
+    }
+    const rTime = recentMap.get(item.bookUrl)
+    if (rTime) {
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(rTime))
+    }
+    const localBook = localStats.books[item.bookUrl]
+    if (localBook?.lastReadAt) {
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(localBook.lastReadAt))
+    }
+    if (item.lastReadTime) {
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadTime))
+    }
+    if (!recentTimestamp && item.lastReadDate) {
+      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadDate))
+    }
+
+    const finalBookName = cleanDisplayMetadata(shelfBook?.name || item.bookName)
+    const finalAuthor = cleanDisplayMetadata(shelfBook?.author || item.author)
+
+    return {
+      ...item,
+      bookName: finalBookName || item.bookName,
+      author: finalAuthor || item.author,
+      shelfBook,
+      shelfIndex,
+      recentTimestamp,
+    }
+  })
+
+  // 4. 统计与展示产生过阅读时长（>0）的书目（即使已从书架移出，历史阅读成果依然永久保留）
+  return list.filter((b) => b.totalDurationSecs > 0)
+})
+
+// 全库已读书籍总本数：与书籍列表 100% 对齐（13本）
+const totalAllReadBooksCount = computed(() => allReadBooks.value.length)
+
+// 全量书籍累加时长（秒）
+const allBooksTotalDurationSecs = computed(() =>
+  allReadBooks.value.reduce((acc, b) => acc + (b.totalDurationSecs || 0), 0)
+)
+const allBooksTotalListenSecs = computed(() =>
+  allReadBooks.value.reduce((acc, b) => acc + (b.totalListenSecs || 0), 0)
+)
+
+// 权威合并：总时长必须和书籍列表对齐（包含所有已移出的已读书籍）
+const effectiveTotalDurationSecs = computed(() => {
+  if (focusedBookInfo.value) {
+    return focusedBookInfo.value.totalDurationSecs || 0
+  }
+  return Math.max(statsStore.summary?.totalDurationSecs || 0, allBooksTotalDurationSecs.value)
+})
+
+const effectiveTotalListenSecs = computed(() => {
+  if (focusedBookInfo.value) {
+    return focusedBookInfo.value.totalListenSecs || 0
+  }
+  return Math.max(statsStore.summary?.totalListenSecs || 0, allBooksTotalListenSecs.value)
+})
 
 function formatHoursMinutes(totalMinutes: number, totalSeconds?: number): string {
   if (totalSeconds !== undefined && totalSeconds > 0 && totalSeconds < 60) {
@@ -580,10 +698,20 @@ function formatKpiDuration(totalMinutes: number, isSubtext = false): { display: 
   return { display: full, full }
 }
 
-const totalDurationInfo = computed(() => formatKpiDuration(statsStore.totalDurationMinutes, false))
-const totalListenDurationInfo = computed(() => formatKpiDuration(statsStore.totalListenMinutes, true))
+const totalDurationInfo = computed(() =>
+  formatKpiDuration(Math.round(effectiveTotalDurationSecs.value / 60), false)
+)
+const totalListenDurationInfo = computed(() =>
+  formatKpiDuration(Math.round(effectiveTotalListenSecs.value / 60), true)
+)
 const totalReadDurationInfo = computed(() =>
-  formatKpiDuration(Math.max(0, statsStore.totalDurationMinutes - statsStore.totalListenMinutes), true),
+  formatKpiDuration(
+    Math.max(
+      0,
+      Math.round((effectiveTotalDurationSecs.value - effectiveTotalListenSecs.value) / 60)
+    ),
+    true
+  )
 )
 const todayDurationInfo = computed(() => formatKpiDuration(statsStore.todayDurationMinutes, false))
 const todayListenDurationInfo = computed(() => formatKpiDuration(statsStore.todayListenMinutes, true))
@@ -764,19 +892,6 @@ const last7DaysTrend = computed(() => {
   return result
 })
 
-function parseRecentTimestamp(val: number | string | undefined): number {
-  if (!val) return 0
-  if (typeof val === 'number') {
-    return val > 1e11 ? val : val * 1000
-  }
-  const num = Number(val)
-  if (!isNaN(num) && num > 0) {
-    return num > 1e11 ? num : num * 1000
-  }
-  const parsed = new Date(val).getTime()
-  return isNaN(parsed) ? 0 : parsed
-}
-
 // ─── 格式化最后阅读时间 ───
 function formatLastReadText(item: { recentTimestamp?: number; lastReadDate?: string }): string {
   const ts = item.recentTimestamp
@@ -799,106 +914,11 @@ function formatLastReadText(item: { recentTimestamp?: number; lastReadDate?: str
   return item.lastReadDate || '近期'
 }
 
-// ─── 书籍列表与结合书架信息 ───
+// ─── 书籍列表（基于全量有效书籍进行搜索与 Top 榜截取） ───
 const filteredBookList = computed(() => {
-  const shelfMap = new Map(shelfStore.books.map((b) => [b.bookUrl, b]))
-  const shelfOrderMap = new Map(shelfStore.books.map((b, i) => [b.bookUrl, i]))
-  const recentList = loadRecentReadBooks()
-  const recentMap = new Map(
-    recentList.map((b) => [b.bookUrl, b.recentReadAt || b.durChapterTime || 0]),
-  )
-  const localStats = loadLocalReadingStats()
+  let list = [...allReadBooks.value]
 
-  // 1. 初始化聚合 Map，优先以服务端实际读过（时长>0）的 bookStats 为基底
-  const mergedMap = new Map<string, any>()
-  for (const item of statsStore.bookStats) {
-    if (item.totalDurationSecs > 0) {
-      mergedMap.set(item.bookUrl, { ...item })
-    }
-  }
-
-  // 2. 本地缓存中若有产生有效阅读时长（>0秒）的书目（如刚短读退出但尚未拉取全量列表），平滑并入
-  for (const [url, lb] of Object.entries(localStats.books)) {
-    if (lb.totalDurationSecs > 0) {
-      const existing = mergedMap.get(url)
-      if (existing) {
-        if (lb.totalDurationSecs > existing.totalDurationSecs) {
-          existing.totalDurationSecs = lb.totalDurationSecs
-        }
-        if (lb.totalListenSecs > existing.totalListenSecs) {
-          existing.totalListenSecs = lb.totalListenSecs
-        }
-        if (lb.lastReadAt) {
-          existing.lastReadTime = Math.max(
-            parseRecentTimestamp(existing.lastReadTime),
-            lb.lastReadAt,
-          )
-        }
-      } else {
-        mergedMap.set(url, {
-          bookUrl: lb.bookUrl,
-          bookName: lb.bookName,
-          author: lb.author || '',
-          coverUrl: lb.coverUrl,
-          totalDurationSecs: lb.totalDurationSecs,
-          totalListenSecs: lb.totalListenSecs,
-          firstReadDate: lb.lastReadDate,
-          lastReadDate: lb.lastReadDate,
-          lastReadTime: lb.lastReadAt,
-          totalDays: 1,
-          totalChaptersRead: 0,
-        })
-      }
-    }
-  }
-
-  // 3. 仲裁每本书的高精度毫秒阅读时间戳
-  let list = Array.from(mergedMap.values()).map((item) => {
-    const shelfBook = shelfMap.get(item.bookUrl)
-    const shelfIndex = shelfOrderMap.get(item.bookUrl)
-
-    // 综合仲裁毫秒级最新阅读时间戳
-    let recentTimestamp = 0
-    if (shelfBook?.durChapterTime) {
-      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(shelfBook.durChapterTime))
-    }
-    const rTime = recentMap.get(item.bookUrl)
-    if (rTime) {
-      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(rTime))
-    }
-    const localBook = localStats.books[item.bookUrl]
-    if (localBook?.lastReadAt) {
-      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(localBook.lastReadAt))
-    }
-    if (item.lastReadTime) {
-      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadTime))
-    }
-    if (!recentTimestamp && item.lastReadDate) {
-      recentTimestamp = Math.max(recentTimestamp, parseRecentTimestamp(item.lastReadDate))
-    }
-
-    const finalBookName = cleanDisplayMetadata(shelfBook?.name || item.bookName)
-    const finalAuthor = cleanDisplayMetadata(shelfBook?.author || item.author)
-
-    return {
-      ...item,
-      bookName: finalBookName || item.bookName,
-      author: finalAuthor || item.author,
-      shelfBook,
-      shelfIndex,
-      recentTimestamp,
-    }
-  })
-
-  // 4. 核心准则：100% 仅统计与展示已加入书架的藏书，未加书架一律不予统计
-  list = list.filter((b) => b.totalDurationSecs > 0 && shelfMap.has(b.bookUrl))
-
-  // 5. 时长筛选：默认大于 1 小时 (>= 3600 秒)
-  if (durationFilter.value === 'gt1h') {
-    list = list.filter((b) => b.totalDurationSecs >= 3600)
-  }
-
-  // 6. 搜索
+  // 1. 搜索过滤
   const kw = searchKeyword.value.toLowerCase().trim()
   if (kw) {
     list = list.filter(
@@ -908,18 +928,24 @@ const filteredBookList = computed(() => {
     )
   }
 
-  // 6. 排序
-  if (sortBy.value === 'duration') {
+  // 2. 排序与榜单截取（Top10 / Top30 强制按阅读时长排序）
+  if (durationFilter.value === 'top10' || durationFilter.value === 'top30') {
     list.sort((a, b) => b.totalDurationSecs - a.totalDurationSecs)
+    const limit = durationFilter.value === 'top10' ? 10 : 30
+    list = list.slice(0, limit)
   } else {
-    list.sort((a, b) => {
-      if (b.recentTimestamp !== a.recentTimestamp) {
-        return b.recentTimestamp - a.recentTimestamp
-      }
-      const aIdx = a.shelfIndex ?? 9999
-      const bIdx = b.shelfIndex ?? 9999
-      return aIdx - bIdx
-    })
+    if (sortBy.value === 'duration') {
+      list.sort((a, b) => b.totalDurationSecs - a.totalDurationSecs)
+    } else {
+      list.sort((a, b) => {
+        if (b.recentTimestamp !== a.recentTimestamp) {
+          return b.recentTimestamp - a.recentTimestamp
+        }
+        const aIdx = a.shelfIndex ?? 9999
+        const bIdx = b.shelfIndex ?? 9999
+        return aIdx - bIdx
+      })
+    }
   }
 
   return list
@@ -927,29 +953,17 @@ const filteredBookList = computed(() => {
 
 // ─── 继续阅读操作 ───
 async function handleContinueRead(bookUrl: string) {
+  const isShelfBook = shelfStore.books.some((b) => b.bookUrl === bookUrl)
+  if (!isShelfBook) {
+    appStore.showToast('该书籍已从书架移出，无法继续阅读', 'warning')
+    return
+  }
+
   if (openingBookUrl.value) return
   openingBookUrl.value = bookUrl
 
   try {
-    let book = shelfStore.books.find((b) => b.bookUrl === bookUrl)
-    if (!book) {
-      const recent = loadRecentReadBooks().find((b) => b.bookUrl === bookUrl)
-      if (recent) {
-        book = recent
-      }
-    }
-    if (!book) {
-      const rawStat = statsStore.bookStats.find((b) => b.bookUrl === bookUrl)
-      if (rawStat) {
-        book = {
-          name: rawStat.bookName,
-          author: rawStat.author,
-          bookUrl: rawStat.bookUrl,
-          origin: 'local',
-          coverUrl: rawStat.coverUrl,
-        }
-      }
-    }
+    const book = shelfStore.books.find((b) => b.bookUrl === bookUrl)
     if (!book) return
 
     void shelfStore.moveBookToFront(book.bookUrl).catch(() => undefined)
@@ -1759,6 +1773,16 @@ async function handleContinueRead(bookUrl: string) {
   max-width: 120px;
 }
 
+.item-removed-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-sunken);
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  white-space: nowrap;
+}
+
 .item-author {
   font-size: 11px;
   color: var(--color-text-tertiary);
@@ -1830,6 +1854,22 @@ async function handleContinueRead(bookUrl: string) {
 .continue-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.item-removed-tag {
+  padding: 6px 14px;
+  min-height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-sunken);
+  color: var(--color-text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
 }
 
 .empty-state {

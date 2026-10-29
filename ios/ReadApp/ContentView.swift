@@ -496,5 +496,24 @@ struct HybridWebView: UIViewRepresentable {
                 completionHandler()
             }
         }
+
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+            let alert = UIAlertController(title: "提示", message: prompt, preferredStyle: .alert)
+            alert.addTextField { textField in
+                textField.text = defaultText
+            }
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: { _ in completionHandler(nil) }))
+            alert.addAction(UIAlertAction(title: "确定", style: .default, handler: { _ in
+                completionHandler(alert.textFields?.first?.text)
+            }))
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootViewController = windowScene.windows.first?.rootViewController {
+                var topController = rootViewController
+                while let presented = topController.presentedViewController { topController = presented }
+                topController.present(alert, animated: true, completion: nil)
+            } else {
+                completionHandler(nil)
+            }
+        }
     }
 }

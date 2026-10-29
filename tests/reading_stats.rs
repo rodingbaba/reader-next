@@ -112,59 +112,34 @@ async fn reading_stats_records_heartbeats_and_summarizes() {
 }
 
 #[tokio::test]
-async fn reading_stats_prunes_non_shelf_books() {
-    let (database_url, _dir) = temp_db_url("stat-prune");
+async fn reading_stats_persists_even_if_book_is_removed_from_shelf() {
+    let (database_url, _dir) = temp_db_url("stat-retain");
     let pool = db::init_pool(&database_url).await.unwrap();
     let service = ReadingStatService::new(pool.clone());
     let user_ns = "test_user";
-    let shelf_urls = vec!["book://shelf-1".to_string()];
 
-    // 1. 分别为书架书和非书架试读书插入阅读记录
+    // 1. 用户在书架上阅读书籍，正常产生阅读记录
     service
         .record_heartbeat(
             user_ns,
             RecordReadingHeartbeatRequest {
-                book_url: "book://shelf-1".to_string(),
-                book_name: "书架正书".to_string(),
+                book_url: "book://finished-and-removed".to_string(),
+                book_name: "读完已移出书架的小说".to_string(),
                 author: Some("作者A".to_string()),
                 cover_url: None,
                 read_date: Some("2026-10-01".to_string()),
-                duration_secs: 1800,
+                duration_secs: 3600,
                 is_listening: Some(false),
-                chapters_delta: Some(2),
+                chapters_delta: Some(10),
             },
         )
         .await
         .unwrap();
 
-    service
-        .record_heartbeat(
-            user_ns,
-            RecordReadingHeartbeatRequest {
-                book_url: "book://preview-preview".to_string(),
-                book_name: "搜索预览小说".to_string(),
-                author: Some("未知作者".to_string()),
-                cover_url: None,
-                read_date: Some("2026-10-01".to_string()),
-                duration_secs: 15,
-                is_listening: Some(false),
-                chapters_delta: Some(0),
-            },
-        )
-        .await
-        .unwrap();
-
-    // 清理前应该有 2 本
-    let list_before = service.get_book_stats(user_ns).await.unwrap();
-    assert_eq!(list_before.len(), 2);
-
-    // 3. 执行一键清理
-    let pruned = service.prune_non_shelf_stats(user_ns, &shelf_urls).await.unwrap();
-    assert_eq!(pruned, 1);
-
-    // 4. 清理后应该仅剩书架书
-    let list_after = service.get_book_stats(user_ns).await.unwrap();
-    assert_eq!(list_after.len(), 1);
-    assert_eq!(list_after[0].book_url, "book://shelf-1");
+    // 2. 确认该阅读历史持久化保存，不因书架状态变动而丢失
+    let list = service.get_book_stats(user_ns).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].book_url, "book://finished-and-removed");
+    assert_eq!(list[0].total_duration_secs, 3600);
 }
 
